@@ -1,0 +1,2242 @@
+Group Matrix Factorization for Scalable Topic Modeling
+Quan Wang
+
+Zheng Cao
+
+MOE-Microsoft Key Laboratory of
+Dept. of Computer
+Statistics&Information Technology Science & Engineering
+Peking University
+Shanghai JiaoTong University
+
+v-quwan@microsoft.com
+
+mozeda@sjtu.edu.cn
+
+ABSTRACT
+
+Jun Xu, Hang Li
+Microsoft Research Asia
+No. 5 Danling Street
+Beijing, China
+
+{junxu,hangli}@microsoft.com
+
+a topic model represents the relationship between the terms and the
+documents through latent topics. A topic is defined as a probability
+distribution over terms or a cluster of weighted terms. A document
+is viewed as a bag of terms generated from a mixture of latent topics. Many topic modeling methods, such as Latent Semantic Indexing (LSI) [7], Probabilistic Latent Semantic Indexing (PLSI) [11],
+Latent Dirichlet Allocation (LDA) [5], Regularized Latent Semantic Indexing (RLSI) [26], and Non-negative Matrix Factorization
+(NMF) [13, 14] have been proposed and successfully applied to
+diﬀerent applications in text mining, information retrieval, natural
+language processing, and other related fields.
+One of the main challenges in topic modeling is to handle large
+numbers of documents and create large numbers of topics. For the
+probabilistic topic models like LDA and PLSI, the scalability challenge mainly comes from the necessity of simultaneously updating
+the term-topic matrix to meet the probability distribution assumptions. When the number of terms is large, which is inevitable in
+real applications, this problem becomes particularly severe. For
+the non-probabilistic methods of NMF and RLSI, the formulation
+makes it possible to decompose the learning problem into multiple
+sub-problems and conduct learning in parallel, and hence in general
+they have better scalability than the probabilistic methods1 . Refer
+to [26] for detailed discussions.
+The high scalability of non-probabilistic methods makes them
+easier to be employed in practice. However, to handle millions or
+even billions of documents, it is still necessary to further improve
+their scalability and eﬃciency. In this paper, we investigate the
+possibilities of further enhancing the scalability and eﬃciency of
+non-probabilistic methods such as RLSI and NMF.
+The method, called Group Matrix Factorization (GMF), assumes
+that the documents have already been categorized into multiple
+classes in a predefined taxonomy. This assumption is practical and
+common in many real-world applications. For example, Wikipedia
+data contains a hierarchical taxonomy with 25 classes at the first
+layer. Each Wikipedia article falls into at least one of the classes.
+The ODP project2 provides a taxonomy of semantic classes and
+about 4 million web pages manually classified into the classes. The
+data can be used for training a classifier and other webpages can
+be classified into the classes by the classifier [2]. GMF further assumes that there exists a set of class-specific topics for each of the
+classes, and there also exists a set of shared topics for all of the
+classes. Each document in the collection is specified by its classes,
+class-specific topics, as well as shared topics. In this way, the largescale learning problem can be decomposed into small-scale subproblems. We refer to the strategy as the divide-and-conquer technique.
+
+Topic modeling can reveal the latent structure of text data and is
+useful for knowledge discovery, search relevance ranking, document classification, and so on. One of the major challenges in
+topic modeling is to deal with large datasets and large numbers
+of topics in real-world applications. In this paper, we investigate
+techniques for scaling up the non-probabilistic topic modeling approaches such as RLSI and NMF. We propose a general topic modeling method, referred to as Group Matrix Factorization (GMF),
+to enhance the scalability and eﬃciency of the non-probabilistic
+approaches. GMF assumes that the text documents have already
+been categorized into multiple semantic classes, and there exist
+class-specific topics for each of the classes as well as shared topics across all classes. Topic modeling is then formalized as a problem of minimizing a general objective function with regularizations
+and/or constraints on the class-specific topics and shared topics. In
+this way, the learning of class-specific topics can be conducted in
+parallel, and thus the scalability and eﬃciency can be greatly improved. We apply GMF to RLSI and NMF, obtaining Group RLSI
+(GRLSI) and Group NMF (GNMF) respectively. Experiments on
+a Wikipedia dataset and a real-world web dataset, each containing about 3 million documents, show that GRLSI and GNMF can
+greatly improve RLSI and NMF in terms of scalability and eﬃciency. The topics discovered by GRLSI and GNMF are coherent
+and have good readability. Further experiments on a search relevance dataset, containing 30,000 labeled queries, show that the use
+of topics learned by GRLSI and GNMF can significantly improve
+search relevance.
+Categories and Subject Descriptors: H.3.1 [Information Storage
+and Retrieval]: Content Analysis and Indexing
+General Terms: Algorithms, Experimentation
+Keywords: Matrix Factorization, Topic Modeling, Large Scale
+
+1. INTRODUCTION
+Topic modeling refers to machine learning technologies whose
+aim is to discover the hidden semantic structure existing in a large
+collection of text documents. Given a collection of text documents,
+
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies are
+not made or distributed for profit or commercial advantage and that copies
+bear this notice and the full citation on the first page. To copy otherwise, to
+republish, to post on servers or to redistribute to lists, requires prior specific
+permission and/or a fee.
+SIGIR’12, August 12–16, 2012, Portland, Oregon, USA.
+Copyright 2012 ACM 978-1-4503-1472-5/12/08 ...$15.00.
+
+1
+Note that LSI needs to be solved by SVD due to its orthogonality
+assumption and thus it is hard to be scaled up.
+2
+http://www.dmoz.org/
+
+375
+
+straints. LSI [7] is a representative method, which performs the
+factorization under the assumption that the topic vectors are orthonormal. In NMF [13, 14], the factor matrices are assumed to
+be nonnegative, while in RLSI [26], the factor matrices are regularized with 1 and/or 2 norms.
+It has been demonstrated that topic modeling is useful for knowledge discovery, search relevance ranking, and document classification (e.g., [19, 27, 26]). Topic modeling is actually becoming one
+of the most important technologies in text mining, information retrieval, natural language processing, and other related fields.
+The topic modeling approaches that we have discussed so far are
+completely unsupervised. Recently, researchers have also proposed
+supervised or semi-supervised approaches to topic modeling. For
+example, Supervised Latent Dirichlet Allocation (SLDA) [4] and
+Supervised Dictionary Learning (SDL) [18] are methods for incorporating supervision into probabilistic and non-probabilistic topic
+models. In this paper, we assume that documents have already been
+classified into classes, and then we conduct topic modeling on the
+basis of the classification to enhance scalability and eﬃciency.
+Using document classes in topic modeling has been studied in
+previous literature. For probabilistic approaches, Zhai et al.(2004),
+for example, proposed incorporating class labels into a multinomial
+mixture model in order to more accurately discover topics,such
+that some topics are shared by all classes and other topics are specific to individual classes [28]. The discriminatively training of
+LDA (DiscLDA) [12] and Partially Labeled Dirichlet Allocation
+(PLDA) [22] incorporate class labels into LDA to achieve similar
+goals. For the non-probabilistic approaches, Mairal et al. (2008) [17],
+Bengio et al. (2009) [1], and Wang et al. (2011) [25] proposed using class labels in Sparse Coding [15, 20], a special case of RLSI, in
+which a dictionary for each class (i.e., topics specific to each class)
+is learned first, after that a common dictionary over all classes (i.e.,
+topics shared by all classes) is learned, and finally the common and
+class-specific dictionaries are learned simultaneously. Group Nonnegative Matrix Factorization (GNMF) [16] extends NMF in a similar way. Both extensions on non-probabilistic methods were conducted in computer vision. As can be seen, all the previous work
+was not motivated toward enhancing scalability and eﬃciency. In
+this paper, we also exploit class information in topic modeling and
+our goal is to enhance scalability and eﬃciency. As far as we know,
+this is the first time such an investigation is conducted on text data.
+We also note that the formulation of GNMF in this paper is diﬀerent
+from that in [16].
+
+In GMF, the documents in each of the classes are represented
+as a term-document matrix. The term-document matrix is then approximated as the product of two matrices: one matrix represents
+the shared topics as well as the class-specific topics, and the other
+matrix represents the document representations based on the topics. An objective function is defined to measure the goodness of
+prediction of the data with the model. Optimization of the objective function leads to the automatic discovery of topics as well as
+topic representations of the documents.
+We show that GMF can be used to improve the eﬃciency and
+scalability of non-probabilistic topic models, using RLSI and NMF
+as examples. Specifically, we apply GMF to RLSI [26] and NMF [13,
+14], obtaining the Group RLSI (GRLSI) and Group NMF (GNMF),
+respectively. Like in RLSI, the objective function of GRLSI consists of squared Frobenius norm as loss function, 1 -regularization
+on topics, and 2 -regularization on document representations. Similarly to NMF, GNMF also uses squared Frobenius norm as loss
+function and non-negative constraints on the topics and document
+representations. Algorithms for optimizing the loss functions of
+GRLSI and GNMF are given and theoretical justification of the algorithms is shown. Time complexity analysis show that GRLSI and
+GNMF can achieve P times of speedup on RLSI and NMF respectively, where P is the number of classes.
+Experiments on two large datasets containing about 3 million
+documents have verified the following points. (1) Both GRLSI and
+GNMF can eﬃciently handle the documents on a single machine,
+and the number is larger than those which can be processed by most
+existing topic modeling methods. (2) GRLSI and GNMF are more
+scalable and eﬃcient than RLSI and NMF respectively, especially
+when the number of topics is large. (3) In GRLSI and GNMF, the
+shared topics as well as the class-specific topics are coherent and
+meaningful. (4) Experiments on another relevance dataset show
+that GRLSI and GNMF can help significantly improve search relevance.
+Exploiting the divide and conquer strategy in the non-probabilistic
+methods has been investigated in computer vision [16, 25]. However, it was not clear whether it works for text data. As far as we
+know, this is the first work on large scale text data. Our main contributions in this paper lie in that we have empirically verified the
+eﬀectiveness of the divide and conquer strategy on text data, by
+specifically implementing and testing the GRLSI and GNMF methods in large scale experiments.
+
+2.
+
+RELATED WORK
+
+The goal of topic modeling is to automatically discover the latent
+topics in a document collection as well as model the documents by
+representing them with the topics. Methods for topic modeling fall
+into two categories: probabilistic approaches and non-probabilistic
+approaches. In the probabilistic approaches, a topic is defined as
+a probability distribution over terms and documents are viewed as
+data generated from mixtures of topics. To generate a document,
+one first chooses a topic distribution. Then, for each term in that
+document , one chooses a topic according to the topic distribution,
+and draws a term from the topic according to its term distribution. PLSI [11] and LDA [5] are two widely-used probabilistic
+approaches to topic modeling. Please refer to [3] for a survey on
+probabilistic topic models. In the non-probabilistic approaches, the
+term vectors of documents (term-document matrix) are projected
+into a topic space in which each axis corresponds to a topic. A document is then represented as a vector of topics in the space. These
+approaches are realized as factorization of the term-document matrix such that the matrix is approximately equal to the product of a
+term-topic matrix and a topic-document matrix under certain con-
+
+3. GROUP MATRIX FACTORIZATION
+We present the formulation of Group Matrix Factorization and
+provide a probabilistic interpretation of it.
+
+3.1
+
+Problem Formulation
+
+Suppose that we are given a document collection D with size N,
+containing terms from a vocabulary V with size M. A document
+is represented as a vector d ∈ R M where each entry denotes the
+score of the corresponding term, for example, a Boolean value indicating occurrence, term frequency, tf-idf, etc. Each document is
+associated with a class label y ∈ {1, · · · , P}. The N documents in D
+can be classified into P classes according
+ labels and
+ to their class
+(p)
+M×N p
+represented as D = {D1 , · · · , DP }. D p = d(p)
+is
+1 , · · · , dNp ∈ R
+the term-document matrix corresponding to class p, in which each
+row stands for a term and each column stands for
+ a document. N p
+is the number of documents in class p such that Pp=1 N p = N.
+A topic is defined as a subset of terms from V with important
+weights, and is also represented as a vector u ∈ R M with each entry
+
+376
+
+corresponding to a term. Suppose thatthere are K s shared topics,
+(0)
+M×K s
+, in
+denoted as a term-topic matrix U0 = u(0)
+1 , · · · , uK s ∈ R
+which each column corresponds to a shared topic. Also, for each
+class p, there are Kc class-specific topics,
+which can
+ also be repre
+(p)
+M×Kc
+, where
+sented by a term-topic matrix U p = u(p)
+1 , · · · , u Kc ∈ R
+each column stands for a class-specific topic. Then, the total number of topics in the whole collection is K = K s + PKc 3 .
+The documents in each class are then modeled by the shared
+topics as well as the topics specific to their own class. Specifically, given the shared topics U0 and the class-specific topics U p ,
+document d(p)
+n in class p is approximately represented as a linear
+combination of these topics, i.e.,
+
+
+(p)
+(p)
+d(p)
+(1)
+n ≈ Ũ p vn = U0 , U p vn ,
+
+
+where Ũ p = U0 , U p ∈ R M×(Ks +Kc ) is the concatenated term-topic
+
+Table 1: Table of notations.
+Notation
+M
+N
+P
+Np
+Ks
+Kc
+K
+D p ∈ R M×N p
+(p)
+dn ∈ R M
+U0 ∈ R M×K s
+∈ RM
+u(0)
+k
+U p ∈ R M×Kc
+(p)
+uk ∈ R M
+
+Ũ p = U0 , U p
+V p ∈ R(K s +Kc )×N p
+(p)
+vn ∈ RK s +Kc
+H p and W p
+
+K s +Kc
+is the represenmatrix corresponding to class p, and v(p)
+n ∈ R
+tation of document d(p)
+in
+latent
+topic
+space.
+Since a document
+n
+is represented only by the shared topics and the class-specific topics corresponding to its own class, GMF actually decomposes the
+large-scale matrix operations concerning all the topics into multiple small-scale ones concerning only subsets of the topics, and thus
+reduces the computational
+complexity.
+
+
+(p)
+(K s +Kc )×N p
+Let V p = v(p)
+,
+·
+·
+·
+,
+v
+be the topic-document
+Np ∈ R
+1
+
+
+matrix corresponding to class p. We denote VTp = HTp , WTp such
+that Ũ p V p = U0 H p + U p W p , where H p ∈ RKs ×N p corresponds to
+shared topics U0 and W p ∈ RKc ×N p corresponds to class-specific
+topics U p . Table 1 gives a summary of notations.
+Thus, given a document collection together with the class labels,
+represented as D = {D1 , · · · , DP }, GMF amounts to solving the
+following optimization problem:
+Np
+
+P
+
+min 
+
+
+
+ (0)
+(p)
+(p)
+uk , uk , vn
+p=1 n=1
+
+p=1 k=1
+
+p (vn ) ∝ e−θ3 R3 (vn ) and constraint vn ∈ C3 on each vn . Class labels y1 , · · · , yN are observed variables with a constant prior on each
+yn . Documents d1 , · · · , d N are also observed variables. Each document is generated according to a probability distribution conditioned on the shared topics, the class-specific topics, the corresponding
+and the corresponding
+  (p)label,
+
+  class
+  (0)   (y ) latent variable, i.e.,
+ uk , uk n , vn ∝ e−L( dn ||Ũyn vn ) .
+p dn  u(0)
+,
+u
+,
+y
+=
+p
+d
+,
+v
+n
+n
+n
+k
+k
+(0)
+Moreover, all triplets (yn , dn , vn ) are independent given u(0)
+1 , · · · uK s
+(p)
+(p)
+and u1 , · · · , uKc , p = 1, · · · , P. It can be easily shown that GMF
+formulation Eq. (2) can be obtained with Maximum A Posteriori
+approximation.
+GMF can be applied to non-probabilistic methods to further enhance their scalability and eﬃciency. Next, as examples, we define
+Group RLSI (GRLSI) and Group NMF (GNMF) under the framework of GMF.
+
+p=1 n=1
+
+k = 1, · · · , K s ,
+
+u(p)
+k ∈ C2 ,
+
+k = 1, · · · , Kc , p = 1, · · · , P,
+
+∈ C3 ,
+
+n = 1, · · · , N p , p = 1, · · · , P,
+
+(2)
+
+where L (··) is a loss function that measures the quality of the approximation defined in Eq. (1); R1 (·), R2 (·), and R3 (·) are regularization items on shared topics, class-specific topics, and document
+representations, respectively; C1 , C2 , and C3 are feasible sets for
+shared topics, class-specific topics, and document representations,
+respectively; θ1 , θ2 , and θ3 are coeﬃcients.
+
+3.2
+
+4.
+
+GROUP RLSI
+
+GRLSI adopts the squared Euclidean distance to measure the approximation quality and employs the same regularization schema
+as in RLSI [26], i.e., 1 -regularization on both shared and classspecific topics and 2 -regularization on document representations.
+The optimization problem of GRLSI is as follows:
+
+Probabilistic Interpretation
+
+We give a probabilistic interpretation of GMF, as shown in Fig(0)
+ure 1. In the graphical model, shared topics u(0)
+1 , · · · , uK s and class(p)
+(p)
+specific topics u1 , · · · , uKc , p = 1, · · · , P, are parameters. All the
+∝
+shared topics are independent from each other, with prior p u(0)
+k
+
+P
+
+(0)
+
+e−θ1 R1 uk and constraint u(0)
+∈ C1 on each u(0)
+k
+k . All the class∝
+specific topics are independent from each other, with prior p u(p)
+k
+(p)
+
+−θ2 R2 uk
+
+u(p)
+k
+
+yn
+
+Figure 1: Graphical model of GMF.
+
+,
+R3 v(p)
+n
+
+u(0)
+k ∈ C1 ,
+
+dn
+
+PKc
+
+N
+
+Np
+
++ θ3
+R2 u(p)
+k
+
++ θ2
+
+v(p)
+n
+
+vn
+
+R1 u(0)
+k
+P
+
+uk(p)
+Ks
+
+k=1
+Kc
+
+P
+
+s.t.
+
+uk(0)
+
+Ks
+(p)
++ θ1
+L d(p)
+n ||Ũ p vn
+
+Meaning
+Number of terms in vocabulary
+Number of documents in collection
+Number of classes
+Number of documents in class p
+Number of shared topics
+Number of class-specific topics for each class
+Total number of topics
+Term-document matrix corresponding to class p
+The n-th document in class p
+Term-topic matrix of shared topics
+The k-th shared topic
+Term-topic matrix of class-specific topics for class p
+The k-th class-specific topic in class p
+Concatenated term-topic matrix corresponding to class p
+Topic-document matrix corresponding to class p
+(p)
+Representation of dn in topic
+ space
+Components of V p : VTp = HTp , WTp
+
+Np
+
+min 
+
+
+
+ (0)
+(p)
+(p)
+uk , uk , vn
+p=1 n=1
+
+u(p)
+k .
+
+e
+and constraint
+∈ C2 on each
+Document representations v1 , · · · , vN are regarded as latent variables, with prior
+
+P
+
+ (p)
+2
+ dn − Ũ p v(p)
+n 2 + λ1
+
+ (0) 
+uk 1
+
+k=1
+Kc
+
++ λ1
+p=1 k=1
+
+3
+A more general case is defining diﬀerent numbers of class-specific
+topics for diﬀerent classes, which can also be modeled by GMF.
+
+Ks
+
+ (p) 
+uk 1 + λ2
+
+P
+
+Np
+
+ (p) 2
+vn 2 ,
+
+(3)
+
+p=1 n=1
+
+where λ1 is the parameter controlling the 1 -regularization, and λ2
+
+377
+
+Algorithm 1 Group RLSI
+Require: D1 , · · · , DP
+1: for p = 1 : P do
+2:
+U p ← zero matrix
+3:
+V p ← random matrix
+4: end for
+5: repeat
+     
+6:
+U0 ← UpdateU0 D p , U p , V p
+7:
+for p = 1 : P do
+8:
+U p ← UpdateU p D p , U0 , V p
+
+Algorithm 2 UpdateU0
+Require: 
+D1 , · · · , DP , U1 , · · · , UP , V1 , · · · , VP
+1: S0 ← Pp=1 H p HTp
+
+
+2: R0 ← Pp=1 D p HTp − Pp=1 U p W p HTp
+3: for m = 1 : M do
+4:
+ū(0)
+m ← 0
+5:
+repeat
+6:
+for k = 1 : K s do
+
+(0)
+(0)
+7:
+xmk ← rmk
+− lk s(0)
+kl uml
+1λ
+x
+−
+sign
+x
+(| mk | 2 1 )+ ( mk )
+8:
+u(0)
+(0)
+mk ←
+
+9:
+V p ← UpdateV p D p , U0 , U p
+10:
+end for
+11: until convergence
+12: return U0 , U1 , · · · , UP , V1 , · · · , VP
+
+9:
+end for
+10:
+until convergence
+11: end for
+12: return U0
+
+Algorithm 3 UpdateU p
+Require: D p , U0 , V p
+1: S p ← W p WTp
+2: R p ← D p WTp − U0 H p WTp
+3: for m = 1 : M do
+4:
+ū(p)
+m ← 0
+5:
+repeat
+6:
+for k = 1 : Kc do
+
+(p)
+(p)
+7:
+xmk ← rmk
+− lk s(p)
+kl uml
+1
+(| xmk |− 2 λ1 )+ sign( xmk )
+8:
+u(p)
+(p)
+mk ←
+
+is the parameter controlling the 2 -regularization4 . GRLSI decomposes the large-scale matrix operations in RLSI into multiple smallscale ones and thus can be solved more eﬃciently.
+
+4.1 Optimization
+Optimization Eq. (3) is convex with respect to one of the variables U0 , U1 , · · · , UP , V 1 , · · · , VP when the others are fixed. Thus
+we sequentially minimize the objective function with respect to
+shared topics U0 , class-specific topics U1 , · · · , UP , and document
+representations V 1 , · · · , VP . This procedure is summarized in Algorithm 1.
+
+9:
+end for
+10:
+until convergence
+11: end for
+12: return U p
+
+4.1.1 Update of Matrix U0
+Holding U1 , · · · , UP , V1 , · · · , VP fixed, the update of U0 amounts
+to the following minimization problem:
+P
+
+min
+U0
+
+
+2
+D p − U0 H p − U p W p F + λ1
+
+p=1
+
+M
+
+Ks
+
+ (0) 
+umk  ,
+
+where ·F is the Frobenius norm and u(0)
+mk is the mk-th entry of U0 .
+Eq. (4) is equivalent to
+M
+
+Ks
+
+U0
+
+ (0) 
+umk  ,
+
+skk
+
+
+
+RKs ×Ks and R0 = DHT = Pp=1 D p HTp − Pp=1 U p W p HTp ∈ R M×Ks ,
+and then update U0 with the following update rule:
+ (0) 
+
+
+(0) 
+(0)
+(0) (0)
+rmk − lk s(0)
+ 1
+lk skl uml
+kl uml − 2 λ1 + sign rmk −
+(0)
+,
+umk ←
+s(0)
+kk
+
+(4)
+
+m=1 k=1
+
+min D − U0 H2F + λ1
+
+skk
+
+(0)
+where s(0)
+i j and ri j are the i j-th entry of S0 and R0 , respectively, and
+(·)+ denotes the hinge function. The algorithm for updating U0 is
+summarized in Algorithm 2.
+
+(5)
+
+m=1 k=1
+
+where D and H are defined as D = [D1 − U1 W1 , · · · , DP − UP WP ]
+and H = [H1 , · · · , HP ], respectively. Let d̄m = (dm1 , · · · , dmN )T
+(0)
+(0) T
+and ū(0)
+be the column vectors whose entries
+m = um1 , · · · , umK s
+th
+are those of the m row of D and U0 , respectively. Eq. (5) can be
+decomposed into M subproblems that can be solved independently,
+with each corresponding to one row of U0 :
+
+2
+ (0) 
+min  d̄m − HT ū(0)
+(6)
+m 2 + λ1 ūm 1 ,
+
+4.1.2 Update of Matrix U p
+Holding the other variables fixed, the update of U p amounts to
+the following optimization problem:
+
+2
+min D p − U0 H p − U p W p F + λ1
+Up
+
+(0)
+
+ūm
+
+M
+
+Kc
+
+ (p) 
+umk  ,
+
+(7)
+
+m=1 k=1
+
+where u(p)
+mk is the mk-th entry of U p . Eq. (7) can be optimized with
+the same technique presented for optimizing Eq. (5). We calculate
+S p = W p WTp ∈ RKc ×Kc and R p = D p WTp − U0 H p WTp ∈ R M×Kc , and
+then update U p with the following update rule:
+ (p) 
+
+
+(p) 
+(p)
+(p) (p)
+rmk − lk s(p)
+ 1
+lk skl uml
+kl uml − 2 λ1 + sign rmk −
+(p)
+umk ←
+,
+s(p)
+kk
+
+for m = 1, · · · , M.
+Eq. (6) is an 1 -regularized least squares problem, whose objective function is not diﬀerentiable and it is not possible to directly
+apply gradient-based methods. A number of techniques can be used
+here, such as interior point method [6], coordinate descent with
+soft-thresholding [9, 10], Lars-Lasso algorithm [8, 21], and featuresign search [15]. Here we choose coordinate descent
+ with softthresholding. To do so, we calculate S0 = HHT = Pp=1 H p HTp ∈
+
+(p)
+where s(p)
+i j and ri j are the i j-th entry of S p and R p , respectively.
+The algorithm for updating U p is summarized in Algorithm 3.
+
+4
+A more general case is setting diﬀerent regularization parameters
+for shared topics and class-specific topics, for separately controlling the sparsity of shared topics and class-specific topics.
+
+378
+
+Algorithm 4 UpdateV p
+Require: D p , U0 , U p
+1:
+2:
+3:
+4:
+5:
+6:
+
+Algorithm 5 Group NMF
+Require: D1 , · · · , DP
+1: U0 ← random matrix
+2: for p = 1 : P do
+3:
+U p ← random matrix
+4:
+V p ← random matrix
+5: end for
+6: repeat
+
+
+−1
+
+Σ p ← ŨTp Ũ p + λ2 I
+Φ p ← ŨTp D p
+for n = 1 : N p do
+(p)
+(p)
+v(p)
+n ← Σ p φn , where φn is the n-th column of Φ p
+end for
+return V p
+
+Table 2: Time complexity (per iteration) of RLSI and GRLSI.
+Update U
+Update V
+
+RLSI
+
+GRLSI
+
+K 2 N+AvgDL×KN+IK 2 M
+
+K 2 N +AvgDL×KN+IK 2 M
+P
+
+Q
+
+U0 ← U0 ∗
+
+8:
+
+for p = 1 : P do
+
+9:
+
+Up ← Up ∗
+
+P
+
+D p WTp
+
+U p W p WTp +U0 H p WTp
+ŨTp D p
+
+10:
+V p ← V p ∗ ŨT Ũ V
+p p p
+11:
+end for
+12: until convergence
+13: return U0 , U1 , · · · , UP , V1 , · · · , VP
+
+PQ
+3
+2
+γ2 K 2 M+ KP +AvgDL×γKN+ K PN
+PQ
+
+γ2 K 2 M+K 3 +AvgDL×γKN+K 2 N
+Q
+
+P D HT
+p=1 p p
+T P
+T
+p=1 U0 H p H p + p=1 U p W p H p
+
+7:
+
+4.1.3 Update of Matrix V p
+The update of V p with the other variables fixed is a least squares
+problem with 2 -regularization. It can also be decomposed into N p
+optimization problems, with each corresponding to one v(p)
+n and can
+be solved in parallel:
+
+
+ (p) 2
+(p) 2
+min  d(p)
+n − Ũ p vn 2 + λ2 vn 2 ,
+
+of classifying document d into class p as
+
+2
+E d; Ũ p = min  d − Ũ p v2 + λ2 v22 ,
+
+for n = 1, · · · , N p . It is a standard 2 -regularized least squares
+problem and the solution is:
+
+We then represent the document in the topic space with Eq. (8).
+
+v
+
+and predict the class label of document d by
+yd = arg min E d; Ũ p .
+
+(p)
+
+vn
+
+T
+v(p)
+n = Ũ p Ũ p + λ2 I
+
+−1
+
+p
+
+5.
+
+ŨTp d(p)
+n .
+
+Algorithm 4 shows the procedure.
+
+4.2
+
+Time Complexity
+
+The formulation of learning in GRLSI is decomposable and thus
+can be processed in parallel. Specifically, the for-loops in Algorithm 2 (i.e., line 3 to line 11), Algorithm 3 (i.e., line 3 to line 11),
+and Algorithm 4 (i.e., line 3 to line 5) can be processed in parallel.
+In this paper, we implement GRLSI as well as RLSI using multithreaded programming and compare their time complexities. Table
+2 shows the results, where Q is the number of threads, γ the topic
+sparsity, and AvgDL the average document length. For GRLSI, the
+“Update U” includes the update of U0 , U1 , · · · , UP and the “Update
+V” includes the update of V1 , · · · , VP . From the results, we can see
+that GRLSI is approximately P times faster than RLSI in terms of
+time complexity. Here we suppose that 1) the documents are evenly
+distributed to the P classes; 2) the number of class-specific topics
+in each class is similar to the number of shared topics; and 3) the
+topic sparsity of GRLSI is similar to the topic sparsity of RLSI.
+
+4.3
+
+P
+
+s.t.
+
+ (p)
+2
+ dn − Ũ p v(p)
+n 2
+
+u(0)
+k ≥ 0,
+
+k = 1, · · · , K s ,
+
+u(p)
+k
+v(p)
+n
+
+≥ 0,
+
+k = 1, · · · , Kc , p = 1, · · · , P,
+
+≥ 0,
+
+n = 1, · · · , N p , p = 1, · · · , P,
+
+(9)
+
+which decomposes the large-scale matrix operations in NMF into
+multiple small-scale ones and thus can be solved more eﬃciently.
+
+5.1 Optimization
+Optimization Eq. (9) is convex with respect to one of the variables U0 , U1 , · · · , UP , V 1 , · · · , VP while keeping the others fixed.
+We again sequentially minimize the objective function with respect
+to shared topics U0 , class-specific topics U1 , · · · , UP , and document representations V 1 , · · · , VP . The procedure is summarized in
+Algorithm 5, where the operator “∗” represents the entry-wise multiplication, and the division is also entry-wise.
+The multiplicative update rules in Algorithm 5 were first proposed in [16] and then applied in [25]. However, neither [16]
+nor [25] gave suﬃcient evidence to demonstrate the correctness of
+them. Here, we theoretically justify Algorithm 5, showing that the
+objective in Eq. (9) is nonincreasing under the update rules in Algorithm 5. We first proof Proposition 1.
+
+Folding-in New Documents
+
+v
+
+Np
+
+min
+
+ (0)   (p)   (p) 
+uk , uk , vn
+p=1 n=1
+
+Folding-in refers to the problem of computing representations of
+documents that were not contained in the original training collection. When a new document d, represented as d ∈ R M in the term
+space, is given, its representation in the topic space can be computed under two diﬀerent conditions. First, if the class label of the
+document is given, denoted as yd , we represent the document in the
+topic space as
+vd = arg min d − Ũyd v22 + λ2 v22 .
+
+GROUP NMF
+
+Similarly we can define Group NMF (GNMF) by adopting the
+squared Euclidean distance to measure the approximation quality
+and employing the nonnegative constraints on shared topics, classspecific topics, and document representations, as in NMF [13, 14].
+The optimization problem of GNMF is as follows:
+
+(8)
+
+Second, if the document label is unknown, we first define the error
+
+379
+
+Proposition 1. Given X, Y ∈ R+M×N and S ∈ R+K×N , consider optimization problem minA≥0 X − Y − AS2F . The objective is nonincreasing under the update rule
+
+Table 3: Time complexity (per iteration) of NMF and GNMF.
+Update U
+
+T
+
+XS
+,
+ASST + YST
+where the operator “∗” represents the entry-wise multiplication,
+and the division is also entry-wise.
+A←A∗
+
+Update V
+
+5.1.1 Update of Matrix U0
+Holding U1 , · · · , UP , V1 , · · · , VP fixed, the update of U0 amounts
+to the following minimization problem:
+P
+U0 ≥0
+
+GNMF
+
+AvgDL×KN+K 2 M+K 2 N
+
+AvgDL×KN+K 2 M+ K PN
+PQ
+2
+AvgDL×KN+K 2 M+ K PN
+PQ
+
+Q
+AvgDL×KN+K 2 M+K 2 N
+Q
+
+5.3
+
+Folding-in New Documents
+
+Given a new document d ∈ R M , its representation in the topic
+space can be computed under two diﬀerent conditions. First, if the
+class label yd is also given, we can represent the document in the
+topic space as
+
+
+2
+D p − U0 H p − U p W p F ,
+
+p=1
+
+which can be rewritten as
+
+vd = arg min d − Ũyd v22 .
+
+min E − F −
+
+U0 ≥0
+
+U0 H2F
+
+2
+
+V1 , · · · , VP . From the results, we can see that GNMF are approximately P times faster than NMF in terms of time complexity. Here
+we also make the same assumptions as in Section 4.2.
+
+A proof sketch of the proposition can be found in Appendix.
+
+min
+
+NMF
+
+v≥0
+
+,
+
+(10)
+
+Second, if the document label is unknown, we first define the error
+of classifying document d into class p as
+
+2
+E d; Ũ p = min  d − Ũ p v2 ,
+
+where E, F, and H are respectively defined as E = [D1 , · · · , DP ],
+F = [U1 W1 , · · · , UP WP ], and H = [H1 , · · · , HP ]. It is easy to show
+that the objective is nonincreasing under the update rule
+P
+T
+p=1 D p H p
+U0 ← U0 ∗ P
+,
+
+P
+T
+T
+p=1 U0 H p H p +
+p=1 U p W p H p
+
+v≥0
+
+and predict the class label of document d by
+yd = arg min E d; Ũ p .
+p
+
+according to Proposition 1.
+We then represent the document in the topic space with Eq. (10).
+
+5.1.2 Update of Matrix U p
+Holding the other variables fixed, the update of U p amounts to
+the following optimization problem:
+
+2
+min D p − U0 H p − U p W p F .
+
+6. RELEVANCE RANKING
+Topic modeling can be used in a wide variety of applications. We
+apply GRLSI and GNMF to relevance ranking in search and evaluate their performances in comparison to RLSI and NMF respectively. The use of topic modeling techniques such as LSI was proposed in IR many years ago [7]. Two recent works [27, 26] demonstrated that improvements on relevance ranking can be achieved by
+using topic modeling.
+The motivation of incorporating topic modeling into relevance
+ranking is to reduce “term mismatch”. Traditional relevance models, such as VSM [24] and BM25 [23], are all based on term matching. The term mismatch problem arises when the author of a document and the user of a search system use diﬀerent terms to describe
+the same concept, and in such a case the search may not be carried
+out successfully. For example, if the query contains the term “airplane” but the document contains the term “aircraft”, then there is a
+mismatch and the document may not be viewed as relevant. In the
+topic space, however, it is very likely that the two terms are in the
+same topic, and thus the use of matching score in the topic space
+may help improve the relevance ranking. In practice it is beneficial to combine topic matching scores with term matching scores,
+to leverage both broad topic matching and specific term matching.
+A general way of using topic models in IR is as follows. Suppose that there is a pre-learned topic model. Given a query q and
+a document d, we first represent them in the topic space as vq and
+vd respectively. Then we calculate the matching score between the
+query and the document in the topic space as the cosine similarity between vq and vd . The topic matching score stopic (q, d) is then
+linearly combined with the term matching score sterm (q, d) for final relevance ranking. The final relevance ranking score s(q, d) is
+calculated as:
+
+U p ≥0
+
+According to Proposition 1 we get the multiplicative update rule:
+Up ← Up ∗
+
+D p WTp
+U p W p WTp + U0 H p WTp
+
+,
+
+which keeps the objective nonincreasing.
+
+5.1.3 Update of Matrix V p
+The update of V p with the other variables fixed amounts to the
+following optimization problem:
+
+2
+min D p − Ũ p V p F .
+V p ≥0
+
+As demonstrated in [14], V p can be updated with the following
+update rule:
+Vp ← Vp ∗
+
+ŨTp D p
+ŨTp Ũ p V p
+
+,
+
+which keeps the objective nonincreasing.
+
+5.2
+
+Time Complexity
+
+The multiplicative update rules of GNMF (i.e., line 7, line 9,
+and line 10 in Algorithm 5) can be processed in parallel since the
+multiplication and division are both entry-wise. In this paper, we
+implement GNMF as well as NMF using multithreaded programming and compare their time complexities. Table 3 shows the results, where Q is the number of threads and AvgDL is the average
+document length. For GNMF, the “Update U” includes the update of U0 , U1 , · · · , UP and the “Update V” includes the update of
+
+s(q, d) = αstopic (q, d) + (1 − α)sterm (q, d),
+
+380
+
+(11)
+
+Table 6: Execution time (per iteration) of RLSI on Wikipedia.
+
+Table 4: Sizes of Wikipedia and Web-I.
+Dataset
+Wikipedia
+Web-I
+
+# terms
+610,035
+530,905
+
+# documents
+2,807,535
+3,184,138
+
+# classes
+25
+204
+
+Min.
+λ1 = 0.01
+λ1 = 0.02
+λ1 = 0.05
+λ1 = 0.1
+
+K = 110
+19.49
+19.02
+16.73
+14.91
+
+K = 220
+44.13
+43.64
+34.63
+27.26
+
+K = 550
+110.35
+93.47
+90.45
+89.92
+
+K = 1100
+342.59
+332.33
+318.27
+307.67
+
+Table 5: Statistics of Wikipedia and Web-I.
+Dataset
+Wikipedia
+Web-I
+
+Min
+185
+226
+
+Max
+991,695
+29,999
+
+R
+991,510
+29,773
+
+Mean
+112301.4
+15608.5
+
+STD
+200123.6
+11152.0
+
+CV
+1.8
+0.7
+
+Table 7: Execution time (per iteration) of GRLSI on Wikipedia.
+Min.
+λ1 = 0.01
+λ1 = 0.02
+λ1 = 0.05
+λ1 = 0.1
+
+where α ∈ [0, 1] is the coeﬃcient. sterm (q, d) can be calculated with
+any existing term-based model, for example, VSM and BM25.
+
+7.
+
+K = 550
+51.95
+50.17
+48.25
+48.07
+
+K = 1100
+106.13
+104.13
+99.03
+97.13
+
+topics per class and the number of shared topics in GRLSI and
+GNMF as (K s , Kc ) = (10, 5)/(20, 10)/(40, 20)/(100, 50), resulting
+in K = 1030/2060/4120/10300 as the total number of topics. (The
+total number of topics in GRLSI and GNMF is K s + 204 × Kc ,
+where 204 is the number of classes in the Web-I dataset.) As will
+be explained later, we found that it is not possible to run RLSI
+and NMF with such large numbers of topics on a single machine.
+Thus, we determined the number of topics in RLSI and NMF as
+100/200/500/1000. Parameter λ1 in GRLSI and RLSI, which controls the sparsity of topics, was selected from 0.01/0.02/0.05/0.1,
+for both datasets. Parameter λ2 in GRLSI and RLSI was fixed to
+0.1, following the experimental results in [26].
+We also conducted search relevance experiments to test the effectiveness of GRLSI and GNMF on another dataset, the Web-II
+dataset, which is obtained from the same web search engine. The
+dataset consists of 752,365 documents, 30,000 queries, and relevance judgments on the documents with respect to the queries.
+The relevance judgments are at five levels: “perfect”, “excellent”,
+“good”, “fair”, and “bad”. There are in total 837,717 judged querydocument pairs. The documents in Web-II are classified into 204
+ODP categories with the same classifier as in Web-I. We randomly
+split the queries into validation/test sets, each has 15,000/15,000
+queries. We used the validation set for parameter tuning and the test
+set for evaluation. We adopted MAP and NDCG at the positions of
+1, 3, 5, and 10 as evaluation measures for relevance ranking. When
+calculating MAP, we considered “perfect”, “excellent”, and “good”
+as “relevant”, and the other two as “irrelevant”.
+All of the experiments were conducted on a server with AMD
+Opteron 2.10GHz multi-core processor (2×12 cores), 96GB RAM.
+All the methods were implemented using C# multithreaded programming, with the thread number being 24.
+
+Experimental Settings
+
+We tested the eﬃciency and eﬀectiveness of GRLSI and GNMF
+on two datasets5 : Wikipedia dataset which consists of articles downloaded from the English version of Wikipedia and Web-I dataset
+which consists of webpages randomly sampled from a crawl of the
+Internet at a commercial search engine. The Wikipedia dataset contains 2,807,535 articles and the Web-I dataset contains 3,184,138
+web documents. For both datasets, the titles and bodies were taken
+as the contents of the documents. Stop words in a standard list and
+terms whose total frequencies are less than 10 were removed. Table
+4 lists the sizes of Wikipedia and Web-I datasets.
+In the Wikipedia dataset, documents are associated with labels
+representing the categories of them. We adopted the 25 first-level
+categories in the Wikipedia hierarchy, i.e., each Wikipedia document is categorized into one of the 25 categories. The categories include “agriculture”, “arts”, “business”, “education”, “law”, etc. In
+the Web-I dataset, similarly, all documents are categorized into one
+of the ODP categories by a built-in classifier at the search engine.
+There are 204 categories from the second-level ODP categories, including “arts/music”, “business/management”, “computer/graphics”,
+“science/chemistry”, “sports/baseball”, etc. Table 5 gives the statistics of both Wikipedia and Web-I, where Min and Max stand for
+the minimal and maximal class sizes respectively, R is the range of
+class sizes, i.e., R = Max−Min, Mean and STD represent the mean
+value and the standard deviation of class sizes respectively, and CV
+is the coeﬃcient of variance, i.e., CV = STD/Mean. One can see
+that Web-I has smaller R and CV values, indicating that it has a
+smaller degree of dispersion in the distribution of class sizes. From
+the table, we can see that although these two datasets have similar
+data sizes, the granularities of classes, i.e., number of classes and
+average number of documents per class, are very diﬀerent.
+We tested RLSI, NMF, GRLSI and GNMF on the Wikipedia
+dataset and Web-I dataset under diﬀerent parameter settings. We
+used single machine implementations of the methods. Specifically,
+for the Wikipedia dataset, we set the number of class-specific topics per class and the number of shared topics in GRLSI and GNMF
+as (K s , Kc ) = (10, 4)/(20, 8)/(50, 20)/(100, 40), resulting in K =
+110/220/550/1100 total number of topics. (Note that the total
+number of topics in GRLSI and GNMF is K s + 25 × Kc , where 25 is
+the number of classes in the Wikipedia dataset.) We set the number
+of topics in RLSI and NMF as 110/220/550/1100 for fair comparison. For the Web-I dataset, we decided the number of class-specific
+5
+
+K = 220
+23.27
+22.88
+22.68
+22.47
+
+EXPERIMENTS
+
+We have conducted experiments to test the eﬃciency and eﬀectiveness of GRLSI and GNMF.
+
+7.1
+
+K = 110
+14.99
+14.01
+13.95
+14.05
+
+7.2
+
+Experiment 1
+
+In this experiment, we evaluated the eﬃciency improvement of
+GRLSI and GNMF over RLSI and NMF on the Wikipedia dataset
+and the Web-I dataset. We ran all the methods in 100 iterations. For
+each method, the average execution time per iteration was recorded.
+Table 6 and Table 7 report the average execution time per iteration for RLSI and GRLSI on Wikipedia, under diﬀerent settings of
+topic numbers and λ1 values. Figure 2 further shows average time
+per iteration of GRLSI and RLSI versus numbers of topics when
+λ1 = 0.01. Figure 3 shows the average time per iteration of GNMF
+over NMF on Wikipedia, versus numbers of topics. From these
+results, we can conclude that GRLSI and GNMF consistently outperform RLSI and NMF, respectively, in terms of eﬃciency. More
+speedup can be achieved when total number of topics increases.
+
+We plan to release the two datasets to the research communities.
+
+381
+
+Running time per iteration (minutes)
+
+400
+
+Table 8: Execution time (per iteration) of RLSI on Web-I.
+
+350
+
+Min.
+λ1 = 0.01
+λ1 = 0.02
+λ1 = 0.05
+λ1 = 0.1
+
+300
+250
+200
+
+RLSI
+
+150
+
+GRLSI
+
+100
+
+K = 200
+49.79
+39.24
+34.64
+32.68
+
+K = 500
+123.45
+117.54
+110.67
+100.25
+
+K = 1000
+324.58
+313.49
+303.24
+301.74
+
+50
+0
+0
+
+200
+
+400
+
+600
+
+800
+
+1000
+
+1200
+
+Table 9: Execution time (per iteration) of GRLSI on Web-I.
+
+Total number of topcis
+
+Min.
+λ1 = 0.01
+λ1 = 0.02
+λ1 = 0.05
+λ1 = 0.1
+
+Figure 2: Execution time of RLSI and GRLSI on Wikipedia.
+300
+
+Runningg time per iteration (minutes)
+
+K = 100
+26.57
+26.79
+23.23
+14.19
+
+K = 1030
+35.48
+35.30
+35.36
+34.86
+
+K = 2060
+57.50
+55.60
+52.63
+50.44
+
+K = 4120
+104.37
+99.46
+94.78
+92.15
+
+K = 10300
+438.29
+427.22
+414.37
+409.25
+
+250
+200
+150
+
+We further evaluated the shared topics discovered from Wikipedia
+(Table 10) and Web-I (Table 11). In the Web-I dataset, the shared
+topics seem to characterize general information. In the Wikipedia
+dataset some of the shared topics are similar to the class-specific
+topics in category “geography”. We checked the Wikipedia dataset
+and found that this is because more than one third of Wikipedia articles fall into category “geography”, and some geography related
+topics appear to be general in the document collection.
+From the experimental results reported above, we can conclude
+that applying GMF to non-probabilistic methods of RLSI and NMF
+can maintain the same level of readability while significantly improving the eﬃciency and scalability. The resulting methods of
+GRLSI and GNMF can really find coherent and meaningful topics.
+This is true for not only class-specific topics, but also shared topics.
+
+NMF
+GNMF
+
+100
+50
+0
+0
+
+200
+
+400
+
+600
+
+800
+
+1000
+
+1200
+
+Total number of topics
+
+Figure 3: Execution time of NMF and GNMF on Wikipedia.
+
+The results indicate that GRLSI and GNMF are superior to RLSI
+and NMF in terms of eﬃciency.
+Table 8 and Table 9 report the average execution time per iteration for RLSI and GRLSI on Web-I with respect to diﬀerent settings
+of topic numbers and λ1 values. Figure 4 shows the average execution time per iteration of GRLSI and RLSI when λ1 equals 0.01.
+Figure 5 shows the results of GNMF and NMF. In fact we were not
+able to run RLSI and NMF on the single machine, when the number of topics is larger than 1,000. The results indicate that GRLSI
+and GNMF have better eﬃciency and scalability, particularly when
+the number of topics gets large.
+From the experimental results reported above, we can conclude
+that applying GMF to non-probabilistic methods of RLSI and NMF
+can significantly improve the eﬃciency and scalability of them.
+The proposed GRLSI and GNMF methods can handle much larger
+numbers of topics and much larger datasets.
+Next, we evaluated the eﬀectiveness of GRLSI and GNMF by
+checking the readability of the topics generated by them. As example, we show the topics generated by GRLSI and GNMF in
+the setting of (K s = 20, Kc = 8(10), λ1 = 0.01, λ2 = 0.1) for
+both Wikipedia and Web-I. Table 10 and Table 11 present example topics randomly selected from the topics discovered by GRLSI
+and GNMF on Wikipedia and Web-I. For each of the datasets and
+each of the methods, 3 shared topics and 9 class-specific topics
+are presented. The corresponding class labels are also shown for
+the class-specific topics. Top 6 weighted terms are shown for each
+topic. From all the results (including the results in other parameter
+settings), we found that (1) GRLSI and GNMF can discover readable topics. Both of the shared topics and the class-specific topics
+are coherent and easy to understand. (2) For each class, GRLSI
+and GNMF can discover class-specific topics that characterize the
+class. (3) GRLSI discovers compact topics (the average topic compactness AvgComp = 0.0032 for Wikipedia topics and AvgComp
+= 0.0018 for Web-I topics) 6 as expected.
+
+In this experiment, we tested the eﬀectiveness of GRLSI and
+GNMF by using the topics generated by them with the Web-I dataset
+in search relevance ranking on the Web-II dataset7 . Specifically,
+for GRLSI, we combined the topic matching scores with the term
+matching scores given by BM25, denoted as “BM25+GRLSI”. We
+took RLSI and CRLSI as baselines, denoted as “BM25+RLSI” and
+“BM25+CRLSI”, respectively. In the former an RLSI model is
+trained for the whole Web-I dataset and in the latter an RLSI model
+is trained for each class. Similarly, for GNMF, we combined the
+topic matching scores with the term matching scores by BM25, denoted as “BM25+GNMF”. We took NMF and CNMF as baselines,
+denoted as “BM25+NMF” and “BM25+CNMF”, respectively. In
+the former an NMF model is trained for the whole Web-I dataset
+and in the latter an NMF model is trained for each class.
+GRLSI, RLSI, GNMF, and NMF were trained on Web-I dataset
+with the same parameter settings in Section 7.1. For CRLSI and
+CNMF, we also trained the models on Web-I dataset under the same
+parameter settings in Section 7.1, except parameter K s , as there
+exists no shared topic in CRLSI and CNMF.
+To evaluate the relevance performance of these topic models on
+Web-II, we took a heuristic method for relevance ranking. Given
+a query q and a document d (and its label yd ), the method assigns the query into the same class that the document belongs to,
+i.e., class yd , and then calculates the matching score between the
+query and the document in the topic space using the techniques described above for GRLSI and CRLSI (also GNMF and CNMF).
+The method then ranks the documents based on their relevance
+scores. The relevance score of a document is calculated as a linear combination of the BM25 score and the topic matching score
+
+6
+Average topic compactness is defined as average ratio of terms
+with non-zero weights per topic.
+
+7
+We did not try to use the topics generated with Wikipedia, because
+the categories are not consistent with the categories in Web-II.
+
+7.3
+
+382
+
+Experiment 2
+
+GNMF
+
+GRLSI
+
+Table 10: Topics discovered by GRLSI (top) and GNMF (bottom) on Wikipedia.
+Shared topics
+commune
+state
+communes highways
+department route
+places
+highway
+france
+india
+populated
+brazil
+places
+new
+populated
+york
+village
+city
+azerbaijan
+zealand
+population jersey
+municipality routes
+
+political
+party
+colour
+india
+canada
+australia
+language
+japanese
+films
+cast
+chinese
+english
+
+album
+albums
+singers
+musicians
+track
+listing
+album
+albums
+track
+listing
+released
+band
+
+Arts
+rock
+american
+musicians
+singers
+country
+english
+groups
+rock
+american
+musical
+metal
+musicians
+
+groups
+musical
+music
+rappers
+metal
+heavy
+rappers
+musicians
+american
+singers
+singles
+wiley
+
+province
+state
+village
+villages
+highways
+united
+village
+villages
+england
+india
+population
+central
+
+Geography
+municipality
+municipalities
+gmina
+voivodeship
+population
+germany
+district
+germany
+districts
+town
+administrative
+towns
+
+communes
+commune
+department
+france
+departments
+places
+department
+commune
+communes
+france
+departments
+home
+
+elections
+election
+weapon
+party
+parties
+political
+elections
+election
+results
+members
+parties
+held
+
+Politics
+states
+congressional
+delegations
+elections
+united
+senate
+war
+world
+poland
+weapons
+conflict
+union
+
+kingdom
+political
+parties
+country
+party
+fascism
+military
+country
+units
+formations
+army
+infantry
+
+GNMF
+
+GRLSI
+
+Table 11: Topics discovered by GRLSI (top) and GNMF (bottom) on Web-I.
+Shared topics
+video business
+games
+phone services
+game
+mobile company
+cheats
+tv
+service
+xbox
+cell
+products
+ign
+phones management pc
+www products
+day
+http
+product
+october
+org
+quality
+september
+website buy
+july
+net
+accessories june
+html
+store
+august
+
+Arts/literature
+poems
+harry
+book
+poetry
+potter
+chapter
+poem
+books summary
+poets
+rowling books
+love
+series
+analysis
+poet
+children author
+poems
+harry
+books
+quotes
+potter
+children
+shakespear rowling read
+william
+series
+reading
+poetry
+deathly list
+poets
+hallows readers
+
+Business/healthcare
+dental
+healthcare
+care
+dentist practice
+medical
+care
+test
+health
+dentistry management equipment
+dentists exam
+ppo
+health
+patient
+supplies
+dentist healthcare
+medical
+dentists management equipment
+dentistry patient
+supplies
+dr
+hospital
+surgical
+dental
+solutions
+patient
+cosmetic nursing
+hospital
+
+300
+
+Runningg time per iteration (minutes)
+
+500
+
+Running time per iteration (minutes)
+
+Computers/internet
+chat
+facebook web
+teen
+people
+hosting
+online connect design
+people sign
+website
+friends web
+domain
+join
+password internet
+google facebook design
+maps people
+web
+blog
+connect website
+gmail sign
+development
+map
+friends
+marketing
+engine password graphic
+
+450
+400
+350
+300
+250
+
+RLSI
+
+200
+
+GRLSI
+
+150
+100
+50
+0
+0
+
+2000
+
+4000
+
+6000
+
+8000
+
+10000
+
+12000
+
+250
+200
+150
+
+NMF
+GNMF
+
+100
+50
+0
+0
+
+Total number of topics
+
+2000
+
+4000
+
+6000
+
+8000
+
+10000
+
+12000
+
+Total number of topcis
+
+Figure 4: Execution time of RLSI and GRLSI on Web-I.
+
+Figure 5: Execution time of NMF and GNMF on Web-I.
+
+between the document and the query. For RLSI (also NMF), neither
+document labels nor query labels were needed. We directly calculated the matching score between a query and a document in the
+topic space using the techniques described in [26]. The trading-oﬀ
+parameter α in the linear combination was set from 0 to 1 in steps
+of 0.1 for all methods. The heuristic method of automatic assignment of a query into a class has the advantage of better eﬃciency in
+online prediction, given that usually the number of classes is large.
+Even though this is heuristic, our experimental results show that it
+is eﬀective.
+Table 12 and Table 13 show the retrieval performance of RLSI
+families and NMF families on the test set of Web-II respectively,
+obtained with the best parameter setting determined by the validation set. From the results, we can see that (1) all of these methods can significantly improve the baseline BM25 (t-test, p-value
+< 0.05). (2) GRLSI and GNMF perform significantly better than
+CRLSI and CNMF respectively (t-test, p-value < 0.05), indicating the eﬀectiveness of Group Matrix Factorization, specifically,
+the use of shared topics. (3) GRLSI and GNMF perform slightly
+worse than RLSI and NMF, but they can achieve much higher ef-
+
+ficiency and scalability, as described in Section 7.2. The decreases
+of accuracy by GRLSI and GNMF are very small, e.g., NDCG@1
+drops only 0.0010 for GRLSI and 0.0011 for GNMF. (4) The NMF
+families perform better than the RLSI families. This is because
+we did not further tune the parameters for the RLSI families. The
+results in [26] show that with fine tuning RLSI can achieve high
+performances, and we anticipate that this is also the case for the
+other RLSI methods. We conclude that both GRLSI and GNMF
+are useful for relevance ranking with high accuracies.
+
+8. CONCLUSIONS
+In this paper, we have investigated the possibilities of further
+enhancing the scalability and eﬃciency of non-probabilistic topic
+modeling methods. We have proposed a general topic modeling
+technique, referred to as Group Matrix Factorization (GMF), which
+conducts topic modeling on the basis of existing classes of documents. Thus the learning of a large number of topics (i.e.,classspecific topics) can be performed in parallel. Although the strategy has been tried in computer vision, this is the first compre-
+
+383
+
+Table 12: Relevance performance of RLSI families on Web-II.
+Method
+BM25
+BM25+RLSI
+BM25+CRLSI
+BM25+GRLSI
+
+MAP NDCG@1 NDCG@3 NDCG@5 NDCG@10
+0.3006
+0.3043
+0.3490
+0.3910
+0.4805
+0.3050
+0.3076
+0.3539
+0.3943
+0.4858
+0.3027
+0.3051
+0.3509
+0.3927
+0.4840
+0.3039
+0.3066
+0.3520
+0.3934
+0.4855
+
+[14]
+[15]
+[16]
+
+Table 13: Relevance performance of NMF families on Web-II.
+Method
+BM25
+BM25+NMF
+BM25+CNMF
+BM25+GNMF
+
+[17]
+
+MAP NDCG@1 NDCG@3 NDCG@5 NDCG@10
+0.3006
+0.3043
+0.3490
+0.3910
+0.4805
+0.3057
+0.3091
+0.3546
+0.3960
+0.4895
+0.3033
+0.3055
+0.3512
+0.3934
+0.4869
+0.3046
+0.3080
+0.3530
+0.3955
+0.4887
+
+[18]
+
+[19]
+hensive study of it on text data, as far as we know. The GMF
+technique can be further specified in individual non-probabilistic
+methods. We have applied GMF to RLSI and NMF, obtaining
+Group RLSI (GRLSI) and Group NMF (GNMF), and theoretically
+demonstrated that GRLSI and GNMF are much more eﬃcient and
+scalable than RLSI and NMF in terms of time complexity.
+We have conducted experiments on two large datasets to test the
+performances of GRLSI and GNMF. Both datasets contain about
+3 million documents. Experimental results show that GRLSI and
+GNMF are much faster and scalable than existing methods such as
+RLSI and NMF, especially when the number of topics is large. We
+have also verified that GMF can discover meaningful topics and the
+topics can be used to improve search relevance. As future work,
+we plan to implement GMF on distributed systems and perform
+experiments on even larger datasets.
+
+9.
+
+[20]
+
+[21]
+
+[22]
+
+[23]
+[24]
+[25]
+
+REFERENCES
+
+[26]
+
+[1] S. Bengio, F. Pereira, and Y. Singer. Group sparse coding. In
+NIPS, pages 82–89, 2009.
+[2] P. N. Bennett, K. M. Svore, and S. T. Dumais.
+Classification-enhanced ranking. In WWW, pages 111–120,
+2010.
+[3] D. Blei. Introduction to probabilistic topic models.
+COMMUN ACM, to appear, 2011.
+[4] D. Blei and J. McAuliﬀe. Supervised topic models. In NIPS,
+pages 121–128, 2008.
+[5] D. Blei, A. Y. Ng, and M. I. Jordan. Latent dirichlet
+allocation. JMLR, 3:993–1022, 2003.
+[6] S. S. Chen, D. L. Donoho, and M. A. Saunders. Atomic
+decomposition by basis pursuit. SISC, 20:33–61, 1998.
+[7] S. Deerwester, S. T. Dumais, G. W. Furnas, T. K. Landauer,
+and R. Harshman. Indexing by latent semantic analysis. J
+AM SOC INFORM SCI, 41:391–407, 1990.
+[8] B. Efron, T. Hastie, I. Johnstone, and R. Tibshirani. Least
+angle regression. ANN STAT, 32:407–499, 2004.
+[9] J. Friedman, T. Hastie, H. Hofling, and R. Tibshirani.
+Pathwise coordinate optimization. ANN APPL STAT,
+1:302–332, 2007.
+[10] W. J. Fu. Penalized regressions: The bridge versus the lasso.
+J COMPUT GRAPH STAT, 7:397–416, 1998.
+[11] T. Hofmann. Probabilistic latent semantic indexing. In
+SIGIR, pages 50–57, 1999.
+[12] S. Lacoste-Julien, F. Sha, and M. I. Jordan. Disclda:
+Discriminative learning for dimensionality reduction and
+classification. In NIPS, pages 897–904, 2008.
+[13] D. D. Lee and H. S. Seung. Learning the parts of objects
+
+[27]
+[28]
+
+with nonnegative matrix factorization. Nature, 401:391–407,
+1999.
+D. D. Lee and H. S. Seung. Algorithms for non-negative
+matrix factorization. In NIPS 13, pages 556–562. 2001.
+H. Lee, A. Battle, R. Raina, and A. Y. Ng. Eﬃcient sparse
+coding algorithms. In NIPS, pages 801–808. 2007.
+H. Lee and S. Choi. Group nonnegative matrix factorization
+for eeg classification. In AISTATS, pages 320–327, 2009.
+J. Mairal, F. Bach, J. Ponce, G. Sapiro, and A. Zisserman.
+Discriminative learned dictionaries for local image analysis.
+In CVPR, 2008.
+J. Mairal, F. Bach, J. Ponce, G. Sapiro, and A. Zisserman.
+Supervised dictionary learning. In NIPS, pages 1033–1040.
+2009.
+D. M. Mimno and McCallum. Organizing the oca: Learning
+faceted subjects from a library of digital books. In JCDL,
+pages 376–385, 2007.
+B. A. Olshausen and D. J. Fieldt. Sparse coding with an
+overcomplete basis set: a strategy employed by v1. VISION
+RES, 37:3311–3325, 1997.
+M. Osborne, B. Presnell, and B. Turlach. A new approach to
+variable selection in least squares problems. IMA J NUMER
+ANAL, 2000.
+D. Ramage, C. D. Manning, and S. Dumais. Partially labeled
+topic models for interpretable text mining. In SIGKDD,
+pages 457–465, 2011.
+S. E. Robertson, S. Walker, S. Jones, M. Hancock-Beaulieu,
+and M. Gatford. Okapi at trec-3. In TREC’3, 1994.
+G. Salton, A. Wong, and C. S. Yang. A vector space model
+for automatic indexing. Commun. ACM, 18:613–620, 1975.
+F. Wang, N. Lee, J. Sun, J. Hu, and S. Ebadollahi. Automatic
+group sparse coding. In AAAI, pages 495–500, 2011.
+Q. Wang, J. Xu, H. Li, and N. Craswell. Regularized latent
+semantic indexing. In SIGIR, pages 685–694, 2011.
+X. Wei and B. W. Croft. Lda-based document models for
+ad-hoc retrieval. In SIGIR, pages 178–185, 2006.
+C. Zhai, A. Velivelli, and B. Yu. A crosscollection mixture
+model for comparative text mining. In SIGKDD, pages
+743–748, 2004.
+
+Appendix
+Proof sketch of Proposition 1. The proof will follow closely the
+proof given in [14] for the case Y = 0. First note that the objective
+is decomposable in the rows of A. Considering the case of a single
+row, denoted as ā, leads to the objective
+
+2
+F ( ā) =  x̄ − ȳ − ST ā2 ,
+where x̄ and ȳ are the corresponding
+
+rows of X and Y respectively.
+Define the auxiliary function G ā, āt as
+  
+
+
+
+T
+T   
+
+G ā, āt = F ( ā) + ā − āt ∇ ā F āt + ā − āt Ω āt ā − āt ,
+ 
+where Ω āt is a diagonal matrix defined as
+ωti j = δi j
+
+SST āt + (Sȳ)i
+i
+
+( āt )i
+
+.
+
+Here, δi j is equal to 1 if i = j and 0 otherwise. Then the update rule
+can be derived using the methods in [14].
+
+384
+
+

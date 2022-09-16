@@ -1,0 +1,1561 @@
+Automatic Suggestion of Query-Rewrite Rules
+for Enterprise Search
+Zhuowei Bao
+
+Benny Kimelfeld
+
+Yunyao Li
+
+University of Pennsylvania
+Philadelphia, PA 19104, USA
+
+IBM Research – Almaden
+San Jose, CA 95120, USA
+
+IBM Research – Almaden
+San Jose, CA 95120, USA
+
+zhuowei@cis.upenn.edu
+
+kimelfeld@us.ibm.com
+
+yunyaoli@us.ibm.com
+
+ABSTRACT
+
+1. INTRODUCTION
+
+Enterprise search is challenging for several reasons, notably
+the dynamic terminology and jargon that are speciﬁc to the
+enterprise domain. This challenge is partly addressed by
+having domain experts maintaining the enterprise search engine and adapting it to the domain speciﬁcs. Those administrators commonly address user complaints about relevant
+documents missing from the top matches. For that, it has
+been proposed to allow administrators to inﬂuence search
+results by crafting query-rewrite rules, each specifying how
+queries of a certain pattern should be modiﬁed or augmented
+with additional queries. Upon a complaint, the administrator seeks a semantically coherent rule that is capable of
+pushing the desired documents up to the top matches. However, the creation and maintenance of rewrite rules is highly
+tedious and time consuming. Our goal in this work is to
+ease the burden on search administrators by automatically
+suggesting rewrite rules. This automation entails several
+challenges. One major challenge is to select, among many
+options, rules that are “natural” from a semantic perspective
+(e.g., corresponding to closely related and syntactically complete concepts). Towards that, we study a machine-learning
+classiﬁcation approach. The second challenge is to accommodate the cross-query eﬀect of rules—a rule introduced in
+the context of one query can eliminate the desired results
+for other queries and the desired eﬀects of other rules. We
+present a formalization of this challenge as a generic computational problem. As we show that this problem is highly
+intractable in terms of complexity theory, we present heuristic approaches and optimization thereof. In an experimental
+study within IBM intranet search, those heuristics achieve
+near-optimal quality and well scale to large data sets.
+
+While search engines on the Web are highly successful
+in content retrieval, enterprise search remains an important
+living challenge [2, 11, 12]. The retrieval community identiﬁed various sources of diﬃculty [5, 7, 10, 11], including the
+sparseness of link structure and anchor text, low economic
+incentive of content providers to promote easy search access,
+and a strong presence of dynamic, domain-speciﬁc terminology and jargon. Another practical diﬃculty lies in the fact
+that enterprise search deployments are typically managed by
+administrators who are domain experts but not search experts. Hence, although these administrators well understand
+the speciﬁc content and search needs of the domain, translating that knowledge into tuning the underlying retrieval
+model is a nontrivial (and sometimes impossible) task.
+To address the above challenges, research and industrial
+groups [8, 9, 21] advocated the design of search architectures
+that are (1) easily comprehensible (featuring fairly transparent ranking mechanisms), and (2) easily customizable
+through intuitive runtime rules to program domain knowledge. One important type of runtime rules is that of queryrewrite rules (or rewrite rules for short) that, in essence,
+introduce human-controlled query reformulation [18, 19] at
+runtime. By augmenting or modifying the posed search
+query, rewrite rules enable administrators to easily satisfy
+a wide range of maintenance needs such as: adaptation of
+terminology (e.g., produce a query where green card is replaced with permanent residency), query specialization (e.g.,
+h5n1 instead of seasonal flu, or issi,1 the company’s software
+installation tool, instead of download), query generalization
+(e.g., intranet account management instead of intranet password change), noise removal (e.g., elimination of web page
+from a query like james allan web page), and so on.
+This work is motivated by a deployment of the above architecture in the IBM internal search. There, the type of
+tasks that dominate the eﬀort of administrators is that of
+pushing up relevant documents for speciﬁc search queries.
+Such a task is typically triggered by an employee complaint
+mentioning a speciﬁc query and a relevant document (URL)
+missing from the top results (e.g., the ﬁrst page). For example, such a complaint can be that http://issi.ibm.com/lnotes2
+is missing from the top results for lotus notes download. In
+turn, the administrator can phrase a rewrite rule to accommodate the potential mismatch between the query and the
+document. Those rewrite rules are in the spirit of (actually,
+a generalization of) the “query template” rules [1, 20]. In
+
+Categories and Subject Descriptors: H.3.3 [Information Storage and Retrieval]: Query formulation
+General Terms: Algorithms, Performance, Theory
+Keywords: Query reformulation, query-rewrite rules, enterprise search
+
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies are
+not made or distributed for profit or commercial advantage and that copies
+bear this notice and the full citation on the first page. To copy otherwise, to
+republish, to post on servers or to redistribute to lists, requires prior specific
+permission and/or a fee.
+SIGIR’12, August 12–16, 2012, Portland, Oregon, USA.
+Copyright 2012 ACM 978-1-4503-1472-5/12/08 ...$15.00.
+
+1
+2
+
+591
+
+IBM Standard Software Installer.
+We replaced each example URL with a simpliﬁed variant.
+
+particular, a rule is usually applicable to multiple queries
+(rather than to just one), and it usually results in augmentation (rather than replacement) of the query by the newly
+generated query. For example, the administrator can introduce the rule download → issi that, in eﬀect, incorporates
+the results for lotus notes issi into those for lotus notes download whenever the latter query is posed. In Section 2 we
+describe our engine architecture and rules in more detail.
+Manually formulating rewrite rules to handle complaints
+is an extremely tedious and time consuming process. First,
+the administrator needs to inspect the speciﬁed document
+in order to come up with relevant rules. For each relevant
+rule, a rough estimation is made on its eﬀect on other queries
+(and for that, query logs may be consulted). Next, the administrator tries out her rule of choice (in a sandbox environment). If the desired eﬀect (pushing up the desired
+match) is not realized, this process is repeated with alternative rules, sometimes until the conclusion that the problem
+lies in the ranking algorithm and/or the backend analytics. In this work, we seek to aid administrators of enterprise
+search by automatically producing rewrite-rule suggestions
+that are already validated as problem solvers. Towards this
+goal, we need to overcome two major challenges, which are
+the subject of this paper. These challenges are generic to
+essentially every search system that features administration
+by rewrite rules, and we confront these challenges in a level
+of abstraction that departs from our speciﬁc testbed.
+
+s
+
+t
+
+seasonal flu
+seasonal flu
+seasonal flu
+seasonal flu
+seasonal
+seasonal
+seasonal
+seasonal
+...
+
+avian flu
+h5n1
+flu employee
+and IBM h5n1
+avian
+h5n1
+flu
+you and IBM
+...
+
+change management
+change management
+change management
+change management
+change management
+change management
+management
+management
+management
+...
+
+scip
+strategy & change internal practice
+welcome to strategy
+welcome strategy
+strategy change & internal
+to strategy change internal practice
+internal
+index pages
+internal practice scip
+...
+
+Figure 1: Automatically generated rules s → t
+ily based on query logs and/or anchor text, which may be
+sparse in the enterprise Intranet. The same holds true for the
+work of Kraft and Zien [14], aiming to ﬁnd reformulations
+that are “closely related” to the original query. Moreover,
+in these works a recommendation (or reformulation) has no
+eﬀect beyond the speciﬁc engine-user interaction at hand; it
+is not the case here, as we discuss in the next challenge.
+Challenge 2: Cross-Query Eﬀect. As a rewrite rule can
+aﬀect multiple queries, its inclusion may actually reduce the
+overall search quality. Further, a rule can cancel the positive eﬀects achieved by previous rules. To illustrate, in the
+example of Figure 4 (which we discuss in detail throughout Section 4) the rule spreadsheets → symphony rewrites
+spreadsheets download into symphony download, resulting in
+the document d2 being a top match. Following a complaint
+on the query lotus notes download, we introduce the rule
+r1 : download → issi. However, r1 also aﬀects our previous
+spreadsheets download by pushing the desired d2 below d1 .
+To address the above problem, the search administrator
+maintains a representative benchmark of queries and desired matches (possibly weighted by popularity) that includes those indicated in past complaints. To estimate the
+eﬀect of a candidate rule, search quality is evaluated (using
+a quality estimator of choice, e.g., DCG) by running the engine against the benchmark. If a negative eﬀect is detected,
+the administrator can avoid the rule, consider a new rule, or
+just accept the loss in quality. But here, automation can contribute signiﬁcantly in terms of both eﬀort and quality. We
+can allow the system to automatically suggest the selection
+of a subset of the rules to optimize quality (w.r.t. the underlying estimator). Moreover, the administrator can then
+choose multiple rules (instead of just one) to address a speciﬁc complaint, and thereby enrich the search space for the
+system. In the above example, for instance, if the system
+had the rule notes download → notes issi at its disposal, it
+could suggest to use it instead of r1 , and thus maintain the
+top results for both spreadsheets download and lotus notes
+download. In Section 4, we formalize this idea as a combinatorial optimization problem. Unfortunately, this problem
+turns out to be computationally hard (NP-hard), and even
+hard to approximate within any nontrivial ratio. Nevertheless, we propose greedy heuristics and optimizations thereof.
+A related optimization problem has been recently studied
+by Ozertem et al. [19], where one is given a collection of
+
+Challenge 1: Generating Intuitive Rules. A straightforward approach towards suggesting rewrite rules is to generate candidates from the desired document (or speciﬁc parts
+thereof), and ﬁlter out the candidates that fail to achieve
+the desired eﬀect. However, the number of possible rules
+obtained in this way can be overwhelmingly large. For example, in our experimentation over real data (within IBM
+intranet search), our automation often reaches around 100
+suggestions, and in some cases around 1000. More importantly, the vast majority of the suggested rules do not make
+sense to the administrator; that is, they are not rules of the
+kind she would devise or perceive as intuitive. For illustration, Figure 1 shows some of the suggestions we obtained.
+In the top part of the table in the ﬁgure, relating to seasonal
+flu, the top two are reasonable but the other hardly make
+sense. Note, however, that determining what “reasonable”
+or “sense making” means may require domain knowledge.
+As an example, IBM uses SCIP for consulting on organizational reconstruction; thus, the top rewrites for change
+management in the bottom part of Figure 1 make sense. Yet
+one can hardly accept the other rules in that part.
+We refer to a rule that makes sense as natural. Formulating natural rules is necessary, as administrators should
+be conﬁdent in the semantic justiﬁcation of each rule. Put
+diﬀerently, comprehensiveness, which is at the heart of the
+architecture philosophy, is violated if rules are inconsistent
+with human judgment. (This problem does not arise in online query reformulation/expansion [4] that aﬀect only the
+internals of the search process.) Thus, crucial to realizing
+automatic rule suggestion is a component that classiﬁes rules
+into natural and unnatural ones. In Section 3 we present a
+machine-learning approach to realizing such a component.
+A related problem is that of recommending query alternatives to end users [3, 13, 22]. However, a query alternative
+applies just to the user-posed query, hence is diﬀerent from
+a rewrite rule. Furthermore, the techniques there are heav-
+
+592
+
+Rewrite rules
+Query
+q
+
+Query rewriting
+
+compared to those for the original query. We do not discuss
+here the details of this reward, as they are of low importance
+to this work.
+To simplify our study, this work is restricted to rewrite
+rules of the form CONTAINS: s →+ t, which we denote
+simply as s → t, where s and t are terms. We focus on
+this particular type of rules since, besides their simplicity,
+we found that they are the most commonly used in our enterprise. Moreover, with this restriction the problems we
+consider are already challenging. While some of our contributions can be easily extended to more general rules, others
+require nontrivial future eﬀort.
+
+Set Q
+of queries
+Index
+
+Final
+results
+
+Result aggregation
+Front end
+
+Ranked
+results
+
+Back end
+
+Figure 2: Search-engine architecture
+query reformulations (each applying to one query) to select
+from, and the goal is to maximize the probability of a click
+in a user model built from the query log.
+
+3. RECOGNIZING NATURAL RULES
+
+Organization. The rest of the paper is organized as follows. In Section 2 we brieﬂy describe our search architecture.
+We study the above two challenges in Sections 3 and 4, respectively. In Section 5 we present an experimental study
+within IBM intranet search, and we conclude in Section 6.
+
+2.
+
+In this section, we consider the ﬁrst challenge discussed in
+the introduction, where we explained the intuition underlying the notion of natural rewrite rules and their importance
+to the realization of automatic rule suggestion in enterprise
+search. Our approach is to ﬁrst generate a (possibly large)
+set of candidate rules by pure syntactic means, and then to
+classify them through (supervised) machine learning.
+
+SEARCH-ARCHITECTURE OVERVIEW
+
+In this section, we outline the architecture of the engine
+deployed in IBM intranet search [21], to the extent needed
+as background for this work.3 Figure 2 depicts a simpliﬁed
+description of the conceptual runtime ﬂow. The front-end
+takes the input search query q and, by applying rewrite rules,
+produces a set Q of queries. In turn, the queries in Q are
+evaluated against the index, resulting in a list of results for
+each query. The results are then aggregated together to
+produce the ﬁnal ranked list.
+Similarly to existing search methodologies [6, 15, 23], this
+engine leverages structural information from Web pages (such
+as links, anchor text, headers and titles) in retrieval. The
+basic idea is to produce high-quality fields associated with
+each document, and at runtime use these ﬁelds for ranking.
+Rewrite rules program the query rewriting component of
+Figure 2 to aﬀect the search as needed. The rewrite rules
+in our engine are in the spirit of the query-template rules [1,
+9, 20]. Rather than giving an elaborate speciﬁcation of the
+rule language, we give examples (in a simpliﬁed language).
+The following rule ﬁres when the query is of the form x info,
+where x is belongs to a dictionary of products; it introduces
+a new query with the term info removed.
+
+Candidate generation. The use case we consider involves
+a query q and a desired match (document) d that is missing from the top results. Our generation of candidate rules
+s → t is fairly straightforward: we produce a set S of lefthand-side candidates, a set T of right-hand-side candidates,
+and output the Cartesian product S × T . The set S consists
+of all the n-grams (subsequences of n tokens) of q, where n is
+bounded by a constant (5 in our implementation). In principle, we could similarly choose T as the set of all n-grams of
+d (which could result in a huge number of candidates, even
+if n is bounded). But in our implementation, T consists of
+the n-grams just from the high-quality ﬁelds of d (produced
+during back-end analysis). Recall that those ﬁelds were discussed in Section 2. As an example, suppose that q is the
+query “change management info” and one of the considered
+ﬁelds is “welcome to scip strategy & change internal practice.”
+The following are among the candidate rules.
+• management → scip
+• change → strategy & change internal
+• change management → scip strategy
+Even with the restriction to high-quality ﬁelds, the above
+step may generate a large number of candidate rules, most
+of which are unnatural (hence, useless to the administrator),
+as illustrated in Figure 1. We address this problem by taking
+a machine-learning approach: we identify a set of features
+and learn classiﬁcation models from manually labeled data
+to classify rules into natural and unnatural ones.
+
+EQUALS: x[in PRODUCT] info → x
+The next rule, involving a regular expression, ﬁres when the
+query contains the word lotus followed by either presentations or spreadsheets; it introduces a new query with the two
+words replaced by lotus symphony.
+
+Features. Table 1 lists the feature set we use for classifying rules. These features fall into three categories: syntactic
+features, features based on query-log statistics, and features
+based on corpus statistics. Next, we brieﬂy discuss the features in each category. We denote the examined rule as
+s → t, where s and t are strings of words.
+The syntactic features can be indicative of the syntactic coherence of a rule. For example, using the Boolean
+features beginSW (r) and endSW (r) follows our observation
+that when s or t begins or ends with stop words, the rule
+is rarely deemed natural. We consider two types of stop
+words: those from conventional (English) dictionaries and
+those from domain-speciﬁc dictionaries (including words like
+“welcome,” “index” and “homepage”).
+
+CONTAINS: lotus x(presentations|spreadsheets)
+→ lotus symphony
+The next rule ﬁres when the query contains msn search, and
+introduces a new query with msn search replaced by bing.
+CONTAINS: msn search →+ bing
+The plus sign in →+ assigns preference to the new query
+(containing bing) over the original query (containing msn
+search). In eﬀect, results for the new query are rewarded
+3
+
+More details on this search engine can be found in the IBM
+page of Infrastructure for Intelligent Information Systems
+http://www.almaden.ibm.com/cs/disciplines/iiis.
+
+593
+
+ing data, trying out every combination of the upper-level
+thresholds τi , and taking the combination that minimizes
+the classiﬁcation error. For eﬃciency sake, we implemented
+a ﬁx-and-optimize heuristic where we optimized one threshold at a time while ﬁxing the others.
+
+Table 1: Features for natural-rule recognition; the
+considered rule is s → t, and u refers to either s or t
+Syntactic
+Whether u begins with a stop word
+Whether u ends with a stop word
+Number of tokens in u
+
+beginSW (r)
+endSW (r)
+|r|
+
+4. OPTIMIZING MULTI-RULE SELECTION
+
+Query-Log Statistics
+log refFreq(s, t)
+
+We now consider the second challenge discussed in the introduction: selecting a set of rewrite rules from a large set
+of previously deﬁned rules, so as to maximize the overall
+quality of search results. We formalize this task as a combinatorial optimization problem, discuss its (intractable) complexity, and propose heuristic solutions.
+
+Log. of the s-to-t reformulation frequency
+Corpus Statistics
+Log. of the frequency of u
+Log. of concurrence frequency of s and t
+Log. of the frequency of u in titles
+
+log freq(u)
+log freq(s ∧ t)
+log HQfreq(u)
+
+4.1 Administration Settings
+A rule-administration setting (or just administration setting for short) is essentially an abstraction of the searchengine’s interplay between queries, rewrite rules, and documents. It consists of a set R of rewrite rules and a graph G
+that we call the rule-administration graph (or just administration graph for short). A rule in R transforms an input
+user query q into a rewritten query q  . For brevity and clear
+distinction between the two types of queries, we refer to q
+(the user query) simply as a query, and to q  (the rewritten
+query) as an r-query. A query and an r-query are simply
+ﬁnite sequences over an inﬁnite alphabet of tokens (words),
+and a rule s → t in R is deﬁned similarly to the previous
+sections (i.e., it replaces s, a subsequence of tokens in q,
+with a sequence t). The administration graph is a tripartite
+graph describing the relationships between queries, r-queries
+and documents. Before we give the precise deﬁnitions, we
+introduce our running example for this section.
+
+The category of query-log statistics has the single feature
+log refFreq (s, t), representing common wisdom on query reformulation. In our case, we analyzed the query log of (four
+months of) intranet search at IBM. For a pair q1 and q2 of
+queries, refFreq (q1 , q2 ) is the number of sessions that begin
+with q1 and contain q2 (posed later than q1 in the session).
+Under the category of corpus statistics we have numerical
+statistics on s and t drawn from our engine index. The number freq (u) counts the documents containing u as an n-gram
+(where u is s in one feature, and t in another). Similarly,
+freq (s ∧ t) counts the documents containing both s and t as
+n-grams. We use log freq(u) and log freq(s∧t) to capture the
+popularity of s and t as well as correlation thereof. Finally,
+HQfreq(u) is the frequency of u in our high-quality ﬁelds,
+which roughly reﬂects the popularity of u in titles.
+Classiﬁcation models. We implemented two classiﬁcation models over our vector f of features. The ﬁrst model
+is simply a linear classiﬁer, which we trained on manually
+labeled data via SVM. The second model, which we found to
+provide a signiﬁcant improvement over the ﬁrst, generalizes
+the ﬁrst by incorporating a Decision Tree (DT for short).
+More speciﬁcally, the second model is a restricted version of
+a DT with linear-combination splits [16, 17], and we call it
+rDTLC for short. Given theP
+vector f of features, a DT with
+linear splits has a condition
+ai fi ≤ τ in each node (where
+the ai and τ are to be learned in training). Our rDTLC
+restricts this family by (1) bounding the depth (by 3 in
+our implementation), and (2) having univariate splits (i.e.,
+one-variable comparisons to thresholds) in all but the bottommost levels. Figure 3 illustrates our rDTLC. Note that
+here we essentially follow Kraft and Zien [14], who studied a
+problem of a similar ﬂavor, that used a linear classiﬁer and
+a standard decision tree (rather than rDTLC).
+Using an algorithm for learning a linear classiﬁer (e.g.,
+SVM), learning an rDTLC can be done straightforwardly
+by selecting thresholds from the feature values in the train-
+
+Example 4.1. Figure 4 shows an administrator setting
+(R, G). The set R is depicted in the top of the ﬁgure and
+the graph G is depicted in the bottom.
+Formally, an administration graph is a directed, edgeweighted graph G = (V, E, w), where:
+• V is the union of three disjoint sets of nodes: Vq is a
+set of queries, Vr is a set of r-queries, and Vd is a set
+of documents.
+• E is the union of three disjoint sets of edges: Eqr ⊆
+Vq × Vr is a set of reformulations, Eqd ⊆ Vq × Vd is a
+set of query matchings, and Erd ⊆ Vr × Vd is a set of
+r-query matchings.
+• w : E → R+ assigns a positive score to each matching
+in Eqd ∪ Erd , and is zero on all the edges of Eqr .
+Example 4.2. Consider again our running example. Each
+side of the tripartite graph G is surrounded by a dashed
+rectangle. Let q ∈ Vq be the query lotus notes download.
+The outgoing edges of q include the (zero-weight) reformulation to the r-query q  = lotus notes issi in Vr , and the query
+matching to the document d1 ∈ Vd (which, for presentation
+sake, is associated with the URL http://issi.ibm.com/lnotes).
+The weight of the latter edge is 2, representing the extent to
+which the engine scores the matching of d1 to q. A higher
+score (namely 5) is assigned to the matching of d1 to q  , as
+indicated by the weight of the r-query matching (q  , d1 ).
+
+fi0 ≤ τ0 ?
+fi1 ≤ τ1 ?
+P
+
+ai fi ≤ τ3 ?
+
+Yes
+
+No
+
+P
+
+fi2 ≤ τ2 ?
+
+bi fi ≤ τ4 ?
+
+Yes
+
+No
+
+P
+
+ci fi ≤ τ5 ?
+
+Yes
+
+No
+
+P
+
+di fi ≤ τ6 ?
+
+Yes
+
+No
+
+In principle, the same string can be represented by two
+distinct nodes: a query in Vq and an r-query in Vr . So a
+
+Figure 3: An rDTLC
+
+594
+
+R
+
+r1 :
+
+download → issi
+
+r2 :
+
+email client → lotus notes
+
+r3 :
+
+spreadsheets → symphony
+
+r4 :
+
+notes download → notes issi
+r1 , r4
+
+lotus notes download
+2
+
+Vq
+
+lotus notes download
+
+1
+
+symphony download
+1
+
+3
+
+d1
+
+Vr
+
+d2
+
+4
+
+r3
+
+Figure 5: The graph GR for R = {r2 , r3 , r4 }
+
+symphony download
+3
+
+d1
+http://issi.ibm.com/lnotes
+
+G
+
+spreadsheets download
+
+spreadsheets issi
+
+spreadsheets download
+
+spreadsheets issi
+4
+
+lotus notes issi
+
+email client issi
+r1
+
+5
+
+email client issi
+
+5
+
+r2
+
+lotus notes issi
+2
+
+obtained from G by removing from Eqr every reformulation
+e that is produced by none of the rules in R (i.e., R (e) = ∅).
+
+Vd
+
+d2
+http://prods.ibm.com/symphony
+
+Example 4.5. Consider again our running example (Figure 4), and let R be the set {r2 , r3 , r4 } (i.e., R \ {r1 }).
+The graph GR is depicted in Figure 5. Observe that unlike G, the graph GR has no edge from the query q1 =
+spreadsheets download to the r-query q1 = spreadsheets issi,
+because R (e1 ) = ∅, where e1 is the edge (q, q  ) of G (recall that R(e1 ) = {r1 }). However, there is an edge from
+the query q2 = lotus notes download to the r-query q2 =
+lotus notes issi since, although for e2 = (q2 , q2 ) the set R (e2 )
+lost r1 , this set still contains r4 .
+
+Figure 4: The administration setting (R, G) of the
+running example
+node in Vq ∪ Vr should have an identifier, which we omit
+from the formal model to simplify the presentation.
+Let G be an administration graph, and let q ∈ Vq be
+a query. Observe that a path in G from q to d consists
+of either one edge (in Eqd ) or two edges (one in Eqr and
+the other in Erd ). If G has a path (of length one or two)
+from the query q to the document d, then we denote by
+score(d|q) the maximal weight of a path from q to d. For a
+query q and a natural number k, we denote by topk [q|G] the
+series of k documents with the highest w(q, d), ordered in
+descending w(q, d); if fewer than k documents are reachable
+from q via directed paths, then topk [q|G] is restricted to only
+the reachable documents (hence, topk [q|G] may have fewer
+than k documents). We implicitly assume an underlying
+linear order among the documents to resolve ties.
+
+Let G be an administration graph. A desideratum is a
+function δ : Vq → 2Vd that maps each query q ∈ Vq to
+a set δ(q) ⊆ Vd of desired matches. A quality measure μ
+determines a quality score4 for each query q based on the
+series topk [q|G] and the set δ(q), for a natural number k of
+choice. We denote this score by μ(topk [q|G], δ(q)). As an
+example, precision at k is the following μ:
+( |top [q|G]∩δ(q)|
+k
+if topk [q|G] = ∅;
+|topk [q|G]|
+μ(topk [q|G], δ(q)) =
+0
+otherwise.
+(1)
+As another example, DCGk (without labeled relevance
+scores) is the following μ:
+
+Example 4.3. Consider again our running example (Figure 4). Let q be the query spreadsheets download. There are
+two paths from q to the document d2 : a direct edge, and
+through the r-query symphony download. Since the latter
+has the maximal weight, 3, among all the paths from q to
+d2 , we get that score(d2 |q) = 3. We can similarly verify that
+score(d1 |q) = 4. In particular, top1 [q|G] is the series (d1 ),
+and top2 [q|G] (as well as top3 [q|G]) is the series (d1 , d2 ).
+
+μ(topk [q|G], δ(q)) =
+
+j
+X
+i=1
+
+2ai − 1
+,
+log2 (i + 1)
+
+(2)
+
+where topk [q|G] = (d1 , . . . , dj ), and each ai is 1 if di ∈ δ(q)
+and 0 otherwise.
+The top-k quality of G, denoted μk (G, δ), is obtained by
+summing up the scores across all the queries:
+X
+def
+μk (G, δ) =
+μ(topk [q|G], δ(q))
+(3)
+
+For a rewrite rule r and query q, let r(q) denote the r-query
+that is obtained from q by applying r. An administration
+setting is a pair (R, G), where R is a set of rewrite rules
+and G is an administration graph, such that the set Eqr of
+reformulations of G is the set {(q, r(q)) | q ∈ Vq ∧ r ∈ R}.
+For a reformulation e = (q, q  ) ∈ Eqr , the set of rules r ∈ R
+with r(q) = q  is denoted by R(e).
+
+q∈Vq
+
+For readability, we may omit δ(q) and δ from the term
+μ(topk [q|G], δ(q)) and μk (G, δ), respectively, when δ is clear
+from the context.
+
+Example 4.4. Consider again the administration setting
+(R, G) of our running example. For the edge e1 from q1 =
+lotus notes download to q1 = lotus notes issi we have R(e1 ) =
+{r1 , r4 } (where the ri are speciﬁed in the top of the ﬁgure). Similarly, for q2 = email client issi and the reformulation e2 = (q2 , q1 ) we have R(e2 ) = {r2 }.
+
+4.2 Abstract Rule Optimization
+
+Example 4.6. Consider the following desideratum δ for
+our running example:
+• δ(lotus notes download) = δ(email client issi) = {d1 }
+• δ(spreadsheets download) = {d2 }
+The reader can verify that top1 [q|G] = (d1 ) for all three
+queries q in Vq . Thus, for each of the functions μ of Equations (1) and (2) we get μ1 (G) = 1 + 1 + 0 = 2.
+
+Consider an administration setting (R, G). Given a subset
+R of R, we denote by GR the administration graph that is
+
+4
+In principle, μ can represent a utility function that is not
+necessarily a vanilla quality measure, such as ad beneﬁts [18].
+
+595
+
+Algorithm G-Greedy((R, G), δ, k)
+1:
+2:
+3:
+4:
+5:
+6:
+7:
+8:
+
+Algorithm L-Greedy((R, G), δ, k)
+
+S←∅
+Δ←1
+while Δ > 0 do
+´
+`
+r ← argmaxr∈R\S μk (GS∪{r}) − μk (GS )
+Δ ← μk (GS∪{r}) − μk (GS )
+if Δ > 0 then
+S ← S ∪ {r}
+return S
+
+1:
+2:
+3:
+4:
+5:
+6:
+7:
+
+S←∅
+T ← {(q, d) ∈ Vq × Vd | d ∈ δ(q)}
+for all (q, d) ∈ T do
+´
+`
+r ← argmaxr∈rel k (q,d) μk (GS∪{r}) − μk (GS )
+if μk (GS∪{r}) > μk (GS ) then
+S ← S ∪ {r}
+return S
+Figure 7: The locally greedy algorithm
+
+Figure 6: The globally greedy algorithm
+Due to the inherent hardness of our problem, in the following section we present heuristic approaches (that are explored experimentally in Section 5).
+
+Now, consider the graph GR of Figure 5 (discussed in
+Example 4.5). There we have top1 [q|G] = (d1 ) for q =
+lotus notes download and q = email client issi, but top1 [q|G] =
+(d2 ) for q = spreadsheets download. In particular, μ1 (GR ) =
+3 for the two aforementioned functions μ.
+
+4.3 Greedy Heuristics
+In this section, we devise two simple heuristic algorithms,
+each following a greedy approach. We call the ﬁrst algorithm
+globally greedy and the second locally greedy. The reasons for
+the algorithm names will be clear from their descriptions.
+Later, we discuss the optimization of these algorithms.
+
+Abstract rule optimization is the following problem. We
+are given an administration setting (R, G), a desideratum
+δ, and a natural number k. The goal is to ﬁnd a subset S of R that maximizes μk (GS ); that is, S is such that
+μk (GS ) ≥ μk (GR ) for every subset R of R. Such S is an
+optimal solution. A weaker goal is to ﬁnd an α-approximate
+optimal solution, where α ≥ 1 is either a number or a numeric function of the input; such a solution is a set S ⊆ R
+that satisﬁes α · μk (GS ) ≥ μk (GR ) for all R ⊆ R.
+
+4.3.1 The Globally Greedy Algorithm
+The globally greedy algorithm, depicted in Figure 6 under the name G-Greedy, applies the following very simple
+approach. It initializes an empty solution S ⊆ R (line 1),
+and iteratively adds to S the best missing rule r (found in
+line 5). The best rule r is such that the diﬀerence Δ between
+the quality obtained by adding r, namely μk (GS∪{r}), and
+the current quality, namely μk (GS ), is maximal. The algorithm terminates (and returns S) once Δ is non-positive
+(hence, no improving rule can be found).
+In our experiments we found that the globally greedy algorithm performs very well in terms of the quality of the
+returned solution S. However, this algorithm is extremely
+slow, due to its inherent cubic time: the loop of line 3 can
+take up to |R| iterations, and then line 4 (ﬁnding r) entails
+traversing over all r ∈ R \ S and computing μk (GS∪{r}),
+which requires computing topk [q|G] (and summing up the
+μ(topk [q|G])) for all queries q ∈ Vq . Later, we discuss optimizations of this algorithm. But even the optimized version
+of this algorithm hardly scales up. Therefore, we consider
+the next, lower complexity algorithm.
+
+Example 4.7. Suppose that μ is one of the functions of
+Equations (1) and (2), and consider again the administration
+setting (R, G) of our running example (Figure 4). Suppose
+that the input for abstract rule optimization contains, in
+addition to (R, G), the desideratum δ of Example 4.6 and
+k = 1. In Example 4.6 we discussed the graph GR of Figure 5 (where R = {r2 , r3 , r4 }). As μ1 (GR ) = 3 is clearly
+optimal, R is an optimal solution in this case.
+To simplify the discussion on computational complexity,
+we assume that μ is ﬁxed (i.e., not part of the input), and
+that μ(topk [q|G]) is computable in polynomial time. Next,
+we show that abstract rule optimization is hard to approximate. We make the following assumption on the quality
+measure μ: there is a positive constant c, such that for
+all queries q, if δ(q) consists of exactly one document then
+μ(top1 [q|G]) = c if top1 [q|G] = δ(q), and μ(top1 [q|G]) = 0
+otherwise (i.e., if top1 [q|G] does not contain the single document in δ(q)). Note that this assumption holds in standard
+measures that are parameterized by a restriction to the topk results (assuming that diﬀerent results are not weighted
+by diﬀerent levels of relevancy), such as DCGk , normalized
+DCGk , and precision at k. We say that a function with this
+property is reasonable at one. The following theorem states
+that abstract rule optimization is extremely hard (to even
+approximate), no matter which quality measure μ is used, as
+long as μ is reasonable at one. The proof is in the appendix.
+
+4.3.2 The Locally Greedy Algorithm
+The locally greedy algorithm, L-Greedy, is depicted in Figure 7. Similarly to the globally greedy algorithm, the locally
+greedy one initializes an empty solution S (line 1) and incrementally adds rules (lines 2–6). The main diﬀerence between
+the algorithms is that in the main loop of the locally greedy
+one, we search for the rule r (to add to S) in a practically
+tiny subset of the set R of rules (rather than in all of R).
+More speciﬁcally, line 2 constructs the set T of all tasks,
+where a task is a pair (q, d) such that q is a query (in Vq )
+and d is a desired document for q (i.e., q ∈ δ(d)). Then, the
+main loop (line 3) traverses all tasks in an arbitrary order.
+For a considered task (q, d), we deﬁne rel k (q, d) to be the set
+of all the rules r that are relevant to the task, that is: (1) r
+is on a path from q to d, or more formally, for some q  ∈ Vr
+
+Theorem 4.8. Whenever μ is reasonable at one, abstract
+rule optimization is NP-hard to approximate by any constant
+factor, or even by |Vq |1− for every  > 0.
+
+596
+
+we have e = (q, q  ) ∈ Eqr , r ∈ R(e), and (q  , d) ∈ Erd , and
+(2) taken alone r can push d to the top-k results of q, or
+more formally, d ∈ topk [q|G{r} ]. In line 4, a rule r that
+maximizes μk (GS∪{r}) − μk (GS ) is added to S, provided
+that this maximum value is positive.
+
+gested for multiple queries. As mentioned in Section 3, by
+analyzing the high-quality ﬁelds (e.g., titles and URLs) of
+desired documents, we generated for each suggested match
+a set of query-rewrite rules, each of which, in the absence of
+any other rule, is capable of pushing the desired document
+up to the top-5 results for the given query. This produced a
+total of 11907 rules. Our methodology for extracting input
+from these suggested matches and rules will be described
+in the following sections. Our experiments ran on a Linux
+SUSE (64-bit) server with eight 4-core Intel Xeon (2.13GHz)
+processors and 48GB of memory. The algorithms were implemented in Java 1.6 and ran with 12GB allocated memory.
+
+4.3.3 Optimization
+In both the globally greedy and the locally greedy algorithms, a signiﬁcant portion of the computation takes
+place on computing the quality of the system on intermediate sets of rules (that is, the computations of μk (GS )
+and μk (GS∪{r}) in line 4 of Figure 6 and line 4 of Figure 7). This computation is done to obtain the diﬀerence
+μk (GS∪{r}) − μk (GS ), where S is the current set of rules
+and r is a considered candidate rule. Let Δ(S, r) denote
+that diﬀerence. We can optimize the computation by observing that Δ(S, r) is aﬀected by only a few of the queries,
+namely those on which r ﬁres.
+Formally, consider a query q, a rule r and a set S ⊆
+R. Deﬁne Δ(q, S, r) = μ(topk [q|G
+PS∪{r} ]) − μ(topk [q|GS ]).
+From (3) we get that Δ(S, r) =
+q∈Vq Δ(q, S, r). Denote
+by Vq (r) the set of queries q ∈ Vq , such that r ∈ R(e) for
+some edge e ∈ Eqr emanating from q. An easy observation
+is that Δ(q,
+/ Vq (r), and therefore
+P S, r) = 0 whenever q ∈
+Δ(S, r) = q∈Vq (r) Δ(q, S, r).
+The optimization is as follows. During the computation
+we maintain each μ(topk [q|GS ]) for the current S. (So, at
+the beginning we compute μ(topk [q|G∅ ]).) When a rule r is
+considered, we iterate over the queries in Vq (r) and compute
+μ(topk [q|GS∪{r} ]), thus obtaining Δ(q, S, r). We sum up all
+these Δ(q, S, r) into Δ(S, r) to be used in the next steps.
+Hereafter, the optimized versions of G-Greedy and L-Greedy
+are denoted by G-Greedy-opt and L-Greedy-opt, respectively.
+
+5.1 Recognizing Natural Rules
+We ﬁrst evaluated the classiﬁcation models of Section 3
+for recognizing natural rules. Among all generated rules, we
+randomly selected and manually labeled 1187 rules as either
+natural or unnatural. Such labeling is subject to human
+judgment; moreover, labeling often required domain-speciﬁc
+knowledge, and for that we needed to inspect the pages relevant to the terms involved in the rule. Using this labeled
+dataset, we evaluated the accuracy of the classiﬁers SVM
+and rDTLC. The results reported in this section were consistently obtained by performing a 5-folder cross validation.
+We also explored the question of how the classiﬁers perform on rules for more popular suggested matches. We analyzed the query logs of four months of intranet search at
+IBM and estimated the popularity of each suggested match
+by counting the number of sessions that have a click on the
+suggested document for the corresponding query. Therefore,
+each quality measure has two versions—the unweighted version is denoted by uw and the weighted version is denoted
+by w. In addition, we retrained the two classiﬁers by incorporating the weights on rules, thereby obtained a third
+version denoted by wt (weighted training). Whether or not
+to train the classiﬁer with weights is a matter of a choice
+that depends on the speciﬁc scenario, and for that reason
+we evaluated both the w and the wt versions.
+Figure 8 reports the accuracy (ratio of correctly classiﬁed
+rules) for SVM and rDTLC. As shown, when trained without
+weights rDTLC outperforms SVM by about 10% for both
+the unweighted and weighted measures. When the classiﬁers
+are trained with weights, rDTLC has a smaller improvement
+(about 3%) and both classiﬁers achieve high accuracy.
+Even with classiﬁcation, the number of natural rules may
+still be large. An administrator may be interested in only
+the top-k rule suggestions for some k. We explored the
+naive strategy of ranking the top-k candidate rules by decreasing conﬁdence of the classiﬁer at hand. We leave for
+future work the exploration of more sophisticated learning to rank strategies for this task. Nevertheless, we observe that this naive approach is already beneﬁcial compared
+to a random selection of k candidates (a strategy denoted
+as RND). Speciﬁcally, Figure 9 gives the Mean Reciprocal Rank (MRR) of the diﬀerent rankers. Figures 10 and
+11 give the normalized Discounted Cumulative Gain at the
+top-k results (nDCGk ) where k = 1, 3, 5 for the unweighted
+and weighted cases, respectively. We can see that when the
+classiﬁers are not retrained with weights, rDTLC performs
+signiﬁcantly better than SVM (and RND), but its advantage
+over SVM disappears when they are retrained with weights;
+in particular, when trained with weights both are almost
+always capable of suggesting natural rules for all k = 1, 3, 5.
+
+4.4 Weighted Queries
+In realistic scenarios, queries may carry diﬀerent levels
+of importance, which may be expressed by means of query
+weights. For instance, this weight can be the frequency in
+which the query is posed. In the experimental study of
+the next section, we use as weights frequencies derived from
+query logs. The abstraction presented in this section can incorporate weighted queries in a straightforward manner. In
+particular, the abstract model assigns a weight w(q) to each
+query q ∈ Vq , and in the deﬁnition of μk (G) (see (3)), each
+addend μ(topk [q|G]) is multiplied by w(q). The greedy algorithms automatically adjust to weights by using the weighted
+μk . An intuitive traversal order on T in the locally greedy
+algorithm (Figure 7) is by decreasing w(q); we indeed apply
+this order in the experiments of the following section.
+
+5.
+
+EXPERIMENTAL EVALUATION
+
+In this section, we describe an empirical evaluation of our
+proposed solutions over the IBM intranet search engine, with
+datasets provided by the company’s search administrators.
+More speciﬁcally, our dataset was obtained from a list of
+1894 suggested matches provided by IBM CIO Oﬃce, where
+a suggested match consists of a query q and a document d desired as a top match for q. Generally, the queries involved in
+the suggested matches are frequent, and hence are recorded
+for quality maintenance. Note that a query can be matched
+against multiple documents, and a document may be sug-
+
+597
+
+SVM
+
+rDTLC
+
+accuracy (%)
+
+unweighted
+
+AllRules
+
+G-Random
+
+L-Greedy
+
+G-Greedy
+
+UpBound
+
+weighted
+
+100
+90
+80
+70
+60
+
+1
+0.8
+0.6
+0.4
+uw
+
+w
+
+wt
+
+top-1
+
+Figure 8: Accuracy of rule classiﬁcation
+RND
+
+SVM
+
+unweighted
+
+Figure 12:
+dataset
+
+rDTLC
+weighted
+
+AllRules
+
+1
+
+0
+uw
+
+w
+
+wt
+
+Figure 9: MRR for rule ranking
+RND
+
+SVM
+
+top-3
+
+top-5
+
+nDCGk (unweighted) for the labeled
+
+L-Random
+
+G-Random
+
+L-Greedy
+
+G-Greedy
+
+top-1
+
+top-3
+
+top-5
+
+Figure 13: nDCGk (weighted) for the labeled dataset
+
+rDTLC
+
+1
+0.8
+0.6
+0.4
+0.2
+0
+
+AllRules
+
+L-Random
+
+G-Random
+
+L-Greedy
+
+G-Greedy
+
+unweighted
+
+top-1
+
+top-3
+
+SVM (wt)
+
+top-5
+
+rDTLC (w)
+
+UpBound
+
+weighted
+
+1
+0.9
+0.8
+0.7
+0.6
+0.5
+
+Figure 10: nDCGk (unweighted) for rule ranking
+SVM (w)
+
+UpBound
+
+1
+0.8
+0.6
+0.4
+0.2
+0
+
+0.5
+
+RND
+
+L-Random
+
+Lalbeled
+
+rDTLC (wt)
+
+BM
+
+Labeled
+
+BM
+
+Figure 14: MRR for the labeled dataset
+
+1
+0.8
+0.6
+0.4
+0.2
+0
+top-1
+
+top-3
+
+counterparts, except that their selection of rules is random.
+More precisely, G-Random selects a random subset of rules
+among all the rules, and L-Random randomly selects an eﬀective rule for each suggested match. The algorithm AllRules
+simply selects all the rules.5
+
+top-5
+
+Figure 11: nDCGk (weighted) for rule ranking
+
+Measures. We consider two quality measures μ: the normalized Discounted Cumulative Gain at the top-k results
+(nDCGk ), and the Mean Reciprocal Rank (MRR). Since our
+administration graph is restricted to the top-5 matches for
+each query and r-query, MRR is restricted to the top-5 results as well (as it would not make sense otherwise).
+To estimate the gap between the solution provided by each
+of the algorithms and the optimal solution, we computed an
+upper bound on the optimum for each quality measure μ, as
+follows. We evaluated the sum of Equation (3), where each
+addend μ(topk [q|G], δ(q)) is computed as if each suggested
+match is ranked as high as possible using a rule from the our
+collection. So, in principle, we allow this bound to place two
+documents in the same rank. Note that this number is not
+smaller than, and may be strictly larger than, the optimum
+(namely μk (GS ) for an optimal solution S).
+
+5.2 Optimizing Multi-Rule Selection
+We now present an experimental study of our solutions
+for the abstract rule optimization problem (Section 4).
+Datasets. We constructed several datasets from our collection of suggested matches. Each dataset is an administration
+setting constructed by selecting a subset M of the suggested
+matches, and a subset R of the rules automatically created
+for M . (Observe that M implies a desideratum δ.) Later,
+we will explain how exactly M and R are selected for each
+dataset. Once M and R are selected, the administration
+graph G is constructed as follows. The queries in M form
+the set Vq of queries. The set Vr of r-queries is obtained by
+applying the rules in R to the queries in Vq . The set Vd of
+documents contains all the documents in M , as well as the
+top-5 results for each query and r-query in Vq ∪ Vr , as obtained by invoking our search engine without rewrite rules.
+The edges of G are deﬁned in the obvious manner.
+
+Weights. We used both unweighted and weighted quality
+measures. In the weighted version, each query is weighted
+by the number of sessions where it is posed, as recorded
+in the aforementioned four months of query logs. For the
+unweighted version, the algorithms L-Greedy, L-Greedy-opt
+and L-Random iterate over the suggested matches (which
+
+Algorithms. We compared the G-Greedy and L-Greedy algorithms and their optimized versions G-Greedy-opt and LGreedy-opt, as described in Section 4.3. We also considered
+several baseline algorithms: G-Random, L-Random and AllRules. G-Random and L-Random are similar to their greedy
+
+5
+Albeit straightforward, AllRules represents a common practice of our search administrators.
+
+598
+
+AllRules
+
+Table 2: Running time
+
+G-Greedy
+G-Greedy-opt
+L-Greedy
+L-Greedy-opt
+
+Labeled
+
+BM
+
+Extended
+
+25193
+2911
+404
+39
+
+82566
+7719
+3517
+110
+
+> 24 hours
+> 24 hours
+1648137
+87484
+
+G-Greedy
+G-Greedy-opt
+L-Greedy
+L-Greedy-opt
+
+L-Greedy
+
+UpBound
+
+top-1
+
+top-3
+
+top-5
+
+Figure 15: nDCGk (unweighted) for the extended
+dataset
+
+µ = nDCG, k = 1 (ms)
+Alg.
+
+G-Random
+
+1
+0.8
+0.6
+0.4
+0.2
+0
+
+µ = MRR, k = 5 (ms)
+Alg.
+
+L-Random
+
+Labeled
+
+BM
+
+Extended
+
+26356
+2638
+399
+38
+
+82595
+6896
+3462
+112
+
+> 24 hours
+> 24 hours
+3522894
+124613
+
+AllRules
+
+L-Random
+
+G-Random
+
+L-Greedy
+
+UpBound
+
+1
+0.8
+0.6
+0.4
+0.2
+0
+top-1
+
+form the set T in Figure 7) in a random order obtained by
+applying a random permutation thereof. For the weighted
+version, iteration over the suggested matches is ordered by
+decreasing weight of the involved queries.
+
+Figure 16:
+dataset
+AllRules
+
+5.2.1 Evaluation on the Labeled Dataset
+
+L-Random
+unweighted
+
+In the ﬁrst set of experiments, we used the labeled dataset
+obtained by taking as M the suggested matches that were
+used for labeling rewrite rules (see Section 5.1), and as R
+the set of rules that are manually labeled as natural. The
+resulting administration graph contains 135 queries, 300 rqueries, 423 documents, and a total of 1488 edges. Note that
+only a small portion of the suggested matches were used for
+labeling; the others, for which the rules are not labeled, will
+be used later in Section 5.2.2.
+We ﬁrst examined the quality of solutions produced by
+each of the algorithms. Figures 12 and 13 report the nDCGk ,
+with k = 1, 3, 5, for the unweighted and weighted cases, respectively. Figure 14 reports the MRR for both unweighted
+and weighted cases. (The groups labeled with BM will be
+discussed later.) Observe that on all quality measures, LGreedy and G-Greedy score signiﬁcantly higher than the other
+alternatives. In fact, they already reach the upper bound,
+and hence provide optimal solutions.
+The goal of the next experiment is to explore the solutions
+in the presence of suggested matches that hit the top search
+results without requiring rules (yet, they can be aﬀected by
+introducing rules). This setting represents a typical scenario
+where a search administrator needs to address problematic
+queries without compromising the overall search quality. For
+that, we enhanced the set M , from the construction of the
+labeled dataset, with 373 such suggested matches that are
+used as a benchmark. The groups of bars labeled with BM in
+Figure 14 report the MRR for both the unweighted and the
+weighted cases. Note that the greedy algorithms get better
+scores than the other alternatives, and again reach the upper
+bound. But now, the other alternatives get high scores as
+well, since many suggested matches in the benchmark are
+not aﬀected by the rules in R. The results for nDCGk show
+a similar picture, and are therefore omitted.
+Next, we compare the execution cost of the algorithms.
+AllRules, G-Random and L-Random entail a negligible running time (less than 0.2 ms). We focus on the globally and
+locally greedy algorithms, and examine the contribution of
+the optimization. Table 2 summarizes the running times for
+two diﬀerent combinations of μ and k. The columns enti-
+
+top-3
+
+top-5
+
+nDCGk (weighted) for the extended
+
+G-Random
+
+L-Greedy
+
+UpBound
+
+weighted
+
+1
+0.8
+0.6
+0.4
+
+Figure 17: MRR for the extended dataset
+tled “Labeled” and “BM” refer to the labeled dataset and
+the one enhanced with the benchmark, respectively. (The
+columns entitled “Extended” will be discussed later.) Observe that the locally greedy algorithms are over one order
+of magnitude faster than their globally greedy counterparts.
+In addition, the optimized versions are generally over one
+order of magnitude faster than their unoptimized counterparts. In particular, the optimized version of our locally
+greedy algorithm is capable of ﬁnding an optimal solution
+in real time for the typical usage scenarios.
+
+5.2.2 Evaluation on the Extended Dataset
+The results of the previous experiments demonstrate the
+eﬀectiveness and feasibility of the greedy algorithms. To
+further evaluate the scalability of the greedy algorithms, we
+constructed a larger extended dataset. To create this dataset,
+we used as M the set of all the suggested matches, and
+as R the set of all the rules automatically generated for
+them (including those that are not labeled). The resulting
+administration graph contains 1001 queries, 10990 r-queries,
+4188 documents, and a total of 36986 edges.
+Again, the running times for two diﬀerent combinations
+of μ and k are shown Table 2, now by the columns entitled
+“Extended.” The globally greedy algorithms (including the
+optimized one) do not scale to the extended dataset. For
+the locally greedy algorithms, the improvement achieved by
+the optimization is again by over an order of magnitude.
+Finally, we evaluated the quality of the solutions over the
+extended dataset. Figures 15 and 16 report the nDCGk ,
+with k = 1, 3, 5, for the unweighted and weighted cases, respectively. Figure 17 reports the MRR for both unweighted
+
+599
+
+and weighted cases. Consistently with the previous experiments, L-Greedy outperforms the other alternatives. The gap
+between L-Greedy and the upper bound is generally around
+one percent, and is barely notable in the ﬁgure. These results demonstrate that even in the extreme case where the
+administrator adopts all candidate suggestions, L-Greedy-opt
+can ﬁnd a practically optimal solution within a reasonable
+amount of time (around 2 minutes).
+
+6.
+
+[13] R. Jones, B. Rey, O. Madani, and W. Greiner. Generating
+query substitutions. In WWW, pages 387–396, 2006.
+[14] R. Kraft and J. Y. Zien. Mining anchor text for query
+reﬁnement. In WWW, pages 666–674, 2004.
+[15] Y. Li, R. Krishnamurthy, S. Vaithyanathan, and H. V.
+Jagadish. Getting work done on the web: supporting
+transactional queries. In SIGIR, pages 557–564, 2006.
+[16] W.-Y. Loh and Y.-S. Shih. Split selection methods for
+classiﬁcation trees. Statistica Sinica, 7:815–840, 1997.
+[17] W.-Y. Loh and N. Vanichsetakul. Tree-structured classiﬁcation
+via generalized discriminant analysis. Journal of the American
+Statistical Association, 83:715–728, 1988.
+[18] A. Malekian, C.-C. Chang, R. Kumar, and G. Wang.
+Optimizing query rewrites for keyword-based advertising. In
+EC, pages 10–19, 2008.
+[19] U. Ozertem, E. Velipasaoglu, and L. Lai. Suggestion set utility
+maximization using session logs. In CIKM, pages 105–114,
+2011.
+[20] I. Szpektor, A. Gionis, and Y. Maarek. Improving
+recommendation for long-tail queries via templates. In WWW,
+2011.
+[21] S. Vaithyanathan. Building search systems for the enterprise,
+2011. SIGIR’11 industrial track keynote.
+[22] Z. Zhang and O. Nasraoui. Mining search engine query logs for
+query recommendation. In WWW, pages 1039–1040, 2006.
+[23] H. Zhu, S. Raghavan, S. Vaithyanathan, and A. Löser.
+Navigating the intranet with high precision. In WWW, pages
+491–500, 2007.
+[24] D. Zuckerman. Linear degree extractors and the
+inapproximability of max clique and chromatic number. Theory
+of Computing, 3(1):103–128, 2007.
+
+CONCLUDING REMARKS
+
+The rule-based architecture aims to provide search administrators with the means of adapting the search engine to
+the content and dynamics of the enterprise. In this paper,
+we explored the incorporation of automation in the manual practice of administrators. Speciﬁcally, we studied the
+problem of suggesting natural rewrite rules, and proposed
+corresponding machine-learned classiﬁers for rules. We also
+studied the problem of selecting rules, from a given collection, with the goal of optimizing the quality on a benchmark.
+We presented a theoretical model that captures this task as
+a combinatorial optimization problem, analyzed its theoretical complexity, and proposed heuristic algorithms to accommodate its hardness. Experiments on a real enterprise case
+(IBM intranet search) indicate that the proposed solutions
+are eﬀective and feasible.
+While the testbed for this work has been the IBM internal search, the two challenges we studied hold in essentially
+every search system that supports administration by rewrite
+rules. Moreover, the setting and solutions we proposed are
+at a level of abstraction that hardly ties them to our speciﬁc
+testbed. In future work, we plan to focus on extending our
+techniques to handle signiﬁcantly more expressive rules.
+
+7.
+
+APPENDIX
+Proof of Theorem 4.8. We show a reduction from the
+maximum clique problem: given an undirected graph H, ﬁnd
+a clique of a maximum size, where a clique is a set C of nodes
+such that every two members are adjacent. Zuckerman [24]
+showed that for all  > 0, it is NP-hard to approximate this
+problem to within n1− , where n is the number of nodes.
+Given an undirected graph H, we construct the administration setting (R, G) as follows. For each node v of H, let
+N (v) denote the set of neighbors of v, and we deﬁne two
+unique words av and bv . For each such v, R contains the
+rule av → bv , G has the query qv that consists of av followed
+(in some order) by all the au where u ∈
+/ N (v), and G has two
+bd
+unique documents dgd
+v and dv . The r-queries of G are all
+those obtained by applying a rule in R to a query of G. Let
+q  be an r-query of G. If q  begins with av , then G has the
+
+r-query matching (q  , dbd
+v ) with the weight 2; and if q begins
+)
+with
+the
+weight
+1.
+There
+are no
+with bv , then G has (q  , dgd
+v
+query matchings in G. Finally, the desideratum δ maps each
+qv (where v is a node of H) to the singleton δ(qv ) = {dgd
+v }.
+Observe the following for a subset R of R and a node
+v of H. If R contains a rule au → bu for some node u ∈
+/
+N (v), then qv is reformulated into an r-query that begins
+with av and thus matches dbd
+v with the weight 2, implying
+
+top1 [qv |GR ] = (dbd
+v ). If R contains av → bv but no rule
+au → bu where u ∈
+/ N (v), then qv is reformulated only
+into an r-query that begins with bv and thus matches dgd
+v
+
+with the weight 1, implying top1 [qv |GR ] = (dbd
+v ). If R
+contains none of av → bv and au → bu (u ∈
+/ N (v)), then
+top1 [qv |GR ] = ∅. From this observation, the correctness of
+the reduction is proved straightforwardly: for each subset
+R ⊆ R, if μ1 (GR ) = c · m (where c is taken from the
+deﬁnition of reasonable at one), then we can obtain from
+GR (in polynomial time) a clique of size m in H; on the
+reverse direction, from each clique of size m in H we can
+construct a subset R ⊆ R with μ1 (GR ) = c · m.
+
+REFERENCES
+
+[1] G. Agarwal, G. Kabra, and K. C.-C. Chang. Towards rich
+query interpretation: walking back and forth for mining query
+templates. In WWW, pages 1–10, 2010.
+[2] O. Alhabashneh, R. Iqbal, N. Shah, S. Amin, and A. E. James.
+Towards the development of an integrated framework for
+enhancing enterprise search using latent semantic indexing. In
+ICCS, pages 346–352, 2011.
+[3] R. A. Baeza-Yates, C. A. Hurtado, and M. Mendoza. Query
+recommendation using query logs in search engines. In EDBT
+Workshops, volume 3268 of Lecture Notes in Computer
+Science, pages 588–596, 2004.
+[4] B. Billerbeck, F. Scholer, H. E. Williams, and J. Zobel. Query
+expansion using associated queries. In CIKM, pages 2–9, 2003.
+[5] A. Z. Broder and A. C. Ciccolo. Towards the next generation of
+enterprise search technology. IBM Systems Journal,
+43(3):451–454, 2004.
+[6] N. Craswell, D. Hawking, and S. E. Robertson. Eﬀective site
+ﬁnding using link anchor information. In SIGIR, pages
+250–257, 2001.
+[7] P. A. Dmitriev, N. Eiron, M. Fontoura, and E. J. Shekita.
+Using annotations in enterprise search. In WWW, pages
+811–817, 2006.
+[8] R. Fagin, B. Kimelfeld, Y. Li, S. Raghavan, and
+S. Vaithyanathan. Understanding queries in a search database
+system. In PODS, pages 273–284, 2010.
+[9] R. Fagin, B. Kimelfeld, Y. Li, S. Raghavan, and
+S. Vaithyanathan. Rewrite rules for search database systems. In
+PODS, pages 271–282, 2011.
+[10] R. Fagin, R. Kumar, K. S. McCurley, J. Novak, D. Sivakumar,
+J. A. Tomlin, and D. P. Williamson. Searching the workplace
+web. In WWW, pages 366–375, 2003.
+[11] D. Hawking. Challenges in enterprise search. In ADC,
+volume 27 of CRPIT, pages 15–24, 2004.
+[12] D. Hawking. Enterprise search - the new frontier? In ECIR,
+volume 3936 of Lecture Notes in Computer Science, page 12,
+2006.
+
+600
+
+

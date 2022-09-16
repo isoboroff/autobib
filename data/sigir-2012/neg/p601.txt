@@ -1,0 +1,1560 @@
+Time-Sensitive Query Auto-Completion
+Milad Shokouhi
+
+Kira Radinsky
+
+Microsoft Research
+Cambridge, UK
+
+Technion, Israel Institute of Technology
+Haifa, Israel
+
+kirar@cs.technion.ac.il
+
+milads@microsoft.com
+
+ABSTRACT
+
+user time by predicting user’s intent and suggesting possible
+other queries matching the ﬁrst few keystrokes typed. The
+ﬁltering of related candidates (query suggestions) is typically
+based on string matching, and the ranking is ideally based
+on the likelihood of the ﬁltered candidate being the query
+which the user has in mind. The latter challenge (ranking)
+is the focus of this paper, for which the goal is to sort queries
+according to their expected popularity. The common practice is to use past frequencies as proxy for future popularity
+[2, 8]. However, those approaches assume that user intent
+is static and does not change over time. Simple aggregation
+can overshadow the temporal trends that could potentially
+provide valuable signals for better ordering of QAC candidates.
+Consider the example in Figure 1 where a user has typed
+di in Google query box on Sunday, February 12th, 2012. At
+the ﬁrst glance, knowing that dictionary is generally a more
+frequent query than disney, it might be diﬃcult to notice
+how the ranking might be improved. However, looking at
+the daily trends for these queries in Figure 2 reveals that
+disney is more popular on weekends. Hence, given that the
+ﬁrst snapshot was taken on a Sunday, swapping disney and
+dictionary could lead to a better ranking at the time of this
+query. Similar observations can be made for diﬀerent granularity of time-spans. For instance, previous work [4] has
+shown that users are more likely to search for entertainmentrelated queries at night, while queries related to personal
+ﬁnance are more common in the morning. Therefore, the
+ranking of QAC candidates can vary dynamically even according to the time of the day.
+In this paper, we add time-sensitivity to ranking autocompletion candidates. We consider the temporal variations
+of query popularity in ranking QAC suggestions, that are
+normally shadowed by aggregation. Rather than summarizing the entire query history in one aggregated number as
+expected popularity, we rely on shorter but more frequent
+aggregation of data, and model the overall query trends by
+time-series. We show that the expected popularity values
+produced by our time-sensitive approaches are closer approximations to what will be observed later in the logs, and
+are more eﬀective for ranking QAC suggestions.
+The contributions of this work are three-fold: First, we
+study the shadowing problem that is caused by ignoring the
+temporal variations of query frequency in data aggregation.
+We investigate several aggregation options and show that
+query popularity predictions based on shorter but more recent data are more accurate than those produced based on
+aggregation over longer periods. This simple and counter-
+
+Query auto-completion (QAC) is a common feature in modern search engines. High quality QAC candidates enhance
+search experience by saving users time that otherwise would
+be spent on typing each character or word sequentially.
+Current QAC methods rank suggestions according to their
+past popularity. However, query popularity changes over
+time, and the ranking of candidates must be adjusted accordingly. For instance, while halloween might be the right
+suggestion after typing ha in October, harry potter might be
+better any other time. Surprisingly, despite the importance
+of QAC as a key feature in most online search engines, its
+temporal dynamics have been under-studied.
+In this paper, we propose a time-sensitive approach for
+query auto-completion. Instead of ranking candidates according to their past popularity, we apply time-series and
+rank candidates according their forecasted frequencies. Our
+experiments on 846K queries and their daily frequencies
+sampled over a period of 4.5 years show that predicting the
+popularity of queries solely based on their past frequency
+can be misleading, and the forecasts obtained by time-series
+modeling are substantially more reliable. Our results also
+suggest that modeling the temporal trends of queries can
+signiﬁcantly improve the ranking of QAC candidates.
+
+Categories and Subject Descriptors
+H.3.3 [Information Search and Retrieval]: Information
+Search and Retrieval—Search Process, selection process
+
+General Terms
+Algorithms, Measurement, Experimentation
+
+Keywords
+Query auto-completion, temporal ranking, time-series
+
+1.
+
+INTRODUCTION
+
+Query auto completion (QAS) is a feature incorporated
+in essentially every search engine, where the goal is to save
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies are
+not made or distributed for profit or commercial advantage and that
+copies bear this notice and the full citation on the first page. To copy
+otherwise, or republish, to post on servers or to redistribute to lists,
+requires prior specific permission and/or a fee.
+SIGIR’12, August 12–16, 2012, Portland, Oregon, USA.
+Copyright 2012 ACM 978-1-4503-1472-5/12/08... $15.00.
+
+601
+
+The ﬁltering of candidates in this group is typically on the
+basis of exact preﬁx matching.1
+The ranking in lookup techniques is based on static scores
+that are assigned to candidates according to their importance. For example, in a product engine such as amazon.com
+with products names as candidates, static scores can be assigned according to popularity, price or the review scores
+of products [8]. In the context of web search, the most conventional approach is to rank candidates (query suggestions)
+according to their past popularity. In the most related study
+to our work, Bar-Yossef and Kraus [2] referred to this baseline as MostPopularCompletion (MPC) and suggested that
+it can be regarded as an approximate maximum likelihood
+estimator. The authors also proposed a context-aware technique in which the default static scores for the candidates
+are combined with contextual-scores based on recent session
+history to compute the ﬁnal ranking.
+We also take MPC [2] as our QAC ranking baseline and
+show that it can be improved signiﬁcantly by considering the
+temporal characteristics of queries. Our work is orthogonal
+to all aforementioned techniques; for instance, using errortolerant data structures that support fuzzy matching [8, 20]
+can expand the list of candidates that are eligible for our
+temporal modeling. Our work can be also combined with
+the hybrid framework of Bar-Yossef and Kraus [2] to improve
+the ranking of candidates with no or little context.
+
+Figure 1: Google auto-completion candidates after
+typing di on Sunday, February 13th, 2012.
+
+Figure 2: Daily frequencies for queries dictionary
+(red) and disney (blue) during January 2012 according to Google Trends (the snapshot was taken on
+Monday, 13-Feb-2012). Among the two queries, disney is more popular on weekends, while dictionary
+is issued more commonly by users on weekdays.
+
+Time-sensitive search. The world is constantly changing
+and the dynamics of daily life are reﬂected on the web in the
+forms of fresh content and new information needs. Diﬀerent
+aspects of freshness in web search have been explored; Jones
+and Diaz [21] and Li and Croft [24] extended the language
+modeling framework to incorporate the time extracted from
+document time-stamps. Berberich et al. [5] matched explicit temporal expressions in queries with the time-stamps
+mentioned in documents in a query likelihood approach for
+ranking. Their work was extended by Kanhabua and Nørvåg
+[22] that used the content of top-ranked documents for approximating the most related time-interval for the query.
+Elsas and Dumais [16] showed that there is a strong connection between the rate of content changes in a document
+and its relevance. They proposed a probabilistic ranking
+model in which the term weights vary according to their
+temporal characteristics. Relatedly, Efron [15] investigated
+using linear time-series models for term weighting. Dai and
+Davison [11] introduced a time-sensitive version of PageRank based on multiple crawls and showed that it can be used
+as an eﬀective static score for document ranking. Dong et
+al. [14] and Dai and Davison [12] integrated freshness in
+learning to rank by introducing new ways of optimizing for
+both freshness and relevance.
+Kulkarni et al. [23] classiﬁed queries into diﬀerent categories based on their change of popularity over time. The
+authors showed that monitoring the query popularity and
+content updates can reveal useful signals for detecting the
+change in query intent. Metzler et al. [26] classiﬁed queries
+with implicit temporal intent (e.g. halloween) according to
+their previous occurrences in the logs along with explicit
+temporal expressions (e.g. halloween 2010). Shokouhi [31]
+
+intuitive ﬁnding, can be useful in scenarios where applying
+more sophisticated time-series models is feasible. Second,
+we introduce a time-sensitive query auto-completion model
+in which the expected popularity of each query suggestion
+is forecasted by time-series, and dynamically varies depending on the time of query. Finally, we perform a large scale
+analysis over 4.5 years of sampled log data, and evaluate our
+predictions on daily and monthly intervals. Our experimental results indicate that accurate query popularity forecasts
+are essential in generating high quality QAC rankings.
+
+2.
+
+RELATED WORK
+
+Query auto-completion. Auto-completion during typing
+is a familiar feature and has been utilized in several applications ranging from early UNIX Shells to modern text editors
+and web browsers.
+Previous work on auto-completion can be grouped into
+two main categories; the ﬁrst group (also referred to as
+predictive auto-completion [8]) deploys information retrieval
+and NLP techniques to generate and rank candidates on the
+ﬂy as the user enters new words and characters [13, 18, 27].
+For instance, Grabski et al. [18], and Bickel et al. [6] studied sentence completion based on lexicon statistics of text
+collections. Fan et al. [17] ranked AC candidates according
+to a generative model learned by Latent Dirichlet Allocation (LDA) [7]. White and Marchionini [33] developed a
+real-time query expansion system that produces an updated
+list of candidates based on the top-ranked documents as the
+user types new words in the search box.
+In the second group of AC techniques — including this
+work — candidates are pre-generated and stored in tries
+and hash tables for eﬃcient lookup. The list of candidates is
+updated by new lookups with each new input from the user.
+
+1
+
+Recently, Chaudhuri and Kaushik [8] and Ji et al. [20]
+proposed ﬂexible fuzzy matching models that are tolerant
+to small edit-distance diﬀerences between the query (preﬁx)
+and candidates.
+
+602
+
+leveraged time-series decomposition techniques for classifying seasonal queries.
+Chien and Immorlica [9] demonstrated that queries with
+similar temporal patterns (e.g. halloween and pumpkin) can
+be semantically related despite no lexical overlap. Liu et al.
+[25] introduced a uniﬁed model for forecasting query frequency in which the forecast for each query, is inﬂuenced by
+the frequencies predicted for similar and correlated queries.
+Vlachos et al. [32] developed a compressed representation
+for time-series and proposed a model for detecting signiﬁcant
+bursts in query frequencies. Baraglia et al. [3] investigated
+the impact of aging on query ﬂow graphs and in the presence of evolving query trends. They argued that generating
+the graphs from scratch may not be feasible and described
+an incremental approach for more eﬃcient updates. Alfonseca et al. [1] clustered queries according to their frequency
+time-series. They suggested that their approach can be used
+for query suggestion and query categorization. Zhang et al.
+[34] reranked documents based on their time-stamps in snippets and suggested that their approach can improve search
+eﬀectiveness for temporal queries.
+Radinsky et al. [29] have performed an analysis of predictability of diﬀerent user behaviors (such as query clicks,
+URL clicks and query-URL clicks) using time-series analysis and a learning model. Similarly, Cho and Varian [10]
+and Shimshoni et al. [30] study the general applicability
+of time-series analysis for modeling query trends. However,
+those studies have been performed on small sets of queries
+(≈10,000 queries) and of short periods of time (6 months),
+disallowing identiﬁcation of long term yearly seasonality. In
+our work, we perform rigorous analysis of a large scale corpus of 846K queries over a period of 4.5 years for the purpose
+of better query suggestions.
+While it is clear that freshness has been considered in
+several areas of web search, to the best of our knowledge,
+this is the ﬁrst time that the temporal trends of queries are
+modeled and used for QAC ranking.
+
+3.
+
+MCP(P) = arg max w(q),
+q∈C(P)
+
+w(q) = 
+
+f (q)
+i∈Q f (i)
+
+(1)
+
+here, f (q) denotes the number of times the query q occurs
+in a previous search log Q. Under the MPC model, the candidate scores do not change as long as the same query log
+Q is used. Each query is represented by a single value as
+its popularity which is computed by counting the number
+of times that it has occurred in the past. As long as Q is
+not replaced by a fresher log, the assumption is that the
+aggregated frequencies can be regarded as reasonable approximations for future popularity. However, as mentioned
+earlier, the query popularity may change over time and the
+candidate lists must be adjusted consequently to account for
+recent changes.
+While frequent updates of query statistics may address the
+freshness problem to some extent, it is not clear how often
+the logs must be updated to provide the best approximations for future popularity. Without the right update policy, trend eﬀects will be disregarded. For example, a query
+such as Sarah Burke that gained high popularity in January
+2012, but was not queried as often in the past, might get
+lower ranking if compared to the query Sarah Palin, which
+has high volume, since it was queried for many years, despite
+being relatively less popular in January 2012. Furthermore,
+aggregation methods ignore seasonal eﬀects. For instance,
+at the time of this writing on 13th February 2012 – a day before the Valentine’s day – Google suggests verizon wireless
+as top candidate for v and does not suggest any Valentine’s
+related candidate in the QAC ranking (the top plot in Figure 3). The query frequency trends in the bottom plot of
+Figure 3 however clearly show that valentines day is temporally more relevant for suggestion. As another example,
+weekly patterns such as those shown in Figure 2 for disney and dictionary disappear in monthly aggregations. In
+summary, the past is not always a good proxy for future particularly for trendy and seasonal queries. Today’s frequency
+for query dictionary is not necessarily the best estimate for
+its frequency tomorrow.
+We propose TS, a time-sensitive QAC ranking model in
+which the default aggregated candidate scores in Equation 1
+are replaced with forecasted values computed by time-series
+modeling of query history. Here, the score of each candidate at time t is determined according to its predicted value
+calculated using time-series models that capture trend, seasonality. Hence, our time-sensitive QAC ranking model can
+be formalized as,
+
+TIME-SENSITIVE AUTO-COMPLETION
+
+In a typical QAC scenario, the user is presented with a list
+of query suggestions that their preﬁx matches the text entered in the search box. In this paper, we refer to the latest
+text in the search box as preﬁx (e.g. “di” in Figure 1). The
+preﬁx is updated as the user enters new characters and will
+eventually match the ﬁnal query once the query is submitted. For each preﬁx P, the list of candidates C(P) consists
+of all previous queries that start with P.2 The list of candidates is dynamically updated at run-time with each new
+character typed by the user.
+Ideally, the candidates should be ranked based their likelihood of matching the query that the user has in mind. In
+the absence of any contextual information, this likelihood
+can be set according to the wisdom of crowds by using the
+general frequency in the past as a proxy for the expected
+popularity in future. The most common approach is to aggregate the query frequencies over a query log, and use these
+aggregated values for ranking QAC suggestions. Bar-Yossef
+and Kraus [2] referred to this general form of QAC ranking
+as MostPopularCompletion (MPC) where,
+
+TS(P, t) = arg max w(q|t),
+q∈C(P)
+
+w(q|t) = 
+
+ŷt (q)
+i∈Q ŷt (i)
+
+(2)
+
+where P is the entered preﬁx, and C(P) represents its list of
+QAC candidates, and ŷt (q) denotes the estimated frequency
+of query q at time t. As a result, the quality of a candidate
+list generated by our TS model is directly inﬂuenced by the
+accuracy of predictions obtained by time-series modeling.
+Note that, our time-sensitive model becomes similar to the
+context-sensitive QAC ranking of Bar-Yossef and Kraus [2] if
+one considers time as “context”. The focus of our work is on
+the time-sensitivity of query suggestions, and on how we can
+enhance QAC to handle this aspect. We leverage techniques
+from time-series analysis to model temporal query behavior
+
+2
+Without the loss of generality we ignore more advanced
+fuzzy matching techniques [8, 20] in our work.
+
+603
+
+Figure 4: The black line shows monthly frequency
+values for query spring ﬂowers between Sep’06–
+Jun’11. The green curve depicts the predicted values for the next 24 months (Jul’11–Jun’13) based on
+triple exponential smoothing. Data from bing.com.
+Figure 3: (Top)
+ranked by Google
+fore Valentine’s.
+for valentines day
+
+The auto-completion candidates
+on 13th February 2012, a day be(Bottom) The query frequencies
+vs. verizon wireless since 2004.
+
+smoothed values at time t. The forecast for the next interval
+based on double exponential smoothing can be obtained by:
+ŷt+1 = ȳt + Ft
+
+(Section 3.1), and demonstrate how these models can be
+learnt from query logs to do better QAC ranking (Section
+3.2).
+
+3.1
+
+(7)
+
+That is, the value of the next data point at time t + 1 is
+predicted by linear combination of the smoothed value at
+time t and the latest trend parameter Ft . Hence, a negative
+Ft sets a smaller predicted value for the next time interval
+(t + 1), compared to the most recently observed value yt .
+Double exponential smoothing does not capture the frequency variations due to potential seasonality (periodicity)
+in the data. Triple exponential smoothing generalizes the
+previous techniques by explicitly modeling the seasonality.
+The updated model — also known as HoltWinters smoothing — is often expressed as:
+
+Time-Series Analysis & Forecast
+
+A time-series consists of a sequence of data points in successive time order and with uniform intervals. Hence, annual salaries, the daily rate of CO2 emissions and any other
+sequence of numbers collected at uniform intervals can be
+represented by a time-series. In practice, time-series analysis is often used to model the temporal changes in data and
+to forecast future trends.
+At any given time, the Exponential smoothing methods
+[19] apply a weighted average over the frequencies of previous data points to forecast the upcoming trends. In the
+simplest form — also known as Single exponential smoothing
+— the time-series is smoothed as follows,
+
+ȳt
+Ft
+St
+
+= λ1 (yt − St−τ ) + (1 − λ1 )(ȳt−1 + Ft−1 )
+= λ2 (ȳt − ȳt−1 ) + (1 − λ2 )Ft−1
+= λ3 (yt − ȳt ) + (1 − λ3 )St−τ
+λ 1 + λ 2 + λ3 = 1
+
+(8)
+(9)
+(10)
+(11)
+
+where yt and ȳt respectively denote the actual and smoothed
+values for the data at time t, and λ is the smoothing parameter ranging between 0 and 1. The recursive equation above
+can be also used to provide the forecast for the next interval
+(ŷt+1 ). That is,
+
+where St captures the seasonality of data at time t, and
+τ speciﬁes the length of periodic cycle (e.g. 12 for annual
+cycles when the data points represent monthly frequencies).
+The smoothing parameters λ1 , λ2 , and λ3 vary between 0
+and 1 and can be optimized using standard techniques such
+as maximum likelihood. The forecast for the value of the
+time-series at the next interval is given by:
+
+ŷt+1 = ȳt
+
+ŷt+1 = (ȳt + Ft )St+1−τ
+
+ȳt = λyt + (1 − λ)ȳt−1
+
+(3)
+
+(4)
+
+While single exponential smoothing may produce reasonable
+forecasts for stationary time-series, it performs poorly in the
+presence of a trend in time-series. To remedy this problem,
+Double exponential smoothing methods extend the previous
+model by introducing a trend variable Ft ,
+ȳt
+Ft
+
+=
+=
+
+λ1 yt + (1 − λ1 )(ȳt−1 + Ft−1 )
+λ2 (ȳt − ȳt−1 ) + (1 − λ2 )Ft−1
+
+(12)
+
+Figure 4 illustrates an example of applying triple exponential smoothing for forecasting future trends. The underlying
+data comprises of monthly frequency values for query spring
+ﬂowers sampled from logs of bing.com between September
+2006 and June 2011. The green curve shows the forecast for
+July 2011 – June 2013 (τ = 12).
+
+(5)
+(6)
+
+3.2
+
+Parameter Estimation and Forecasting
+
+In this work we utilize a hill-climbing optimization technique called limited-memory BFGS (L-BFGS), which is a
+limited memory variation of the Broyden-Fletcher-GoldfarbShanno (BFGS). The technique estimated the direction by
+
+Here, parameter Ft models the linear trend of time-series
+at time t, while λ1 and λ2 are smoothing parameters. As
+in previous equations, yt and ȳt represent the actual and
+
+604
+
+solving the following Newton equation:
+Bk pk = −∇f (xk )
+
+ﬁrst candidate should be rewarded or penalized more heavily
+than the pairwise swapping of the other pair.
+To make our evaluation more robust against the potential
+noise caused by insigniﬁcant diﬀerences, we ﬁrst take a log of
+— true/predicted — query frequencies and then round them
+to the closest integer across all our QAC ranking evaluations.
+
+(13)
+
+the approximation of the Hessian matrix at step
+where Bk is
+k, and f =
+2 is the sum of the prediction error rates. The
+initial values B0 and x0 are guessed, and a line search in the
+direction at step k is then used to ﬁnd the next point xk+1 ,
+and a new value of the matrix Bk+1 is estimated [28].
+
+4.
+
+5.
+
+EVALUATION
+
+Our ﬁrst set of experiments focuses on forecast accuracy
+while in the second part we evaluate the eﬀectiveness of QAC
+rankings. For each task, we borrow a couple of metrics from
+information retrieval and statistics for measurement.
+
+Forecast accuracy. Mean absolute error (MAE) is widely
+used in statistics to measure the accuracy of forecasts and
+is deﬁned as follows,
+
+MAE =
+
+n
+1
+|ŷi − yi |
+n i=1
+
+(14)
+
+Daily buckets, weekly cycles (D-W). Our ﬁrst testbed is
+
+where y is the true value and ŷ is the prediction. MAE is an
+unbounded measure and is not strongly resilient to outliers.
+Therefore, its is often used along with other metrics such
+as Symmetric mean absolute percentage error (SMAPE) to
+diagnose the forecast variation. SMAPE is deﬁned as,
+
+SMAPE =
+
+n
+1  |ŷi − yi |
+n i=1 ŷi + yi
+
+DATA
+
+Our experimental data comprises of all queries that were
+submitted to bing.com by users – with a US-based IP address – between January 1st, 2007 and June 30th, 2011. We
+dropped queries that never appeared more than 28 times
+in at least one of the months during this period. In total
+846,432 queries and their daily frequencies were extracted.
+The quality of QAC candidates can vary depending on
+the amount of historical data available for each query. The
+eﬀectiveness of time-series techniques for modeling the query
+trends is also sensitive to the amount of training data and
+the length of seasonal cycle (τ in Equation 12). Therefore,
+we use our sampled query statistics to construct two testbeds
+with distinctive characteristics.
+
+generated from daily query frequency values between January 2nd, 2011, and June 30th, 2011 (180 days). For each
+query at time (day) t, we use the frequencies at all previous
+intervals (previous daily frequencies) to ﬁt the time-series
+models. We consider the last 30 days (June 2011) as our
+testing period for reporting the results. We set the τ value
+in time-series models to 7 which would allow them to capture
+potential weekly cycles in query frequency.
+
+(15)
+
+Monthly buckets, annual cycles (M-A). We aggregated
+
+In contrast to mean absolute error, SMAPE is bounded
+between 0 and 1, although it penalizes under- and overestimations unequally.
+
+the daily frequency values between January 2007 and June
+2011 in monthly buckets . Hence, the history of each query
+is represented by 54 data points one for each month covered
+during our sampling time-frame. We report our evaluation
+results on the ﬁrst 6 months of 2011. Here, we set the τ
+parameter in our time-series models to 12, to allow modeling
+of potential annual cycles.
+Compared to the previous testbed, there are fewer data
+points for time-series modeling of query trends, and there is
+less variance and sparsity in query frequencies.
+
+QAC quality. In the absence of any contextual and personalized information, the ground-truth QAC ranking for a
+preﬁx P is the list of all queries that start with P (or are
+somehow ﬁltered for the preﬁx) ordered according to their
+true popularity. At any given time t, the true popularity values are set according to the observed query frequency values
+at that time. Obviously, this information is not available to
+QAC ranking models at runtime, and they have to rely on
+historical data at time t − 1 and before to rank candidates
+as close as possible to this unobserved ground-truth (G).
+We measure the quality of QAC lists by computing their
+Spearman correlation (ρ) against this gold standard G. We
+also employ MRR to speciﬁcally measure the mean reciprocal rank of the best ground-truth candidate (top-ranked in
+G) in QAC rankings.
+Small diﬀerences in query frequency can cause signiﬁcant
+changes in the ordering of QAC candidates. Both MRR and
+Spearman correlation penalize swapping two queries with
+similar frequencies the same way they penalize swapping a
+pair with a substantial gap in popularity. Consider a scenario where the user has typed hall in the search box in
+October, and the QAC model has to rank the following candidates: halloween, halloween party games, and halloween
+party ideas. The ﬁrst candidate is orders of magnitude more
+popular than the other two which more or less have similar frequencies. Clearly, pairwise swappings that involve the
+
+6.
+
+PREDICTING QUERY POPULARITY
+
+In an oracle list of QAC suggestions, candidates are sorted
+in descending order of their true popularity. Since this
+ground-truth information is unavailable at runtime, QAC
+ranking models order candidates according to their expected
+(predicted) popularity inferred from previous logs.
+Our TS auto-completion method models the entire query
+history by time-series and forecasts the future popularity
+accordingly. The MCP method [2] that we use as our baseline assumes that the aggregated frequency of a query over
+past search logs is a reasonable approximation for its future
+popularity. Surprisingly, little is known about the validity
+of this assumption and its impact on the ranking of QAC
+candidates. Furthermore, the trade-oﬀ between the recency
+(and size) of the query log used for aggregation, and the
+accuracy of outcome predictions has not been investigated.
+In this section, we evaluate the accuracy of various methods for predicting the future query popularity, and in the
+
+605
+
+Table 1: The forecast error rates obtained by different methods on the D-W testbed. The query frequencies are predicted once for each of the 30 days in
+the testing period (June 2011). The best performing
+method in each row is speciﬁed by an underline. All
+(TS vs. P∗ ) and (TMS vs. P∗ ) pairwise diﬀerences
+are detected as statistically signiﬁcant by the t-test
+(p < 0.01).
+
+MAE
+SMAPE
+
+P1
+
+1400
+1200
+1000
+800
+600
+400
+200
+0
+Jan
+
+MAE
+
+P12
+1189
+0.381
+
+Ph
+1012
+0.313
+
+TS
+343
+0.179
+
+TMS
+323
+0.164
+
+0.30
+0.25
+0.20
+0.15
+0.10
+0.05
+0.00
+Jan
+
+as expected popularity for future. For this, the query frequencies are aggregated over a past query log. We explore
+several aggregation options by averaging the query frequencies over the last k intervals (k ∈ {1, 3, 6, 12}), and also over
+the entire query history. We refer to latter form of aggregation as Ph and denote the others by Pk where k is the number of previous intervals used for averaging. We study the
+accuracy of these aggregated baselines in predicting future
+query popularity, and compare them against the forecasts
+produced by our time-series modeling of query trends (TS).
+Table 1 includes the forecast error rates of diﬀerent methods on the D-W testbed. The frequency of each query is
+forecasted once for each of the 30 days in our testing period (June 2011). At each time t, the Pk baselines use the
+average frequency of the past k days as their prediction.
+Ph computes the average over the entire query history before t. The TS model also uses the entire previous history
+but produces its forecasts by triple exponential smoothing
+(τ = 7). For now, ignore the TMS column as we will get
+to it later. The numbers show that our TS predictions are
+better than all aggregated baselines on both metrics; all differences are detected as statistically signiﬁcant by the t-test
+(p < 0.01). Among the aggregated baselines, MAE favors
+P1 while SMAPE picks Ph as the best model. The discrepancy suggests that averaging over the entire history provides
+more robust predictions overall but may fail more noticeably
+on outliers.
+We take a closer look at the daily error rates produced by
+the best three methods (P1 , Ph , and TS) in Figure 5. The
+results are consistent with the overall numbers; the MAE
+rates have higher variance and Ph is more robust than P1
+although it may produce greater absolute errors. Ph performs worst over the weekends and P1 errors are highest on
+Saturdays and Mondays. This can be explained by the fact
+that search traﬃc is generally lower on the weekends, and
+grows again on Mondays. P1 is constantly one step behind
+to react to these changes and Ph is too stale in general.
+We repeated our analysis on the M-A testbed and summarized the results in Table 2. All methods produce 6 forecasts
+for each query, one for every month in our testing period
+Jan–June 2011. The Pk baselines use the average frequency
+of the past k months as their forecast while Ph computes
+the average over the entire query history since January 2007.
+The TS model also uses the entire previous history but produces its forecasts by triple exponential smoothing (τ = 12).
+Once again, ignore the values under the TMS column as
+
+P6
+1108
+0.346
+
+Ph
+
+TS
+
+Jun
+
+Forecast quality. MCP considers the past query frequency
+
+P3
+1065
+0.330
+
+TMS
+
+Jun
+
+SMAPE
+
+next section we measure the impact of these predictions on
+the quality of QAC rankings.
+
+P1
+338
+0.168
+
+May
+
+TMS
+10.50
+0.251
+
+May
+
+TS
+10.57
+0.228
+
+Apr
+
+Ph
+23.12
+0.270
+
+Apr
+
+P12
+24.05
+0.275
+
+Mar
+
+P6
+23.62
+0.273
+
+Mar
+
+P3
+23.37
+0.272
+
+Feb
+
+P1
+14.02
+0.277
+
+Feb
+
+MAE
+SMAPE
+
+Table 2: The forecast error rates obtained by different methods on the M-A testbed. The query frequencies are forecasted once for each of the 6 months
+in the testing period (Jan–Jun 2011). The best
+performing method in each row is speciﬁed by an
+underline. Except for (MAE, k = 1), all (TS vs. P∗ )
+and (TMS vs. P∗ ) pairwise diﬀerences are detected
+as statistically signiﬁcant by the t-test (p < 0.01).
+
+Figure 6: Daily SMAPE (top) and MAE (bottom)
+rates for P1 , Ph , TS and TMS predictions on the
+M-A testbed (January–June 2011).
+
+they will be described later. The numbers show that with
+the exception of P1 , our TS predictions are better than all
+aggregated baselines on both metrics; all diﬀerences are detected as statistically signiﬁcant by the t-test (p < 0.01).
+The diﬀerence between P1 and TS is statistically signiﬁcant
+on SMAPE but not so according to MAE. The competitive
+performance of P1 on this testbed can be explained by several reasons; compared to the daily frequency values used
+the in D-W testbed, the data here is aggregated in monthly
+partitions. The monthly query frequencies are less sparse
+and have lower variance. Furthermore, the TS model has
+about 6 times more data points in the D-W testbed which
+allows it to ﬁt the query trends better.
+Figure 6 illustrates the monthly error rates for diﬀerent
+methods. While the trends are consistent with the overall
+numbers, it is interesting to note the higher error rate of P1
+for January which is due to the change of year and end of
+holiday season.
+
+606
+
+27th
+
+28th
+
+29th
+
+30th
+
+Tue, 28th
+
+Wed, 29th
+
+Thu, 30th
+
+24th
+Fri, 24th
+
+Mon, 27th
+
+23rd
+Thu, 23rd
+
+26th
+
+22nd
+Wed, 22nd
+
+25th
+
+21st
+Tue, 21st
+
+Sat, 25th
+
+20th
+
+Sun, 26th
+
+19th
+Sun, 19th
+
+18th
+
+Mon, 20th
+
+17th
+Fri, 17th
+
+Sat, 18th
+
+16th
+
+15th
+
+14th
+
+13th
+
+12th
+
+11th
+
+9th
+
+10th
+
+8th
+
+7th
+
+6th
+
+5th
+
+4th
+
+3rd
+
+2nd
+
+1st
+
+SMAPE
+
+0.35
+0.30
+0.25
+0.20
+0.15
+0.10
+0.05
+0.00
+
+40
+P1
+
+MAE
+
+30
+
+Ph
+
+TS
+
+TMS
+
+20
+10
+
+Thu, 16th
+
+Tue, 14th
+
+Wed, 15th
+
+Sun, 12th
+
+Mon, 13th
+
+Sat, 11th
+
+Fri, 10th
+
+Thu, 9th
+
+Tue, 7th
+
+Wed, 8th
+
+Mon, 6th
+
+Sat, 4th
+
+Sun, 5th
+
+Fri, 3rd
+
+Thu, 2nd
+
+Wed, 1st
+
+0
+
+Figure 5: Daily SMAPE (top) and MAE (bottom) rates for forecast models on the D-W testbed (June 2011).
+
+Success & Failure Analysis. We picked P1 and TS as the
+two most eﬀective methods according to the overall metrics
+and inspected their performance on per-query basis.
+On the D-W testbed, lower error rates for TS versus P1
+are most apparent in queries with highly periodic frequency
+trends. Figure 7 depicts the actual and predicted frequencies
+for queries nascar and irish lottery as two examples from
+this category. The P1 gains over TS often come from queries
+that were either periodic and highly popular but suddenly
+lost their demand (e.g. recently ended tv shows), or those
+that face an unexpected spike in popularity (e.g. celebrity
+names). Figure 8 shows two of these examples for queries
+american idol and ginger lee.
+We also grouped the TS weekday winners by extracting
+the queries that their TS predictions are better than P1 on
+those weekdays, consistently over the entire testing period
+(June 2011). The top winners for each day are listed in
+Table 3.3 As expected all these queries have periodic trends
+and are related to intents that have weekly cycles. The list
+is dominated by queries related to lottery (e.g. euromillion),
+tv shows (e.g. zero punctuation) and those targeting weekly
+deals (e.g. dominos) or updates (e.g. week in pictures).
+There were no weekday losers apart from queries that were
+related to americal idol and dancing with the stars, the two
+tv shows that their latest series ended in May 2011, just
+before the start of our testing time period.
+Similar patterns can be observed on the M-A testbed. TS
+is more eﬀective in predicting the frequency of queries with
+seasonal trends, while it fails to adapt quickly when there is
+a sudden change in the query popularity. Figures 9 and 10
+
+Table 3: A sample of queries where TS performs
+substantially better than P1 consistently on certain
+weekdays during the testing period (June 2011).
+Mon dear prudence; fedex tracking; gmail; · · ·
+Tue
+euromillion; abc; daily show; dominos · · ·
+Wed mega millions; publix; zero punctuation · · ·
+Thu louisiana lottery; footy tips; olg; · · ·
+Fri
+week in pictures; nascar; cinemex · · ·
+Sat
+irish lottery; wclc; toto; · · ·
+Sun
+wisconsin unemployment; mail on sunday; ncesc; · · ·
+
+contain four examples of signiﬁcant wins and losses for TS
+versus P1 .
+
+Temporal model selector (TMS). Our results so far have
+shown that when it comes to query frequency forecast models, there is no one size ﬁts all method that always wins.
+For queries with an unexpected spike in particular, the timeseries models tend to overﬁt when trying to optimize their
+smoothing parameters. Motivated by this observation, we
+propose a temporal model selector that dynamically decides
+which forecast model to choose at each time-interval for the
+query. For this purpose, we consider a segment of query
+history as the validation period and decide between diﬀerent models according to their performance on this segment.
+The validation process can be designed in diﬀerent ways. For
+instance, one can pick the model that has the lowest error
+rate on the entire validation set. Alternatively, it is possible to train a classiﬁer that takes in monthly error rates
+and other features for supervised model selection. We decided to take a simple approach and left more sophisticated
+
+3
+For presentation purposes, we excluded queries that have
+high overlap with those already included in the list. For
+example, abc family is dropped when abc is already included.
+
+607
+
+irs
+6e+05
+5e+05
+4e+05
+3e+05
+2e+05
+1e+05
+0e+00
+
+australian open
+
+Frequency
+
+Actual
+
+P1
+
+200000
+
+TS
+
+Actual
+
+150000
+
+P1
+
+TS
+
+100000
+50000
+Jun
+
+May
+
+Apr
+
+Mar
+
+Feb
+
+Jan
+
+Jun
+
+May
+
+Apr
+
+Mar
+
+Feb
+
+Jan
+
+0
+
+Figure 9: (left) The actual daily frequencies and the predicted values by P1 (SMAPE ≈ 0.26) and TS (SMAPE
+≈ 0.18) for query irs between Jan–Jun 2011. (right) Same data for query australian open by P1 (MAE ≈ 0.52),
+and TS (SMAPE ≈ 0.49). TS is more successful in predicting the frequency of queries with seasonal trends.
+
+nascar
+
+american idol
+Actual
+P1
+TS
+
+10000
+5000
+
+1st
+2nd
+3rd
+4th
+5th
+6th
+7th
+8th
+9th
+10th
+11th
+12th
+13th
+14th
+15th
+16th
+17th
+18th
+19th
+20th
+21st
+22nd
+23rd
+24th
+25th
+26th
+27th
+28th
+29th
+30th
+
+1st
+2nd
+3rd
+4th
+5th
+6th
+7th
+8th
+9th
+10th
+11th
+12th
+13th
+14th
+15th
+16th
+17th
+18th
+19th
+20th
+21st
+22nd
+23rd
+24th
+25th
+26th
+27th
+28th
+29th
+30th
+
+irish lottery
+
+ginger lee
+TS
+
+80000
+60000
+40000
+20000
+0
+
+Actual
+P1
+TS
+
+1st
+2nd
+3rd
+4th
+5th
+6th
+7th
+8th
+9th
+10th
+11th
+12th
+13th
+14th
+15th
+16th
+17th
+18th
+19th
+20th
+21st
+22nd
+23rd
+24th
+25th
+26th
+27th
+28th
+29th
+30th
+
+P1
+
+Frequency
+
+Actual
+
+1st
+2nd
+3rd
+4th
+5th
+6th
+7th
+8th
+9th
+10th
+11th
+12th
+13th
+14th
+15th
+16th
+17th
+18th
+19th
+20th
+21st
+22nd
+23rd
+24th
+25th
+26th
+27th
+28th
+29th
+30th
+
+Frequency
+
+0
+
+2000
+1500
+1000
+500
+0
+
+Actual
+P1
+TS
+
+50000
+40000
+30000
+20000
+10000
+0
+
+Frequency
+
+Frequency
+
+15000
+
+Figure 7: (Top) The actual daily frequencies and
+the predicted values by P1 (SMAPE ≈ 0.19) and TS
+(SMAPE ≈ 0.06) for query nascar in June 2011.
+(Bottom) Same data for query irish lottery by P1
+(SMAPE ≈ 0.52), and TS (MAE ≈ 0.09). TS is more
+successful in modeling the periodic trends.
+
+Figure 8: (Top) The actual daily frequencies and the
+predicted values by P1 (MAE ≈ 0.08) and TS (MAE
+≈ 0.81) for query american idol in June 2011. (Bottom) Same data for query ginger lee by P1 (SMAPE
+≈ 0.26), and TS (SMAPE ≈ 0.40). P1 reacts to quick
+changes of popularity more eﬀectively.
+
+models for future work. At each time interval t, we test the
+performance of — P1 and MS — forecast models at times
+t − τ, t − 2τ, ..., t − kτ as long as they are included in the
+validation segment. We then pick the model that wins more
+often on the selected months. We break any tie by backing
+oﬀ to the model that has lower SMAPE on the entire validation set. In nutshell, the validation step reduces the risk of
+using time-series forecast models that overﬁt their smoothing parameters to ﬁt an unexpected recent burst. Note that
+the corrections achieved by model selection still cannot cover
+the opposite cases such as american idol where the popularity suddenly drops.
+On the D-W testbed, we used the daily frequencies in May
+2011, and on the M-A testbed we used the monthly values
+between 2009–2010 as our validation sets. The overall error
+
+rates obtained by TMS on these testbeds can be respectively
+found in Tables 1 and 2. On the M-A testbed, temporal selection boosts both metrics. On the D-W testbed TMS leads
+to further improvements in MAE but it negatively aﬀects
+SMAPE. The daily and monthly error rates in Figures 5
+and 6 are consistent with the overall numbers.
+In summary, our experiments suggest that despite the
+common assumption, aggregated query frequencies may not
+provide a good proxy for future popularity. Although aggregation based on fresher data is generally more eﬀective, it
+still fails to predict the popularity of periodic queries. Our
+forecasts based on time-series analysis, and temporal model
+selection consistently outperform the aggregated baselines
+on both testbeds. In the next section, we show how improvements in forecast accuracy leads to better QAC ranking.
+
+608
+
+7.
+
+TIME-SENSITIVE QAC RANKING
+
+Table 4: The eﬀectiveness of QAC rankings produced according to diﬀerent forecast models on the
+D-W (left) and M-A (right) testbeds. The best performing method in each experiment is speciﬁed by
+an underline. All pairwise diﬀerences are detected
+as statistically signiﬁcant by the t-test (p < 0.01).
+
+We pick P1 as the best aggregated model to form the best
+case for MostPopularCompletion (MCP) [2] baseline in our
+QAC experiments. At each time t (day/month), we rank the
+QAC candidates according to their frequency at time t − 1
+and compare them against the oracle ranking generated by
+the true frequency values at time t. We also use the forecasts
+produced by the TS and TMS models to generate two timesensitive QAC rankings for each query.
+
+MCP(P1 )
+MCP(TS)
+MCP(TMS)
+
+QAC Candidates. We extract the QAC preﬁxes and candidates from the same query log described in Section 4. For
+each preﬁx P at time t, we match all the queries that start
+with P and rank them according to their true frequency
+at time t to generate the ground-truth ranking. We ﬁlter
+out all preﬁxes that have fewer than 3 characters, and those
+that have less than 5 candidates. For each forecast method
+at time t, we rank the top-20 ground-truth candidates based
+on the data available at time t−1 and before. Those groundtruth candidates that are observed for the ﬁrst time in the
+logs at time t and did not exist before are omitted.
+
+M-A Testbed
+Spearman (ρ) MRR
+0.607
+0.867
+0.597
+0.868
+0.618
+0.873
+
+We leveraged time-series techniques to predict the query
+popularity and showed that such methods consistently outperform diﬀerent baselines that use aggregated data. We
+also demonstrated that predictions based on aggregated frequency over a long period are usually worse than those made
+on smaller but more recent data. Finally, we showed that using more accurate query popularity predictions produced by
+time-series modeling leads to higher quality auto-completion
+query suggestions.
+As feature work, a mixture model produced by ﬁtting several time-series models simultaneously (with diﬀerent values
+of τ ) may improve the quality of predictions. Last but not
+least, similar analysis can be done for diﬀerent levels of granularity such as hourly intervals.
+
+Results. Table 4 contains the evaluation results for ranking
+QAC candidates based on diﬀerent prediction models. On
+the D-W testbed 30 rankings are generated for each preﬁx, one for each day in June 2011. Similarly, on the M-A
+testbed, each preﬁx is used to generate 6 QAC rankings, one
+for each month during January–June 2011. The numbers in
+the table are averaged across all queries and over the entire testing period. All pairwise diﬀerences are detected as
+statistically signiﬁcant for both evaluation metrics.
+The MRR and Spearman (ρ) results in Table 4 closely
+follow patterns to observed for SMAPE error rates in our
+previous experiments. On the D-W testbed in Table 5 we
+saw that TS had lower error rates than TMS and they both
+produced signiﬁcantly more accurate predictions compared
+to P1 . The same can be observed when comparing the QAC
+lists generated based on their forecast values. TS has the
+edge over TMS while P1 performs signiﬁcantly poorer than
+both. Similarly, the SMAPE numbers in Table 6 suggested
+that TMS produces the most accurate forecasts on the MA testbed. Here the results in Table 4 conﬁrm that indeed
+these more accurate forecasts lead to higher quality QAC
+rankings.
+We also computed the Pearson coeﬃcient (r) between the
+average forecast error rates of the top ﬁve QAC suggestions
+and the ﬁnal ρ and MRR values computed for those rankings. As expected, the Pearson coeﬃcient suggests a negative correlation between the quality of QAC rankings and the
+average forecast errors of the top ﬁve candidates (r ≈ −0.17
+for SMAPE-Spearman and r ≈ −0.21 for SMAPE-MRR).
+Once again, time-series modeling is a key factor for better QAC ranking. Time-sensitive models such as TS and
+TMS are able to choose between big east conference and
+big east tournament, or between when to plant tulips and
+when to plant tomatoes depending on the time of query, while
+methods based on aggregated data constantly fall behind.
+
+8.
+
+D-W Testbed
+Spearman (ρ) MRR
+0.569
+0.763
+0.803
+0.623
+0.611
+0.796
+
+9.
+
+REFERENCES
+
+[1] E. Alfonseca, M. Ciaramita, and K. Hall. Gazpacho
+and summer rash: lexical relationships from temporal
+patterns of web search queries. In Proc. Conf.
+Empirical Methods in NLP, pages 1046–1055,
+Singapore, 2009.
+[2] Z. Bar-Yossef and N. Kraus. Context-sensitive query
+auto-completion. In Proc. WWW, pages 107–116,
+Hyderabad, India, 2011.
+[3] R. Baraglia, F. M. Nardini, C. Castillo, R. Perego,
+D. Donato, and F. Silvestri. The eﬀects of time on
+query ﬂow graph-based models for query suggestion.
+In Proc. RIAO, pages 182–189, Paris, France, 2010.
+[4] S. M. Beitzel, E. C. Jensen, A. Chowdhury,
+D. Grossman, and O. Frieder. Hourly analysis of a
+very large topically categorized web query log. In
+Proc. SIGIR, pages 321–328, Sheﬃeld, United
+Kingdom, 2004.
+[5] K. Berberich, S. Bedathur, O. Alonso, and
+G. Weikum. A language modeling approach for
+temporal information needs. In Proc. ECIR, pages
+13–25, Milton Keynes, UK, 2010.
+[6] S. Bickel, P. Haider, and T. Scheﬀer. Learning to
+complete sentences. In Proc. ECML, pages 497–504.
+2005.
+[7] D. M. Blei, A. Y. Ng, and M. I. Jordan. Latent
+dirichlet allocation. J. Mach. Learn. Res., 3:993–1022,
+Mar. 2003.
+[8] S. Chaudhuri and R. Kaushik. Extending
+autocompletion to tolerate errors. In Proc. SIGMOD,
+pages 707–718, Providence, Rhode Island, USA, 2009.
+[9] S. Chien and N. Immorlica. Semantic similarity
+between search engine queries using temporal
+correlation. In Proc. WWW, pages 2–11, Chiba,
+Japan, 2005.
+
+CONCLUSIONS
+
+We proposed a new time-sensitive query auto-completion
+model in which the ranking of query suggestions varies according to their predicted popularity at the time of query.
+
+609
+
+P1
+
+Jun
+
+May
+
+TS
+
+Mar
+
+Actual
+
+Jan
+
+Jun
+
+May
+
+Apr
+
+Feb
+
+Jan
+
+Frequency
+
+1200000
+1000000
+800000
+600000
+400000
+200000
+0
+
+TS
+
+Feb
+
+P1
+
+Actual
+
+Mar
+
+1e+06
+8e+05
+6e+05
+4e+05
+2e+05
+0e+00
+
+royal wedding
+
+Apr
+
+charlie sheen
+
+Figure 10: (left) The actual daily frequencies and the predicted values by P1 (SMAPE ≈ 0.51) and TS (SMAPE
+≈ 0.60) for query charlie sheen between Jan–Jun 2011. (right) Same data for query royal wedding by P1 (MAE
+≈ 0.58), and TS (SMAPE ≈ 0.59). P1 reacts to quick changes of popularity more eﬀectively.
+[10] H. Cho and H. Varian. Predicting the present with
+google trends. Technical report, Google Inc, April
+2009.
+[11] N. Dai and B. D. Davison. Freshness matters: in
+ﬂowers, food, and web authority. In Proc. SIGIR,
+pages 114–121, Geneva, Switzerland, 2010.
+[12] N. Dai, M. Shokouhi, and B. D. Davison. Learning to
+rank for freshness and relevance. In Proc. SIGIR,
+pages 95–104, Beijing, China, 2011.
+[13] J. J. Darragh, I. H. Witten, and M. L. James. The
+reactive keyboard: A predictive typing aid. Computer,
+23:41–49, November 1990.
+[14] A. Dong, R. Zhang, P. Kolari, J. Bai, F. Diaz,
+Y. Chang, Z. Zheng, and H. Zha. Time is of the
+essence: improving recency ranking using twitter data.
+In Proc. WWW, pages 331–340, Raleigh, North
+Carolina, USA, 2010.
+[15] M. Efron. Linear time series models for term
+weighting in information retrieval. J. Am. Soc. Inf.
+Sci. Technol., 61, July 2010.
+[16] J. L. Elsas and S. T. Dumais. Leveraging temporal
+dynamics of document content in relevance ranking. In
+Proc. WSDM, 2010.
+[17] J. Fan, H. Wu, G. Li, and L. Zhou. Suggesting
+topic-based query terms as you type. In Proc.
+APWEB, pages 61–67, Washington, DC, 2010.
+[18] K. Grabski and T. Scheﬀer. Sentence completion. In
+Proc. SIGIR, pages 433–439, Sheﬃeld, United
+Kingdom, 2004.
+[19] C. C. Holt. Forecasting seasonals and trends by
+exponentially weighted moving averages. International
+Journal of Forecasting, 20(1):5–10, 2004.
+[20] S. Ji, G. Li, C. Li, and J. Feng. Eﬃcient interactive
+fuzzy keyword search. In Proc. WWW, pages 371–380,
+Madrid, Spain, 2009.
+[21] R. Jones and F. Diaz. Temporal proﬁles of queries.
+ACM Trans. Inf. Syst., 25, July 2007.
+[22] N. Kanhabua and K. Nørvåg. Determining time of
+queries for re-ranking search results. In Proc. ECDL,
+2010.
+[23] A. Kulkarni, J. Teevan, K. M. Svore, and S. T.
+Dumais. Understanding temporal query dynamics. In
+Proc. WSDM, pages 167–176, Hong Kong, China,
+2011.
+
+[24] X. Li and W. B. Croft. Time-based language models.
+In cikm, pages 469–475, 2003.
+[25] N. Liu, J. Yan, S. Yan, W. Fan, and Z. Chen. Web
+query prediction by unifying model. In Proc. IEEE
+Int. Conf. Data Mining Workshops, pages 436–441,
+Washington, DC, USA, 2008.
+[26] D. Metzler, R. Jones, F. Peng, and R. Zhang.
+Improving search relevance for implicitly temporal
+queries. In Proc. SIGIR, pages 700–701, Boston, MA,
+USA, 2009.
+[27] A. Nandi and H. V. Jagadish. Eﬀective phrase
+prediction. In Proc. VLDB, pages 219–230, Vienna,
+Austria, 2007.
+[28] P. L. R. Byrd and J. Nocedal. SIAM Journal on
+Scientiﬁc and Statistical Computing, 16(5):1190–1208,
+1995.
+[29] K. Radinsky, K. M. Svore, J. Teevan, S. T. Dumais,
+A. Bocharov, and E. Horvitz. Learning and predicting
+behavioral dynamics on the web. In Proc. of WWW,
+pages to–appear, 2011.
+[30] Y. Shimshoni, N. Efron, and Y. Matias. On the
+predictability of search trends. Technical report,
+Google Inc, August 2009.
+[31] M. Shokouhi. Detecting seasonal queries by time-series
+analysis. In Proc. SIGIR, pages 1171–1172, Beijing,
+China, 2011.
+[32] M. Vlachos, C. Meek, Z. Vagena, and D. Gunopulos.
+Identifying similarities, periodicities and bursts for
+online search queries. pages 131–142, Paris, France,
+2004.
+[33] R. W. White and G. Marchionini. Examining the
+eﬀectiveness of real-time query expansion. Inf.
+Process. Manage., 43:685–704, May 2007.
+[34] R. Zhang, Y. Chang, Z. Zheng, D. Metzler, and J.-y.
+Nie. Search result re-ranking by feedback control
+adjustment for time-sensitive query. In Proc.
+NAACL-Short, pages 165–168, Boulder, Colorado,
+2009. Association for Computational Linguistics.
+
+610
+
+

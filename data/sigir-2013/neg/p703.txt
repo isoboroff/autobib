@@ -1,0 +1,1589 @@
+Faster Upper Bounding of Intersection Sizes
+Daisuke Takuma
+
+Hiroki Yanagisawa
+
+IBM Research – Tokyo
+6-52, Toyosu, 5-chome, Koto-ku
+Tokyo 135-8511 Japan
+
+IBM Research – Tokyo
+6-52, Toyosu, 5-chome, Koto-ku
+Tokyo 135-8511 Japan
+
+ta9ma@jp.ibm.com
+
+yanagis@jp.ibm.com
+
+ABSTRACT
+
+Document sets for a search query and terms
+
+There is a long history of developing eﬃcient algorithms for
+set intersection, which is a fundamental operation in information retrieval and databases. In this paper, we describe a
+new data structure, a Cardinality Filter, to quickly compute
+an upper bound on the size of a set intersection. Knowing
+an upper bound of the size can be used to accelerate many
+applications such as top-k query processing in text mining.
+Given ﬁnite sets A and B, the expected computation time
+for the upper bound of the size of the intersection |A ∩ B|
+is O((|A| + |B|)/w), where w is the machine word length.
+This is much faster than the current best algorithm
+for the
+√
+exact intersection, which runs in O((|A|+|B|)/ w +|A∩B|)
+expected time. Our performance studies show that our implementations of Cardinality Filters are from 2 to 10 times
+faster than existing set intersection algorithms, and the time
+for a top-k query in a text mining application can be reduced
+by half.
+
+Top-k terms (k=3)
+MILES
+
+DOOR
+
+DRIVING
+
+HIGHWAY
+
+MILES
+
+DRIVING
+HIGHWAY
+
+SEARCH QUERY
+(hit documents)
+GEAR
+
+Figure 1: Top-k query retrieves the terms with the
+top-k largest intersections with the set of documents
+retrieved by a search query.
+
+(hit documents). To process this query, we compute, for each
+term, the set intersection between (1) the set of hit documents and (2) the set of documents containing the term as
+illustrated in Figure 1, and then sort the terms with respect
+to their intersection sizes. An important observation in this
+kind of top-k query is that an enumeration of the elements
+of intersections is not necessary, but their sizes alone are
+suﬃcient to solve the problem.
+The ﬁrst contribution of our work is to show that the performance of top-k query can be improved by a fast algorithm
+for computing good upper bounds on the sizes of intersections instead of the exact ones. The top-k terms retrieved
+by a top-k query are special in having high frequencies or
+strong correlations with the search query. Most of the other
+terms, however, are infrequent and not correlated with the
+search query. That means they have very small intersections with a set of hit documents compared to those of the
+top-k terms. Our observations show that intersections for
+approximately 80% of the terms evaluated in the currently
+used top-k algorithm are less than 5% of the smallest intersection size (threshold) of the ranked terms. Focusing on
+this diﬀerence between the actual intersection sizes and the
+threshold, we found that more than 80% of the evaluations
+of the intersection sizes can be skipped by replacing them
+with the evaluations of their upper bounds. Our approach
+of using upper bounds is not limited to the top-k query, but
+it can be applied to other data analysis algorithms such as
+frequent item set mining using an inverted index.
+The second contribution of our work is to show how to
+quickly compute an upper bound of the size of the intersection. We propose two data structures for this problem:
+Single Cardinality Filter (SCF) and Recursive Cardinality
+
+Categories and Subject Descriptors
+E.1 [Data Structures]: Arrays; H.3.3 [Information Storage and Retrieval]: Information Search and Retrieval
+
+Keywords
+Indexing; data structure; set intersection; text mining; data
+mining; top-k
+
+1. INTRODUCTION
+Set intersection, which computes the set of the common
+elements in given sets, is a fundamental operation in many
+query processing tasks including relational query processing, data mining, and other search tasks. While the output
+of the set intersection is an enumeration of the elements in
+the intersection, some applications require only the size of
+the intersection. One example of such applications is top-k
+query in the context of text mining, which extracts top-k
+most frequent terms in documents for a given search query
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+SIGIR’13, July 28–August 1, 2013, Dublin, Ireland.
+Copyright is held by the owner/author(s). Publication rights licensed to ACM.
+ACM 978-1-4503-2034-4/13/07 ...$15.00.
+
+703
+
+2.
+
+Filter (RCF), both of which share some features with the
+current best algorithm for exact set intersection [13] (the
+DK algorithm). To make clear our new ideas in SCF and
+RCF, we should start with the DK algorithm. The DK algorithm constructs, for a given set A, a bit sequence to store
+a sketch of the set A and an auxiliary integer set to keep
+the original information. The term sketch used here means
+a data structure that compactly stores a summary of a set
+to quickly test the membership of an element for the set at
+the price of some false positive errors. The DK algorithm
+ﬁrst computes a sketch of A ∩ B using the corresponding
+sketches (bit sequences) for A and B to ﬁlter out unnecessary elements and to select candidate elements of A ∩ B in
+the auxiliary integer sets. Then it compares the candidate
+elements in the auxiliary integer sets to obtain the exact
+result. The eﬃciency of the DK algorithm comes from the
+ﬁltering by the sketch of A∩B, but we found that the actual
+computation time of the DK algorithm is dominated by the
+comparison step. In SCF, we also use the bit sequence to
+store a sketch for a given set, but unlike the DK algorithm,
+we use the sketches not for ﬁltering elements but for counting the common elements, and use the auxiliary integer sets
+not for comparing the elements but for correcting the count.
+That makes the auxiliary integer sets for SCF far smaller
+than those for the DK algorithm. Our improvement is that
+we signiﬁcantly reduced the time for comparing the elements
+of the auxiliary integer sets based on the fact that our purpose is to obtain an upper bound rather than the exact value
+of |A ∩ B|. In our methods, the computation time for the
+bitwise AND operations dominates the whole computation
+time. The RCF is a variant of SCF that uses another SCF recursively to store the auxiliary integer set. We show that the
+expected time of the upper bound computation with RCF is
+O((|A|+|B|)/w), where w is the machine word length, which
+is faster than the DK algorithm
+whose expected computa√
+tion time is O((|A|+|B|)/ w +|A∩B|). In our performance
+studies, SCF and RCF are shown to perform from 2 to 10
+times faster than the DK algorithm.
+In this paper, we use the w-bit word RAM model for the
+theoretical analysis of the algorithms. In this model, we
+have access to a random access memory consisting of w-bit
+words, and the basic operations (such as arithmetic operations, comparison operations, and bitwise Boolean operations) take constant time. In particular, we assume that the
+popcount operation, which counts the number of true bits
+in a w-bit machine word, takes constant time. This is a natural assumption because the state-of-the-art CPUs support
+this operation with this performance. In this model, we can
+count the number of true bits in a bit sequence of length
+ℓ in O(ℓ/w) time. Note that, in computation models that
+do not support the popcount operation in constant time, the
+popcount operation typically takes O(log w) time [23]. Thus
+the time complexity of our analysis may become worse by
+a factor of O(log w) in another computation model. For example, it may take O(ℓ log w/w) time to count the number
+of true bits in a bit sequence of length ℓ.
+This paper is structured as follows: In the next section,
+we refer to the related work. Then we describe two new data
+structures in Section 3 and introduce their applications in
+Section 4. Section 5 describes our implementations of the
+applications in detail. We present our experimental results
+in Section 6. Finally, we conclude in Section 7.
+
+2.1
+
+RELATED WORK
+Exact Set Intersection
+
+The study of exact set intersection has a long history,
+and it plays an important role in databases and information
+retrieval [5, 8]. The linear merge algorithm is one of the
+simplest approaches to intersecting two sets A and B. This
+algorithm iterates over each element of the sorted arrays of
+the elements for A and B and compares them in O(|A| +
+|B|) time. However, when A and B have greatly diﬀerent
+sizes, |A| < |B| for example, it is faster to search for each
+element of A in B. The binary search algorithm performs
+a binary search to quickly check if B contains the elements
+in A. The theoretical studies of acceleration by exploiting
+the asymmetry of set sizes go back to [16], which reduced
+(
+)
+the number of comparisons to |A| + log |A|+|B|
+when |A| <
+|A|
+|B|. Further improvements include adaptive approaches [4,
+5, 12], the use of balanced trees [9, 11], and the use of multicores [21, 22].
+The fastest practical algorithm was proposed in [13], effectively using bitwise AND operations to accelerate the algorithm and universal hash functions to skip comparisons
+between unmatched pairs. It can be seen as a practical improvement of the theoretically fastest algorithm [8], whose
+expected time complexity is O((|A| + |B|) log2 w/w + |A ∩
+B|). Our algorithm with RCF, whose time complexity is
+O((|A| + |B|)/w), runs faster than these algorithms both in
+theory and in practice.
+
+2.2
+
+Approximate Set Intersection
+
+There are many eﬃcient algorithms for computing approximate set intersection sizes [7, 17, 19, 20]. However, since all
+of these algorithms are sampling-based, the obtained results
+can be less than the exact value. Our Cardinality Filter is
+designed to avoid underestimation.
+A Bloom ﬁlter [10] and its variant, a counting ﬁlter [15],
+are data structures for a set to test whether a given value
+is a member of the set without false negatives. These data
+structures can be used to compute an upper bound of the
+size of the set intersection of two given sets A and B by performing a membership test for each element in the smaller
+set with the Bloom ﬁlter (or the counting ﬁlter) of the larger
+set and count the true cases. Since the membership test of
+the Bloom ﬁlter has only false positives and no false negatives, this approach outputs an upper bound of |A ∩ B| in
+O(min{|A|, |B|}) time. However, in Section 6, we will show
+that this is faster than our method only when A and B are
+strongly asymmetric and that it performs quite poorly in
+the other cases.
+A conjunctive ﬁlter [18] is a space-eﬃcient data structure
+for approximate set intersection, and it can compute a superset of the intersection set. Since the size of the superset
+of the intersection set is at least the intersection size, we
+can use the conjunctive ﬁlter to calculate the upper bound.
+However, its computation is not fast because the design of
+the conjunctive ﬁlter puts more emphasis on space-eﬃciency
+rather than time-eﬃciency.
+
+2.3
+
+Top-k problems
+
+The target application of our new data structures presented in this paper is the top-k query for text mining, which
+retrieves the top-k most frequent terms in the documents
+for a given search query. This is a kind of top-k problem
+
+704
+
+7 8
+
+elements in A and c(A) is the set of integers that stores all of
+the elements in A except those that are the smallest in each
+collision for h. Figure 2 shows an example of the SCFs for
+sets A and B, where we use the same parameter N = 3 for
+both of the sets. In this example, the elements 7, 8, 10, 12,
+and 14 in A are mapped to 2, 0, 2, 4, and 4, respectively, by
+the hash function h. Hence the h(A) is equal to {0, 2, 4}, and
+there are three collisions for h: {8}, {7, 10}, and {12, 14}.
+Here, we deﬁne the collision as the set of elements that are
+mapped to the same value by h. That means we refer to a
+set of a single element as a collision. Hence the set c(A) is
+equal to {10, 14} because the other elements in A are the
+smallest in their collisions. In the SCF, we store h(A) as a
+bit sequence of length ⌈|X|/N ⌉ and c(A) as an integer array.
+Intuitively, we can see that the set h(A) stores a sketch of
+set A and c(A) stores auxiliary information for set A.
+Using the SCFs for the two sets A and B with the same
+hash function h and the integer parameter N , we can eﬃciently compute an upper bound of |A ∩ B|. As we will show
+in a rigorous proof later, |h(A) ∩ h(B)| + |c(A) ∩ c(B)| is an
+upper bound of the intersection size. (Recall the example in
+Figure 2, where |h(A) ∩ h(B)| = 3, |c(A) ∩ c(B)| = 2, and
+|A ∩ B| = 3.) Intuitively, this is because an element in A ∩ B
+is counted in one of two ways:
+
+10 12 14
+
+A
+0
+Φ(A)
+
+2
+
+4
+c(A): 10 14
+
+h(A)
+|h(A)∩h(B)|=3
+0
+
+Φ(B)
+
+1
+
+2
+
+|c(A)∩c(B)|=2
+4
+c(B): 7 10 11 14
+
+h(B)
+
+B
+0
+
+2 3
+
+5
+
+7
+
+10 11
+
+14
+
+Figure 2: An example of SCFs with N = 3 for two
+sets A = {7, 8, 10, 12, 14} and B = {0, 2, 3, 5, 7, 10, 11, 14}.
+[3, 6, 14], which is generally the retrieval of the k highest
+scoring entries such as the documents having top-k highest
+relevance scores for a given query. The top-k query corresponds to the case where the entries are the terms and the
+score of each entry is the intersection size (see Figure 1).
+The general top-k studies that do not specify the scoring
+function are orthogonal to our approach since our technique
+improves the comparison of the scores for the speciﬁc case
+of intersection.
+Simitsis et al. [20] studied the top-k query and presented
+techniques based on pruning and approximate intersection.
+In this paper, the pruning algorithm is the baseline for evaluating the improvement by using our data structures. We
+did not consider using their approximate intersection technique since it may return incorrect top-k terms. The scope
+of our research covers only the exact top-k.
+
+• If an element in A ∩ B is the smallest in a collision in
+either A or B (for example, 7 in Figure 2), then it is
+counted by |h(A) ∩ h(B)|.
+• Otherwise (for example, 10 in Figure 2), it is counted
+by |c(A) ∩ c(B)|.
+When diﬀerent elements in A and B have the same hash
+value, the intersection size may be overcounted (8 ∈ A and
+5 ∈ B in Figure 2). Another case of overcounting is the case
+of 14 where one element is counted twice by both |h(A) ∩
+h(B)| and |c(A) ∩ c(B)|. We can obtain the upper bound
+quickly by using the fast bitwise AND operations to compute
+h(A) ∩ h(B) and the linear merge algorithm to compute
+c(A) ∩ c(B) (notice that the size of c(A) ∩ c(B) is typically
+far smaller than |A ∩ B|).
+Now we give a rigorous deﬁnition of the SCF. Given a positive integer N (the compression ratio parameter) and a universal hash function h that maps from X to H = {0, 1, . . . ,
+⌈|X|/N ⌉ − 1}, the SCF Φ is deﬁned as a map that maps
+A ⊆ X to Φ(A) = (h(A), c(A)) ∈ 2H × 2X where
+
+3. CARDINALITY FILTERS
+In this section, we propose a new data structure, Cardinality Filter (CF), for computing an upper bound on the
+intersection size of two given sets. First, we give a simple
+implementation of CF, the Single Cardinality Filter (SCF),
+in Section 3.1 and then a more eﬃcient variant of SCF, the
+Recursive Cardinality Filter (RCF), in Section 3.2. Finally
+we formulate CF as a general data structure in Section 3.3.
+Throughout this paper, X denotes a ﬁnite set, and the
+two sets A and B are subsets of X. Our CF works for
+any set X, but we assume here X is an integer set X =
+{0, 1, . . . , |X| − 1} for simplicity.
+
+h(A) = {h(x) | x ∈ A} and
+c(A) = {y ∈ A | (∃x ∈ A)(x < y, h(x) = h(y))} .
+
+3.1 Single Cardinality Filter
+
+We also respectively deﬁne the binary operation ∩ between
+Φ(A) and Φ(B) and the size function | · | by
+
+In this section, we describe a new data structure, a Single
+Cardinality Filter, for computing an upper bound of |A ∩ B|
+for two given sets A and B. This data structure is similar
+to that used by the current fastest algorithm [13] for exact
+set intersection, in that it uses a bit array. The SCF is designed so that the computation time is signiﬁcantly reduced
+because our aim is not to compute the exact intersection
+A ∩ B but to compute an upper bound of |A ∩ B|.
+Let us show how to construct the SCF for a given set
+A. Let h be a universal hash function that maps an element from X to {0, 1, . . . , ⌈|X|/N ⌉ − 1}, where N is an
+integer parameter for SCF. The SCF consists of a pair of
+sets (h(A), c(A)), where h(A) is the set of hash values of the
+
+Φ(A) ∩ Φ(B) = (h(A) ∩ h(B), c(A) ∩ c(B)) and
+|Φ(A)| = |h(A)| + |c(A)| .
+Using these deﬁnitions, we have Theorem 3.1.
+Theorem 3.1. For any A, B ⊆ X, |A ∩ B| ≤ |Φ(A) ∩
+Φ(B)|.
+Proof. Dividing A ∩ B into two disjoint sets, we have
+|A ∩ B| = |A ∩ B ∩ c(A) ∩ c(B)| + |(A ∩ B) \ (c(A) ∩ c(B))|,
+and we have |Φ(A) ∩ Φ(B)| = |c(A) ∩ c(B)| + |h(A) ∩ h(B)|
+by deﬁnition. Since |A ∩ B ∩ c(A) ∩ c(B)| ≤ |c(A) ∩ c(B)|,
+
+705
+
+it is suﬃcient to prove that |(A ∩ B) \ (c(A) ∩ c(B))| ≤
+|h(A) ∩ h(B)|.
+We can prove this by showing that, for all x and y in
+(A ∩ B) \ (c(A) ∩ c(B)) such that x ̸= y, we have
+
+A
+
+H1(A), C1(A)
+
+h(x) ̸= h(y).
+
+h1(A)
+
+c1(A)
+
+H2(A), C2(A)
+
+In other words, we must show the restriction of h that maps
+(A ∩ B) \ (c(A) ∩ c(B)) to h(A) ∩ h(B) is injective.
+First, we verify the image of the restriction of h is contained in h(A) ∩ h(B). In other words,
+
+h2(c1(A))
+
+H3(A), C3(A)
+
+x ∈ (A ∩ B) \ (c(A) ∩ c(B))
+
+c2(c1(A))
+
+h3(c2(c1(A))) c3(c2(c1(A)))
+
+Figure 3: An illustration of a 3-layer RCF for set A.
+
+⇒ x∈A∧x∈B
+⇒ h(x) ∈ h(A) ∧ h(x) ∈ h(B)
+
+Proof. The computation time required for bitwise AND
+operations between the bit sequences βA and βB is
+O((|X|/N ) · (1/w)). The computation time for the linear
+merge algorithm to compute |c(A) ∩ c(B)| is O(|c(A)| +
+|c(B)|) = O(N (|A|2 + |B|2 )/|X|) by Lemma 3.1.
+
+⇒ h(x) ∈ h(A) ∩ h(B).
+Without loss of generality, we can assume x < y. Since
+y ∈
+/ c(A) ∩ c(B), we know that y ∈
+/ c(A) or y ∈
+/ c(B). If
+y∈
+/ c(A), then, by the deﬁnition of c, there is no z ∈ A such
+that
+
+Hence, by the fact that x ∈ A and the assumption that
+x < y, we know that h(x) ̸= h(y) holds. Using a similar
+argument, we can derive h(x) ̸= h(y) if y ∈
+/ c(B). Thus, the
+injectivity holds.
+
+Finally we evaluate the accuracy of the SCF. Let us deﬁne
+the approximation ratio of SCF Φ for two sets A and B such
+that A ∩ B ̸= ∅ as |Φ(A) ∩ Φ(B)|/|A ∩ B|. This number is
+at least 1 by deﬁnition and indicates how close the upper
+bound is to the exact size. Although we omit the proof due
+to the space limitation, we present Theorem 3.4.
+
+Now we will analyze the space and time complexities of
+SCF. We ﬁrst present Lemma 3.1.
+
+Theorem 3.4. The expected approximation ratio of SCF
+is at most
+
+z < y and h(z) = h(y).
+
+Lemma 3.1. The expected size of c(A) is at most
+
+1+
+
+N |A|2
+.
+2|X|
+
+3.2
+
+Recursive Cardinality Filter
+
+Here we give a variant of the SCF, the Recursive Cardinality Filter Φ (RCF), which minimizes the use of the slow
+linear merge algorithm for computing |c(A) ∩ c(B)|. We use
+the same notation Φ for an RCF as used for an SCF, but in
+this section, Φ always denotes an RCF.
+Here is how to construct an RCF for a set A. We ﬁrst
+construct an SCF (h1 (A), c1 (A)) for the set A as the ﬁrst
+layer of the RCF. Here hi is a hash function hi : X →
+{0, . . . , ⌈|X|/Ni ⌉ − 1}, ci is the collision set of hi , and Ni is
+a compression ratio parameter for the i-th layer. Then we
+construct another SCF (h2 (c1 (A)), c2 (c1 (A))) for set c1 (A)
+as the second layer of the RCF, and replace the set c1 (A)
+in the ﬁrst layer data structure with this new SCF. We repeat this process until we obtain the l-th layer, where l is a
+parameter. Figure 3 illustrates an RCF with three layers.
+The resulting l-layer RCF can be represented as
+
+Proof. Let βA be the bit array that corresponds to h(A).
+The length of βA is |H| = ⌈|X|/N ⌉. Since the probability
+that the hash function h maps an element in A to an arbitrary bit in βA is 1/|H|, the probability that this bit in βA
+is false is (1 − 1/|H|)|A| . Therefore the expected number of
+true bits in βA is |H|(1 − (1 − 1/|H|)|A| ).
+The expected size of c(A) is
+(
+(
+)|A| )
+1
+|A| − |h(A)| = |A| − |H| 1 − 1 −
+|H|
+(
+(
+))
+|A|
+|A|2
+≤ |A| − |H| 1 − 1 −
++
+|H|
+2|H|2
+=
+
+N |A||B|
+.
+|X||A ∩ B|
+
+|A|2
+N |A|2
+≤
+,
+2|H|
+2|X|
+
+where the ﬁrst inequality follows from the inequality (1 −
+ϵ)n ≤ 1 − nϵ + n2 ϵ2 /2 for n ≥ 1 and 0 ≤ ϵ ≤ 1.
+
+Φ(A) = (H1 (A), H2 (A), . . . , Hl (A), Cl (A)), where
+Hi (A) = hi (ci−1 (ci−2 (. . . c1 (A) . . .))), and
+
+From Lemma 3.1 and the fact that the length of bit vector
+βA is |H| = ⌈|X|/N ⌉, Theorem 3.2 follows directly.
+
+Ci (A) = ci (ci−1 (. . . c1 (A) . . .)), for i = 1, 2, . . . , l.
+As with an SCF, we deﬁne the binary operation and the size
+function for an RCF as
+
+Theorem 3.2. The expected space usage of SCF for a set
+A is at most ⌈|X|/N ⌉ + wN |A|2 /2|X| bits.
+
+Φ(A) ∩ Φ(B) =
+
+There is a second theorem that follows from Lemma 3.1:
+
+(H1 (A) ∩ H1 (B), H2 (A) ∩ H2 (B)
+. . . , Hl (A) ∩ Hl (B), Cl (A) ∩ Cl (B)) and
+
+Theorem 3.3. The expected time complexity of SCF for
+computing an upper bound of |A∩B| is O(|X|/N w+N (|A|2 +
+|B|2 )/|X|).
+
+|Φ(A)|
+
+=
+
+l
+∑
+i=1
+
+706
+
+|Hi (A)| + |Cl (A)|.
+
+The upper bound |Φ(A) ∩ Φ(B)| is represented as
+l
+∑
+
+Sets A, B ∈ 2X
+X
+
+|Hi (A) ∩ Hi (B)| + |Cl (A) ∩ Cl (B)|,
+
+i=1
+
+A
+
+B
+
+and Theorem 3.5 can be easily proved by induction on l.
+
+A∩B (set intersection)
+Set size function: |・|
+
+Theorem 3.5. |A ∩ B| ≤ |Φ(A) ∩ Φ(B)|
+CF conversion Φ
+
+The best choice of Ni depends on the application, and in
+Section 5.2, we show how to set N (or Ni ) for a speciﬁc
+application. Using an appropriate parameter setting, the
+time complexity for computing an upper bound of |A ∩ B|
+with an RCF can be improved over that with an SCF.
+
+|A∩B| ≦ |Φ(A) ∩ Φ(B)|
+CF size function: |・|
+
+Φ(A)
+Φ(A)∩ Φ(B) (CF intersection)
+Φ(B)
+
+Theorem 3.6. Let l be ⌈log max{|A|, |B|}⌉, r be a constant larger than 1, and Φ be an l-layer RCF constructed
+with parameters Ni = ⌊2i−1 |X|/r max{|A|, |B|}⌋, where i =
+1, 2, . . . , l. The time complexity of computing an upper bound
+of |A ∩ B| for sets A and B with this l-layer RCFs is
+O((|A| + |B|)/w).
+
+Cardinality filters (CFs) Φ(A), Φ(B) ∈ Φ(2X)
+
+Figure 4: The operation Φ(A) ∩ Φ(B) for Cardinality
+Filters Φ(A) and Φ(B) is analogous to the set intersection A ∩ B for two sets A and B.
+
+Proof. By Lemma 3.1, the expected size of C1 (A) is at
+most N1 |A|2 /2|X|. Since N1 = ⌊|X|/r max{|A|, |B|}⌋, the
+expected size of C1 (A) is at most |A|/2r. Similarly, using
+Lemma 3.1 for C1 (A) and the deﬁnition
+N2 = ⌊2|X|/r max{|A|, |B|}⌋, we get the expected size of
+C2 (A) is at most |A|/22 r. Repeating this for l layers, we
+get the expected size of Cl (A) is at most |A|/2l r = O(1).
+The length of the bit sequence for Hi (A) is ⌈|X|/Ni ⌉ ≤
+⌈r max{|A|, |B|}/2i−1 ⌉. Hence, the time complexity for computing an upper bound of |A ∩ B| with RCF is at most
+( l
+)
+∑
+1
+i−1
+O
+r max{|A|, |B|}/2
+·
++ O(1)
+w
+i=1
+
+4.1
+
+General Usage of Cardinality Filter
+
+We can use CFs to accelerate the evaluation of the inequality of intersection sizes |A ∩ B| > c. Note that the
+condition for the CFs is a necessary condition of the condition for the original sets: |A ∩ B| > c ⇒ |Φ(A) ∩ Φ(B)| > c.
+That means these two conditions are logically equivalent:
+1. |A ∩ B| > c
+2. |Φ(A) ∩ Φ(B)| > c ∧ |A ∩ B| > c.
+Our approach to the acceleration is to substitute the inequality for the intersection size |A ∩ B| > c in the target
+algorithm with |Φ(A) ∩ Φ(B)| > c ∧ |A ∩ B| > c. Due to
+the logical equivalence of the two conditions, this does not
+change the operation of the target algorithms. In the situation where |Φ(A) ∩ Φ(B)| ≤ c holds for the majority of the
+inputs, we can skip the computation of |A ∩ B|. Therefore,
+if the upper bound can be calculated much faster than the
+exact value, we can save time.
+
+= O(max{|A|, |B|}/w) = O((|A| + |B|)/w).
+
+The time complexity for RCF is better than that for the
+current fastest exact set intersection
+√ algorithm [13], whose
+time complexity is O((|A| + |B|)/ w + |A ∩ B|).
+
+3.3 Definition of The Cardinality Filter
+
+4.2
+
+Top-k Term Query
+First, we show how to apply CF to the top-k query described in Section 1, which is the retrieval of the top-k
+most frequent terms in documents that are dynamically returned by a search query. Algorithm 1 is known as an efﬁcient algorithm for top-k query [20] and is widely used.
+In this algorithm, we assume that each term is associated
+with a posting list, which is a list of IDs of the documents
+containing a speciﬁc term. Algorithm 1 loads the posting
+listP [i] (i = 0, 1, . . . , |P | − 1) for each term (Line 2) in descending order of frequency (|P [0]| ≥ |P [1]| ≥ · · · ), and
+calculates the intersection size between the set of document
+IDs for the search query S and the posting list P [i]. Pairs
+of a term and its intersection size (i, |S ∩ P [i]|) are put into
+the temporary queue Q that stores the pairs with the top-k
+intersection sizes (Lines 7 and 9). The queue is updated only
+when it is not full (Line 6) or the intersection size |S ∩ P [i]|
+is larger than the minimum intersection size in the queue
+|S ∩ P [min(Q)]|, where min(Q) denotes the term with the
+smallest intersection size in the queue (Line 8). This algorithm can terminate its iterations, when both of these con-
+
+We have shown two data structures, SCF and RCF, and
+they are similar in the sense that they are designed to quickly
+compute an upper bound of |A ∩ B| for two given sets A and
+B. We deﬁne a Cardinality Filter (CF) as in Deﬁnition 3.1,
+so both the SCF and RCF can be seen as implementations
+of a CF. Figure 4 shows the correspondence between the sets
+and the CFs.
+Definition 3.1. Let X be a set and Λ be a set with operations ∩ : Λ × Λ → Λ and | · | : Λ → R+ ∪ {0} = {x ∈
+R | x ≥ 0}. A map Φ : 2X → Λ is said to be a Cardinality
+Filter if it satisfies for ∀A, B ⊆ X,
+|A ∩ B| ≤ |Φ(A) ∩ Φ(B)|.
+
+4. APPLICATIONS
+In this section, we present some applications of CFs. First
+we describe the general usage of a CF in Section 4.1. Then
+we give some examples of the top-k query for text mining
+in Section 4.2 and the frequent item set mining with an
+inverted index in Section 4.3.
+
+707
+
+axis shows the proportion (as a percentage) of the values of
+|S ∩ P [i]|/|S ∩ P [min(Q)]| that fall into each range on the
+horizontal axis. The range ‘1.00-’ corresponds to the cases
+for which the inequalities were evaluated as true. The intersection size is at most 20 times as small as the threshold in
+approximately 80% of the inequalities.
+Considering the gaps in the inequalities of the threshold
+evaluations, we can speed up Algorithm 1 by replacing the
+threshold condition |S ∩ P [i]| > |S ∩ P [min(Q)]| in Line 8
+with
+
+90.00%
+80.00%
+70.00%
+
+Proportion
+
+60.00%
+50.00%
+40.00%
+30.00%
+
+|Φ(S) ∩ Φ(P [i])| > |S ∩ P [min(Q)]|
+
+20.00%
+
+∧ |S ∩ P [i]| > |S ∩ P [min(Q)]|.
+
+10.00%
+
+As described in Section 4.1, this replacement does not change
+the results of the algorithm. The CFs for the posting lists
+Φ(P [i]) (i = 0, 1, . . . , |P | − 1) are created in the indexing
+phase, and the CF for the hit documents Φ(S) is created at
+the beginning of the query processing. The implementation
+details and the performance improvements will be discussed
+in Sections 5 and 6, respectively.
+
+0.00%
+1.000.95-1.00
+0.90-0.95
+0.85-0.90
+0.80-0.85
+0.75-0.80
+0.70-0.75
+0.65-0.70
+0.60-0.65
+0.55-0.60
+0.50-0.55
+0.45-0.50
+0.40-0.45
+0.35-0.40
+0.30-0.35
+0.25-0.30
+0.20-0.25
+0.15-0.20
+0.10-0.15
+0.05-0.10
+0.00-0.05
+Intersection size / threshold
+
+4.3
+
+Figure 5: The ratio of the intersection size to the
+threshold.
+
+Frequent Item Set mining
+
+Another target application of CF is frequent item set mining. Frequent item set mining is a task to retrieve frequent
+subsets of items from a transaction database where each
+transaction is represented as a set of items. An example
+application is to ﬁnd frequent combinations of items in purchase records. Given T , a transaction database, T [t], the
+t-th transaction (t = 0, 1, . . . , |T | − 1), I, a set of all of the
+items, and sm , an integer parameter for the minimum size
+(the minimum support) of the item subsets, our task is to
+generate
+
+ditions are met: (1) the queue is full, and (2) the document
+frequency of the current term is not more than the minimum
+intersection size in the queue (Line 3).
+Algorithm 1 The top-k query
+Input:
+P : posting lists sorted in descending order of list size
+|P |: the number of posting lists
+P [i]: the posting list for term i (i = 0, 1, . . . , |P | − 1)
+S: the documents retrieved by a search query
+k: the maximum number of terms to retrieve
+1: Q ← ∅ // a set of the temporary top-k terms
+2: for i = 0, 1, . . . , |P | − 1 do
+3:
+if |Q| = k and |P [i]| ≤ |S ∩ P [min(Q)]| then
+4:
+break
+// early out
+5:
+end if
+6:
+if |Q| < k then
+7:
+insert (i, |S ∩ P [i]|) into Q
+8:
+else if |S ∩ P [i]| > |S ∩ P [min(Q)]| then
+9:
+insert (i, |S ∩ P [i]|) into Q
+10:
+remove the pair (min(Q), |S ∩ P [min(Q)]|) from Q
+11:
+end if
+12: end for
+13: return Q
+
+{C | C ⊆ I, s(C) ≥ sm },
+where s(C) is the support of C deﬁned by
+s(C) = |{t | C ⊆ T [t], t = 0, 1, . . . , |T | − 1}|.
+We say C has the minimum support if and only if s(C) ≥ sm .
+The Apriori algorithm [2] is widely used as a solution for
+frequent item set mining. Algorithm 2 shows the pseudocode
+of the Apriori algorithm using an inverted index. It extracts
+the frequent item sets by iteration for the size of item set n
+(Line 2). In each iteration, it creates a list of sets Ln , which
+stores the sets of n items having the minimum support, from
+the lists L1 and Ln−1 . It scans each of the candidate sets of
+items C ∪ {i}, which consists of a set in Ln−1 and a set in
+L1 (Line 7). Then it checks if the candidate sets have the
+minimum support:
+s(C ∪ {i}) = |P [C] ∩ P [{i}]| ≥ sm ,
+
+The most time consuming part of this algorithm is the
+evaluation of the intersection size |S∩P [i]| > |S∩P [min(Q)]|
+in Line 8. Note that the elements of the intersection S ∩ P [i]
+are not referred to here, and that only the size of the intersection is needed. One important observation is that the
+intersection size |S ∩ P [i]| is typically much smaller than
+the threshold |S ∩ P [min(Q)]| for most of the posting lists.
+An example appears in Figure 5, which shows the distribution of the ratios of the intersection size to the threshold
+|S ∩ P [i]|/|S ∩ P [min(Q)]| for real data. The statistics were
+obtained by testing 309 396 inequalities with 50 top-k term
+queries (k = 100) with |S| ranging from 100 to 100 000 on
+the 528 545 documents of the NHTSA data [1]. The vertical
+
+where it computes the intersection P [C] ∩ P [{i}] (Line 8).
+The candidate sets having the minimum support are added
+to Ln (Line 9). Finally it generates all of the item sets
+in L1 , L2 , . . . (Line 13). This algorithm is slightly diﬀerent
+from the original Apriori algorithm, which calculate s(C ∪
+{i}) by scanning all of the transactions. The diﬀerence is
+that Algorithm 2 uses the inverted index for the items. The
+inverted index has an advantage when L1 is small, since the
+time for the transaction scan is independent of |L1 |.
+We can apply CF to Algorithm 2 by replacing the inequality in Line 8 with
+|Φ(P [C]) ∩ Φ(P [{i}])| ≥ sm ∧ |P [C] ∩ P [{i}]| ≥ sm .
+
+708
+
+We can skip most of the intersections if their sizes are much
+smaller than the minimum support sm .
+
+Document IDs retrieved
+by a search query
+
+Term CFs
+
+Posting lists for terms
+
+N=1
+
+Algorithm 2 The Apriori algorithm on an inverted index
+Input:
+I: the set of all of the items
+P [{i}](i ∈ I): a posting list for i
+(P [C] = {t | C ⊆ T [t], t = 0, 1, . . . , |T | − 1})
+sm : the minimum size of the item subsets
+1: L1 ← {{i} | i ∈ I, s({i}) ≥ sm }
+2: for n = 2, 3, . . . do
+3:
+if Ln−1 = ∅ then
+4:
+break
+5:
+end if
+6:
+Ln ← ∅
+7:
+for each C ∈ Ln−1 and each {i} ∈ L1 such that i ∈
+/C
+do
+8:
+if |P [C] ∩ P [{i}]| ≥ sm then
+9:
+add C ∪ {i} to Ln
+P [C ∪ {i}] ← P [C] ∩ P [{i}]
+10:
+end if
+11:
+end for
+12: end for ∪
+n
+13: return
+j=1 Lj
+
+N=1
+
+Query CF
+(Candidate CFs)
+N=1
+N=2
+N=5
+
+N=2
+N=2
+N=2
+N=5
+N=5
+
+Index
+
+Figure 6: CFs for a query and posting lists.
+Term posting lists
+
+The temporary queue Q stores
+the k terms having the top-k
+largest intersection sizes
+|S∩P[i]| (i=0, 1, ,, n-1).
+
+k
+
+P[n]
+
+The smallest intersection size
+in Q is equal to or more than
+|S∩P[k-1]|,
+which is estimated by
+|S| |P[k-1]| / |X|.
+Expected intersection size:
+|S| |P[n]| / |X|
+
+Figure 7: The ratio of the intersection size to the
+threshold is approximated by |P [n]|/|P [k − 1]|.
+
+5. IMPLEMENTATION DETAILS
+In this section, we explain the details of our implementation of top-k query processing using a CF.
+
+candidate CFs are created with N = 1, 2, 5 to be used as a
+query CF. Then the upper bound is computed between each
+term CF and one in the candidate CFs with the same value
+of N as the term CF.
+Another feature of the conﬁguration is that we do not
+create term CFs for very short posting lists because such
+CFs are not space-eﬃcient. For such posting lists, we use
+the linear merge algorithm to compute the size of the set
+intersection.
+
+5.1 Search Query and Posting Lists
+First we explain the structure of the data created in the
+index and in memory. We use the SCF or RCF described in
+Section 3 for the implementation of the CF. As illustrated
+in Figure 6, we store in the index the posting list for each
+term and a term CF for each posting list. The posting lists,
+which are shown as lists of boxes, are stored in the form of a
+compressed integer array and physically sorted in descending order of size, which is the number of document IDs for
+each term. The term CFs, which are shown as the boxes below “Term CFs”, are also sorted in the same order, but the
+posting lists and the term CFs are stored in physically separate locations so that the index reader can skip reading the
+unnecessary parts of the posting lists. In the online phase,
+given the document ID list retrieved by a search query, a
+query CF is created for the document ID list. The document ID list and the query CF are shown on the left side
+of Figure 6 in the same form as for the posting lists and
+the term CFs. The query CF is created in memory, and the
+upper bound operation is performed on the query CF and
+each term CF.
+One important conﬁguration setting is the compression
+ratio parameter N . A CF works eﬃciently when N is set to
+an appropriate value for its set size, but at the same time,
+the upper bound can be calculated only for a pair of CFs
+having same N . In our implementation, we deﬁne several
+candidate values of N (e.g. N = 1, 2, 5), and each term
+CF is created with the most appropriate value in the candidates. In Figure 6, the conﬁgurations of N are indicated
+in the boxes for the term CFs. For the query CF, given
+the document ID list for a search query, candidate CFs are
+created for each candidate value of N . In Figure 6, three
+
+5.2
+
+Compression Ratio Parameter
+
+The best conﬁguration of the compression ratio parameter N depends on its application, but the example of the
+conﬁguration for the top-k query gives us clues for general
+applications. Here, we show how to conﬁgure N for the
+n + 1-th posting list P [n] using the notation of Section 4.2.
+Figure 7 illustrates the term posting lists in the form of a
+list of boxes and the correspondence between the estimated
+values and the related posting lists. First |S ∩ P [min(Q)]|,
+which is the threshold of the intersection size for a term to
+be put in the temporary queue Q, is at least |S ∩ P [k − 1]|
+since the ﬁrst k terms are put into Q in every case, and Q
+is updated only when some P [i](i ≥ k) satisﬁes |S ∩ P [i]| >
+|S ∩ P [k − 1]|. This means |S||P [k − 1]|/|X|, which is the
+expected value of |S ∩ P [k − 1]| under the assumption of no
+correlation between S and P [k − 1], is a good approximation
+for |S ∩ P [min(Q)]|. Although |S ∩ P [k − 1]| may become
+larger or smaller when S and P [k − 1] have a positive or
+negative correlation, |S ∩ P [k − 2]| or |S ∩ P [k]| will be the
+threshold in either case, and these values should be close to
+|S||P [k − 1]|/|X|. Similarly, we can estimate |S ∩ P [n]| as
+|S||P [n]|/|X| for n ≥ k. Thus, we set N to an integer close
+to but not larger than α|P [k − 1]|/|P [n]|, where α is a safety
+
+709
+
+|A|
+1M
+100K
+10K
+1M
+100K
+100K
+
+|B|
+1M
+100K
+10K
+10K
+100K
+100K
+
+Cr
+1.0
+1.0
+1.0
+1.0
+10.0
+0.1
+
+DK1H
+Algorithms
+
+Name
+(A) Large / no correlation
+(B) Middle / no correlation
+(C) Small / no correlation
+(D) Asymmetric / no correlation
+(E) Middle / positive correlation
+(F) Middle / negative correlation
+
+DK2H
+SCF
+Bitwise AND
+Other computations
+
+RCF
+0
+
+Table 1: Input data with varying the data size (A),
+(B), and (C), the asymmetry (A) and (D), and the
+correlation (E), (B), and (F).
+
+500
+Time [microsec]
+
+1000
+
+Figure 9: The time breakdown shows that CFs eﬃciently use bitwise AND operation.
+
+in the size of the sets, but the two input sets of each data set
+are the same size (the symmetric case). The data sets (A)
+and (D) are intended to compare the degree of asymmetry
+for the size diﬀerences between the two input sets. The size
+of the ﬁrst input set, |A|, is set to 1M in both cases, but the
+size of the other set, |B|, diﬀers signiﬁcantly. The data sets
+(E), (B), and (F) are used to measure the inﬂuence of the
+correlations between sets. All of these tests have the input
+sets of the same size, but the intersection size varies from
+the minimum size (100 elements) to the maximum size (10K
+elements). We do not consider any cases of biased data such
+as an integer set that includes dense small numbers and
+sparse large numbers. Since the tested algorithms except
+LM and BS are mainly based on hashed values, they do not
+much depend on the distribution of the elements in each set.
+Therefore, we used synthetic data in which the elements of
+each set were uniformly distributed in the universe set. For
+the compression ratio N , we adopted √
+the policy of “slow but
+accurate” in this experiment: N = ⌈ |X|/ max{|A|, |B|}⌉.
+Although we can set N to ⌊|X|/r|A|⌋ (r is constant) for the
+top-k query based on the estimate in Section 5.2, we assume
+a broader application here. The RCF is a 2-layer RCF, and
+N2 for the second layer is set to 2N1 .
+Figure 8 shows the computation time and the approximation ratio for each algorithm and each set of data. Each of
+the six graphs represents the performance on the data set
+indicated above the graph. The axis for times runs upwards
+on the left side of each graph, and all of the times are shown
+in microseconds in all of the graphs. The axis for approximation ratio runs upwards on the right side of each graph. The
+approximation ratio for the exact algorithms are 1 for all of
+the data sets. The labels for the series and for the vertical
+axes are omitted in the graphs for the data sets (B), (C),
+(D), (E), and (F). As a result, our methods outperformed
+the other methods by a factor of from 2 to 10 in all of the
+cases except the asymmetric case, (D), where the Bloom ﬁlter has the advantage. Clear diﬀerences between SCF and
+RCF were also observed with the large input sets, (A) and
+(D). For DK1H and DK2H, we were unable to tune them to
+run as fast as those in the original paper, which is approximately twice as fast as the linear merge. Even considering
+this, our proposed methods SCF and RCF still perform the
+best in all of the cases.
+The advantage of SCF and RCF comes from the exploitation of the bitwise AND operations. Figure 9 shows the time
+breakdown for the data set (B). While the bitwise AND operation takes more time in SCF and RCF than in the DK
+algorithms, the time for the other operations in SCF and
+RCF is extremely small compared to the DK algorithms.
+Although both DK algorithms and CFs use bitwise AND
+
+factor. In other words, for this application, we can set N for
+a set |A| to ⌊|X|/r|A|⌋ where r is a constant larger than 1
+since |P [k − 1]| is linear with the number of documents.
+Using this setting of N , the expected space usage of the
+SCF for a set A is O(|A|(1 + w)) bits (by Theorem 3.2). The
+expected time complexity for the upper bound of |A ∩ B|
+is O(|A| + |B|) when N = |X|/r max{|A|, |B|} (by Theorem 3.3).
+
+6. EXPERIMENT
+6.1 Improvement of Set Intersection
+In this section, we present our speed and size evaluations
+of CFs compared with known exact set intersection algorithms and the Bloom ﬁlter. We compared the computation
+times for the sizes of two-set intersections or their upper
+bounds for seven algorithms:
+LM the linear merge algorithm described in Section 2.1,
+BS the binary search algorithm described in Section 2.1,
+DK1H the most practical of the algorithms proposed in
+[13] with one hash function,
+DK2H the two-hash version of DK1H,
+BF (upper bound) the algorithm using the Bloom ﬁlter
+described in Section 2.2,
+SCF (upper bound) the CF using a single bit array as
+described in Section 3.1, and
+RCF (upper bound) the recursive CF using the bit arrays described in Section 3.2.
+All of the algorithms were implemented using C++ and evaluated on a quad core, 64-bit, 2.5-GHz CPU with 4.0 GB of
+memory. The intersections were calculated in memory for
+the test data of set pairs which were preloaded into memory
+before the tests were started. We generated 100 set pairs for
+each test case and measured the average time for 100 iterations, totalling 10 000 operations. The approximation ratio
+was also measured to see the relation between the speed and
+the accuracy.
+We used the synthetic test data for set pairs described
+in Table 1, varying the set sizes, the asymmetry, and the
+correlation. All of the input sets A and B are subsets in the
+universe set of 10M elements: |X| = 107 . The column “Cr”
+is for the correlation between A and B, which we deﬁne by
+|A ∩ B||X|/|A||B| (Cr > 1: positive correlation, Cr < 1:
+negative correlation). The data sets (A), (B), and (C) diﬀer
+
+710
+
+(A) Large (1M x 1M) – no correlation
+
+2000
+
+2
+
+1500
+
+RCF
+
+SCF
+
+BF
+
+DK2H
+
+DK1H
+
+BS
+
+30
+25
+20
+15
+10
+5
+0
+LM
+
+150
+125
+100
+75
+50
+25
+0
+
+RCF
+
+SCF
+
+BF
+
+DK2H
+
+DK1H
+
+BS
+
+(E) Middle (100K x 100K) - positive correlation
+
+(F) Middle (100K x 100K) - negative correlation
+
+2500
+
+100
+
+2000
+
+80
+
+1500
+
+60
+
+1000
+
+40
+
+500
+
+20
+
+1.5
+
+1000
+
+1
+0.5
+RCF
+
+SCF
+
+BF
+
+DK2H
+
+0
+DK1H
+
+0
+
+RCF
+
+SCF
+
+BF
+
+DK2H
+
+0
+DK1H
+
+0
+
+BS
+
+500
+
+RCF
+
+SCF
+
+BF
+
+DK2H
+
+DK1H
+
+BS
+
+6
+5
+4
+3
+2
+1
+0
+LM
+
+1500
+1250
+1000
+750
+500
+250
+0
+
+12
+10
+8
+6
+4
+2
+0
+LM
+
+RCF
+
+SCF
+
+BF
+
+DK2H
+
+DK1H
+
+BS
+
+LM
+
+(D) Asymmetric (1M x 10K) - no correlation
+
+(C) Small (10K x 10K) - no correlation
+
+1500
+1250
+1000
+750
+500
+250
+0
+
+BS
+
+3
+2.5
+2
+1.5
+1
+0.5
+0
+
+15000
+12500
+10000
+7500
+5000
+2500
+0
+
+(B) Middle (100K x 100K) - no correlation
+
+LM
+
+Approximation
+ratio
+
+Time
+Approximation ratio
+
+LM
+
+Time
+[microsec]
+
+Figure 8: The computation times and intersection approximation ratios measured for known exact algorithms
+(LM, BS, DK1H, and DK2H), a simple upper bound calculation (BF), and our methods (SCF and RCF).
+Range of |P [i]|/|X|
+5% ≤ |P [i]|/|X| < 10%
+2% ≤ |P [i]|/|X| < 5%
+1% ≤ |P [i]|/|X| < 2%
+0.5% ≤ |P [i]|/|X| < 1%
+0.2% ≤ |P [i]|/|X| < 0.5%
+0.1% ≤ |P [i]|/|X| < 0.2%
+0.05% ≤ |P [i]|/|X| < 0.1%
+|P [i]|/|X| < 0.05%
+
+operations to compute the necessary condition for some of
+the elements to be contained in the intersection, DK algorithms need to check for each element if it really is a member
+of the intersection, due to the requirement of exactness. This
+checking step consumes at least O(|A∩B|) time. In contrast,
+the CFs check the membership of the intersection only for
+the elements that are potentially uncounted. This diﬀerence
+is the essential beneﬁt of computing the upper bound.
+
+6.2 Improvement of Top-k Queries
+
+N , N1
+1
+2
+5
+10
+24
+47
+88
+Not used
+
+N2
+2
+4
+10
+20
+48
+94
+176
+Not used
+
+Table 2: Parameter N for top-k query.
+
+In this section, we show the performance improvements
+for the top-k queries. The data used in the experiments
+was the text data of NHTSA [1], which includes defect and
+maintenance information for motor vehicles. The total data
+size was 150 MB and the number of documents was 528 545.
+We tokenized the text of each document using whitespace
+as a delimiter and used each token as a term. We varied the
+number of documents retrieved by each search query (|S|
+in Section 4.2) from 100 to 100 000. We used ﬁve search
+terms for each size and measured the average time for 50
+queries (10 queries for each term). All the algorithms were
+implemented using Java and evaluated on a quad core, 64bit, 2.5-GHz CPU with 4.0 GB of memory.
+We compared the performance of the top-k query using
+Algorithm 1 with LM, LM + BS (switching LM and BS at
+|A|/|B| = 1/3, 3), and DK1H as described in Section 6.1 and
+the improved version of Algorithm 1 with SCF and RCF as
+described in Sections 4.2 and 5. We set N for SCF and
+(N1 , N2 ) for RCF as in Table 2 using the estimate we introduced in Section 5.2. Figure 10 shows the query processing
+time for each method. The value of k was set to 100, since
+this is a frequently used value in text mining. The numbers
+of documents retrieved by the search queries are displayed
+on the horizontal axis. If this value is large, each intersection consumes a large amount of time, but only a small
+
+number of posting lists are loaded. If this value is small, the
+computation time for the intersections is small, but many
+posting lists are read. We can see SCF and RCF performed
+approximately twice as fast as the other methods.
+Figure 11 shows, for each size of the hit document set for
+the search query, the ratio of the exact intersections skipped
+by SCF or RCF to the number of evaluated posting lists,
+except those for the terms that actually rank in the top-k
+result (skip ratio). We can see that more than 80% of the
+threshold conditions of intersection were eliminated by the
+CFs before loading the posting lists of the terms.
+
+7.
+
+CONCLUSION
+
+In this paper, we studied the speed of algorithms to compute the upper bounds of the intersection sizes, which has
+not previously been a focus in the research for the intersection computation. We introduced new data structures, the
+Single Cardinality Filter and the Recursive Cardinality Filter, to quickly upper bound the size, and we showed they
+perform much faster than the exact set intersection algorithms and can accelerate the text mining query processing.
+
+711
+
+LM
+
+LM+BS
+
+DK1H
+
+SCF
+
+[4] R. A. Baeza-Yates. A fast set intersection algorithm
+for sorted sequences. In CPM, pages 400–408, 2004.
+[5] J. Barbay, A. López-ortiz, and T. Lu. Faster adaptive
+set intersections for text searching. In WEA, pages
+146–157, 2006.
+[6] H. Bast, D. Majumdar, R. Schenkel, M. Theobald, and
+G. Weikum. Io-top-k: Index-access optimized top-k
+query processing. In VLDB, pages 475–486, 2006.
+[7] K. Beyer, R. Gemulla, P. J. Haas, B. Reinwald, and
+Y. Sismanis. Distinct-value synopses for multiset
+operations. Communications of the ACM,
+52(10):87–95, 2009.
+[8] P. Bille, A. Pagh, and R. Pagh. Fast evaluation of
+union-intersection expressions. In ISAAC, pages
+739–750, 2007.
+[9] G. E. Blelloch and M. Reid-miller. Fast set operations
+using treaps. In SPAA, pages 16–26, 1998.
+[10] B. H. Bloom. Space/time trade-oﬀs in hash coding
+with allowable errors. Communications of the ACM,
+13(7):422–426, 1970.
+[11] M. R. Brown and R. E. Tarjan. A fast merging
+algorithm. Journal of the ACM, 26(2):211–226, 1979.
+[12] E. D. Demaine, A. López-Ortiz, and J. I. Munro.
+Adaptive set intersections, unions, and diﬀerences. In
+SODA, pages 743–752, 2000.
+[13] B. Ding and A. C. König. Fast set intersection in
+memory. In VLDB, pages 255–266, 2011.
+[14] R. Fagin, A. Lotem, and M. Naor. Optimal
+aggregation algorithms for middleware. Journal of
+Computer and System Sciences, 66(4):614–656, 2003.
+[15] L. Fan, P. Cao, J. Almeida, and A. Z. Broder.
+Summary cache: a scalable wide-area Web cache
+sharing protocol. IEEE/ACM Transactions on
+Networking, 8(3):281–293, 2000.
+[16] F. K. Hwang and S. Lin. A simple algorithm for
+merging two disjoint linearly ordered sets. SIAM
+Journal on Computing, 1(1):31–39, 1972.
+[17] R. Krauthgamer, A. Mehta, V. Raman, and A. Rudra.
+Greedy list intersection. In ICDE, pages 1033–1042,
+2008.
+[18] D. Okanohara and Y. Yoshida. Conjunctive ﬁlter:
+Breaking the entropy barrier. In ALENEX, pages
+77–83, 2010.
+[19] O. Papapetrou, W. Siberski, and W. Nejdl.
+Cardinality estimation and dynamic length adaptation
+for Bloom ﬁlters. Distributed and Parallel Databases,
+28(2–3):119–156, 2010.
+[20] A. Simitsis, A. Baid, Y. Sismanis, and B. Reinwald.
+Multidimensional content exploration. In VLDB,
+pages 660–671, 2008.
+[21] S. Tatikonda, F. Junqueira, B. B. Cambazoglu, and
+V. Plachouras. On eﬃcient posting list intersection
+with multicore processors. In SIGIR, pages 738–739,
+2009.
+[22] D. Tsirogiannis, S. Guha, and N. Koudas. Improving
+the performance of list intersection. In VLDB, pages
+838–849, 2009.
+[23] H. S. Warren. Hacker’s Delight. Addison-Wesley
+Professional, 2002.
+
+RCF
+
+Computation time
+[millisec]
+
+800
+600
+400
+200
+0
+100
+
+1000
+
+10000
+
+100000
+
+The number of documents for each search query
+Figure 10: Performance of top-k queries (k=100).
+
+1
+
+SCF
+
+RCF
+
+Skip ratio
+
+0.9
+0.8
+0.7
+0.6
+100000
+
+50000
+
+20000
+
+10000
+
+5000
+
+2000
+
+1000
+
+500
+
+200
+
+100
+
+0.5
+
+The number of hit documents
+
+Figure 11: The ratio of skipped exact intersections.
+Since a comparison between intersection sizes is a common
+operation in mining and discovery tasks, CFs are expected
+to be applied to many analytical queries.
+CF presents at least three exciting challenges. First, it
+would be interesting to study the optional algebraic properties of SCF and RCF that we did not use in this paper.
+In addition to the property |A ∩ B| ≤ |Φ(A) ∩ Φ(B)|, SCF
+and RCF have other algebraic properties such as monotonicity A ⊆ B ⇒ |Φ(A)| ≤ |Φ(B)| and follow the commutative and associative laws for ∩, which are important when
+intersecting three or more sets. Second, although we deﬁned intersection-like operations for CF, union-like operations and exclusions were not studied. A suite of set operations might expand the applications of CF to databases and
+search engines. Third, a non-parametric implementation of
+CF is also challenging, since both SCF and RCF have the
+compression ratio parameter N , which restricts the combinations of sets. To conclude, CF was shown to be capable
+of speeding up some known algorithms, but still has areas
+for further algebraic and algorithmic research.
+
+8. REFERENCES
+[1] National Highway Traﬃc Safety Administration.
+http://www.nhtsa.gov/.
+[2] R. Agrawal and R. Srikant. Fast algorithms for mining
+association rules. In VLDB, pages 487–499, 1994.
+[3] R. Akbarinia, E. Pacitti, and P. Valduriez. Best
+position algorithms for eﬃcient top-k query
+processing. Information Systems, 36(6):973–989, 2011.
+
+712
+
+

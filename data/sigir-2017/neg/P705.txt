@@ -1,0 +1,1576 @@
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Incomplete Follow-up Question Resolution using Retrieval
+based Sequence to Sequence Learning
+Vineet Kumar
+
+Sachindra Joshi
+
+IBM Research Labs, India
+New Delhi
+vineeku6@in.ibm.com
+
+IBM Research Labs, India
+New Delhi
+jsachind@in.ibm.com
+
+ABSTRACT
+
+1
+
+Intelligent personal assistants (IPAs) and interactive question answering (IQA) systems frequently encounter incomplete follow-up
+questions. The incomplete follow-up questions only make sense
+when seen in conjunction with the conversation context: the previous question and answer. Thus, IQA and IPA systems need to
+utilize the conversation context in order to handle the incomplete
+follow-up questions and generate an appropriate response. In this
+work, we present a retrieval based sequence to sequence learning
+system that can generate the complete (or intended) question for
+an incomplete follow-up question (given the conversation context).
+We can train our system using only a small labeled dataset (with
+only a few thousand conversations), by decomposing the original
+problem into two simpler and independent problems. The first problem focuses solely on selecting the candidate complete questions
+from a library of question templates (built offline using the small
+labeled conversations dataset). In the second problem, we re-rank
+the selected candidate questions using a neural language model
+(trained on millions of unlabelled questions independently). Our
+system can achieve a BLEU score of 42.91, as compared to 29.11
+using an existing generation based approach. We further demonstrate the utility of our system as a plug-in module to an existing
+QA pipeline. Our system when added as a plug-in module, enables
+Siri to achieve an improvement of 131.57% in answering incomplete
+follow-up questions.
+
+Intelligent Personal Assistants (IPAs) such as Siri1 , Cortana [11],
+Duer [49] and Allo2 provide a rich and easy to use interface for
+human-computer interaction. IPAs provide many functionalities,
+for instance calendar and time management [33], making recommendations [29, 43] and task completion such as emailing, texting
+and application invocation [3]. Another core functionality offered
+by an IPA is general question answering (QA) [24, 37], which enables a user to ask questions such as “Who is the president of
+USA?”. Once the system generates a response, users generally ask a
+follow-up question such as “and South Africa?”, or “When did he?”.
+The follow-up questions are often incomplete (when seen individually), terse [7] and refer to the entities and concepts mentioned
+either in the previous question, the previous answer or both. The
+follow-up questions make complete sense only in conjunction with
+the conversation context: the previous question and the previous
+answer.
+Table 1 lists a few plausible follow-up questions. Note, how
+(a) & (b) need information only from the previous question Q1,
+while (c) & (d) require the previous answer A1, whereas (e) & (f)
+need both Q1 and A1 to understand the intended meaning of the
+incomplete question Q2. Also, note that (a) & (b) require completion
+of a missing part of the question (Ellipsis [30]), whereas (c) & (d)
+require pronoun references (Anaphora) to be resolved, and (e) & (f)
+require both ellipsis and anaphora. Thus, in order for an IPA and
+IQA system to generate an appropriate response for an incomplete
+follow-up question, it is necessary to utilize and select relevant
+information from the conversation context.
+
+CCS CONCEPTS
+•Information systems → Query reformulation;
+
+INTRODUCTION
+
+Table 1: A few plausible incomplete follow-up questions a
+user may ask after system generates the response A1,
+and the corresponding intended complete questions.
+(a) & (b) only require the previous complete question Q1, and
+need Ellipsis to resolve; (c) & (d) need only the previous answer A1, and need to handle Anaphora; (e) & (f) need both
+Q1 and A1, and need to handle both ellipsis and anaphora.
+
+KEYWORDS
+retrieval based sequence to sequence learning; follow-up question
+resolution; query reformulation; intelligent personal assistants;
+interactive question answering
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+SIGIR ’17, August 07-11, 2017, Shinjuku, Tokyo, Japan
+© 2017 ACM. 978-1-4503-5022-8/17/08. . . $15.00
+DOI: http://dx.doi.org/10.1145/3077136.3080801
+
+(a)
+(b)
+(c)
+(d)
+(e)
+(f)
+
+Q/A
+
+Utterance
+
+Q1
+A1
+
+Who is the president of USA?
+Donald Trump
+
+Q2
+Q2
+Q2
+Q2
+Q2
+Q2
+
+and South Africa?
+and defence secretary?
+
+Who is the president of South Africa?
+Who is the defence secretary of USA?
+
+Who is he married to?
+When was he born?
+
+Who is Donald Trump married to?
+When was Donald Trump born?
+
+When?
+When did he?
+
+When did Donald Trump become the president?
+When did Donald Trump become the president?
+
+1 http://www.apple.com/ios/siri/
+2 https://allo.google.com/
+
+705
+
+Intended Utterance
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+In this work, we present a retrieval based sequence to sequence
+learning system to handle incomplete follow-up questions. Our
+system can generate the complete (intended) question for an incomplete follow-up question, given the previous (complete) question
+and the previous answer. We approach this problem as a machine
+translation task, where the source text is the conversation context
+(the previous question Q1 and the previous answer A1) and an incomplete follow-up question Q2 (left half of Table 1), and the target
+text is the complete (or intended) follow-up question R1 (right half
+of Table 1).
+A key challenge to approach the problem of question completion
+as machine translation is the paucity of labeled parallel corpus.
+Recently, Kumar & Joshi [25] proposed a generation based sequence
+to sequence learning approach for small datasets. They propose
+a syntactic sequence model, which focuses on the simpler problem of learning linguistic and syntactic patterns from questions.
+The trained syntactic sequence model is then used to generate a
+candidate question template, which can be trivially converted to
+a candidate question using a fixed symbol map. Generation based
+seq2seq approaches typically need huge parallel corpus [54]. Retrieval based models can alleviate this issue as they select from a
+pool of candidates which are grammatically well-formed and correct. Kanan et al. [21] recently proposed SmartReply, a retrieval
+based sequence to sequence learning system to generate responses
+for short e-mails. Inspired by their method, and the fact that there
+is paucity of data for a generation based approach to learn both
+patterns and a grammatically and semantically correct question,
+we use a retrieval based approach.
+Retrieval based approach however comes with its own set of
+challenges [21]. One challenge for our question completion task, is
+the lack of labeled data, and thus lack of candidate questions. We
+address this problem by transforming original candidate questions
+to syntactic templates. Another challenge is the huge amount
+of computation time required at runtime to select the candidate
+questions. Though the syntactic transformations for candidates
+can be done offline by creating a library of question templates, we
+still need to select candidate questions at runtime, by computing
+probability of each candidate. We address this issue by reducing
+the number of comparisons required by using a prefix tree based
+approach.
+Retrieval based approach itself helps us attain a BLEU score of
+41.28 when compared to 29.11 with an existing generation based
+approach. It is important to note that although syntactic transformation of a question enables us to learn syntactic patterns, essential
+information to select a grammatically correct candidate is lost. We
+address this issue by using a neural language model which can
+be trained on a huge corpus with millions of unlabelled questions,
+to re-rank the selected candidates by the retrieval based syntactic
+sequence model, which enables us to boost the BLEU score to 42.91.
+More concretely, we decompose the original problem of generating a complete question for an incomplete follow-up question given
+the conversation context, into two simpler and independent problems. For the first problem, we train a syntactic sequence model
+to select candidate question templates from a library of question
+templates generated offline. The syntactic sequence model can be
+trained using only a small labeled corpus of thousand conversations.
+The second problem re-ranks the selected candidate questions using
+
+a trained neural language model. The neural language model can
+be trained independently on huge questions corpus with millions
+of (unlabelled) questions.
+Our system can be added as a plug-in module to an existing
+QA system pipeline, enabling it to handle incomplete follow-up
+questions. Our system when added as a plug-in module, enables
+Siri to achieve an improvement of 131.57% in answering incomplete
+follow-up questions.
+Our key contributions can be summarized as follows:
+• We present a retrieval based system that returns a complete
+question for an incomplete follow-up question, given the
+conversation context: the previous question and the previous answer. Our system achieves a BLEU score of 42.91 as
+compared to 29.11 obtained using an existing generation
+based approach.
+• We decompose the original problem of question resolution into two simpler and independent problems. The first
+problem focuses on selecting candidate question templates
+using syntactic and linguistic patterns seen in the data.
+• The second problem focuses on re-ranking candidate questions using a neural language model which can be trained
+independently on millions of unlabelled questions.
+• Our system can be added as a plug-in module to an existing
+IPA or IQA system. Our system enables Siri to answer 88
+incomplete follow-up questions as compared to 38 followup questions on an evaluation set of 100 questions. We
+release this dataset3 to further research in IPA and IQA
+systems.
+The rest of the paper is organized as follows. In Section 2, we discuss related work in interactive QA systems, dialogue systems and
+sequence to sequence learning. Section 3 presents the background
+necessary to understand our system. We describe our system in
+detail in Section 4, and discuss the experimental setup including the
+dataset in Section 5. Finally, we present quantitative, qualitative,
+language modeling improvements and comparison with Siri results
+in Section 6, and conclude in Section 7.
+
+2 RELATED WORK
+2.1 Interactive QA systems
+In the past, a variety of approaches have been tried to handle incomplete follow-up questions for interactive QA systems. One set
+of work focuses on rewriting or resolving the incomplete follow-up
+question. An early system that can handle follow-up questions using resolution approach is RITS-QA [14]. Their approach requires
+identification of three key components in a complete question, such
+as “Who is the president of America?”: topic presentation (‘the
+president’), adjective expression (‘of America’) and the inquiring
+part (‘who is’) to resolve an incomplete follow-up question. This
+work was followed by a rule-based approach [13] to determine what
+information was missing in a follow-up question, and using word
+co-occurrence statistics and dictionary to resolve pronouns. There
+have been other efforts [28, 40, 48] which perform rewriting of an
+incomplete follow-up question by first explicitly identifying key
+components in previous questions and answers, and using word
+3 https://github.com/vineetm/siri-incomplete-questions
+
+706
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+saliency statistics. Our system on the other hand does not need
+any explicit component identification in the complete or follow-up
+question, and is completely data driven.
+Another set of work does not generate a complete follow-up
+question, but uses a keyword based approach [19], or changes
+the semantic representation of a question using the context [15,
+39]. Another approach directly attempts to answer the follow-up
+question, by searching the Top-N documents that were used to
+generate the previous answer [6]. All of these approaches require
+modifying an existing QA pipeline. Our system on the other hand
+can be used as a plug-in module enabling an existing QA system to
+handle incomplete follow-up questions by generating the complete
+intended question.
+Raghu et. al [38] presented a completely data driven approach
+to handle follow-up questions. However, their system can handle
+follow-up questions that only depend on the previous question.
+Thus their approach cannot handle Table 1(c) - (e).
+
+2.2
+
+re-training the model by keeping some parameters fixed on low
+resource language pair. However, it is not clear to us how this approach can be applied to the task of complete question generation
+from an incomplete follow-up question.
+
+3 BACKGROUND
+3.1 Sequence to Sequence Models
+Sequence to sequence learning (seq2seq) [46] is a powerful framework to generate a sequence of output tokens given a sequence
+of input tokens. Seq2seq networks are trained on parallel corpus
+of data. Seq2seq uses a Recurrent Neural Network (RNN) based
+encoder decoder network. RNN encoder is used to compress the entire input sequence into a fixed length vector, called context vector.
+RNN decoder is then initialised with the context vector to generate a probability distribution over output tokens. The probability
+distribution is then used to sample an output token. The sampled
+output token, along with the context vector and RNN decoder’s
+hidden state is used to generate a new probability distribution
+over output tokens. The entire process is repeated until a special
+end-of-sequence (EOS) token is sampled.
+It is worth highlighting that RNN suffers form the problem of
+vanishing gradient problem [17]. This problem is addressed by
+using either a long short-term memory (LSTM) [18] or a gated
+recurrent unit (GRU) [9] cell. RNN also suffers from the problem of
+exploding gradients, and that is addressed by clipping the value of
+gradients [35].
+One of the most successful applications of sequence to sequence
+learning is statistical machine translation [4, 46]. However, these
+models are trained on huge parallel corpus (of order of millions
+of data points). Obtaining a parallel corpus of this magnitude for
+question completion, is extremely hard, as the data has to be created
+manually. Thus, one needs to simplify the problem of sequence to
+sequence learning, by learning abstractions from data [25].
+Seq2seq networks can be used to generate an output sequence
+of tokens given an input sequence of tokens. Seq2seq networks
+can also be used to compute the probability of output sequence
+given an input sequence P (y1 , y2 , y3 , · · · , yTy |x 1 , x 2 , x 3 , · · · , xTx ),
+where yi represents an output token, x j represents an input token,
+Tx represents length of input sequence and Ty the length of output
+sequence.
+
+Dialogue Systems
+
+In dialogue systems, context is important for spoken language
+understanding (SLU) [47]. SLU system identifies three key components for an utterance: domain, intent and semantic slots. For
+example for an utterance ‘I want a pizza with mushrooms and
+onions’, the domain could be ‘Food’, the intent ‘OrderPizza’, and
+semantic slots would be pizza-toppings ‘mushrooms’ and ‘onions’.
+Recent work [8, 42] shows that using the domain, intent and slots
+identified in the previous utterances can help improve slot filling
+and domain and intent classification or dialogue state tracking [50]
+for an utterance. Our system is different, as we look at a subset
+of utterances (follow-up questions), and we do not need to identify any key components. Our system can directly generate the
+intended utterance (complete follow-up question) by leveraging
+the conversation context (the previous question and the previous
+answer), and is completely data driven.
+
+2.3
+
+Sequence to Sequence Learning
+
+Sequence to sequence learning [46] has been applied to a variety
+of applications including statistical machine translation [4, 45],
+language modeling [31, 32, 53], paraphrase generation [16, 36], semantic slot filling [26], image caption generation [20, 22, 51] among
+many others. Sequence to sequence learning has also been applied
+in dialogue systems for user modeling [2, 41, 52]. The closest application to our work is using a sequence to sequence model to
+generate a complete question [25]. However, their approach uses a
+generation based approach and is thus limited in learning to output
+correct questions from a small labeled corpus. We address the challenge of paucity of labeled data by using a retrieval based approach
+to learn syntactic patterns for complete questions. We further use a
+huge corpus of unlabelled questions to train a language model, to rescore candidates selected by the retrieval model. A retrieval based
+model related to our work is SmartReply [21]. However, SmartReply address the problem of generating a short email response, and
+does not have the issue of lack of labeled corpora.
+Recently, Zoph et al. [54] proposed a novel method to train
+seq2seq models for low-resource languages. They propose training the seq2seq model on a resource rich language pair, and then
+
+3.2
+
+Syntactic Sequence Model
+
+Seq2seq models have a large number of parameters, which can
+make training difficult for small datasets [25, 54]. This problem can
+be alleviated by reducing the size of vocabulary. Kumar et. al [25]
+recently proposed a syntactic sequence model which can be trained
+on small datasets, by focusing on simpler problem of learning linguistic or syntactic patterns in the data. Their approach restricts
+vocabulary size by assigning new symbols to out-of-vocabulary
+(OOV) words based on its position in the sequence, and reusing
+the symbols across training data. Table 2 depicts a conversation
+after OOV words are replaced by unknown (UNK) symbol and
+the corresponding source and target sequence. Note how such a
+model would learn only to reproduce Q1. Table 3 depicts how a
+syntactic sequence model can preserve linguistic information in a
+conversation, even with a restricted vocabulary.
+
+707
+
+Session 6B: Conversations and Question Answering
+
+3.3
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 3: Utterances in the left side of Table 2, after replacing
+each OOV word with a new symbol, which corresponds to
+its position in the sequence.
+
+Recurrent neural network based Language
+Model
+
+Recurrent neural network (RNN) [10] based language model [31, 32]
+can be used to compute the probability of a word x (t ) at position
+(or time) t, given all the previous words x (t − 1), x (t − 2), · · · x (1)
+in a sentence. A word is further represented using a vector w (t ).
+The network also has a hidden state s (t ) and an output layer y(t ).
+Probability of a word x (t ), given the previous words is computed
+as follows:
+a(t ) = w (t ) + s (t − 1)
+(1)
+s j (t ) = f (
+
+X
+
+Utterance
+
+Replaced Utterance
+
+Q1
+A1
+Q2
+
+What is the capital of India?
+Delhi
+and USA?
+
+What is the UNK1 of UNK2?
+UNK3
+and UNK4?
+
+R1
+
+What is the capital of USA?
+
+What is the UNK1 of UNK4?
+
+Source:
+Target:
+
+What is the UNK1 of UNK2? EOS UNK3 EOS and UNK4?
+What is the UNK1 of UNK4?
+
+ai (t )u ji )
+
+(2)
+
+s j (t )vk j )
+
+(3)
+
+Symbol
+
+Value
+
+where f (z) is the sigmoid function:
+1
+f (z) =
+1 + e −z
+and g(z) is the softmax function:
+
+(4)
+
+UNK1
+UNK2
+UNK3
+UNK4
+
+capital
+India
+Delhi
+USA
+
+e zm
+д(zm ) = P z
+ke k
+
+(5)
+
+i
+
+yk (t ) = д(
+
+X
+j
+
+template library. The candidate templates are then converted to
+complete questions by replacing symbols from the symbol map.
+Finally, the trained language model is used to re-rank candidate
+questions and return the final list. We now describe each subcomponent in detail.
+
+Table 2: Utterances after replacing all out of vocabulary
+words with same symbol U N K.
+Utterance
+
+Replaced Utterance
+
+Q1
+A1
+Q2
+
+What is the capital of India?
+Delhi
+and USA?
+
+What is the UNK of UNK?
+UNK
+and UNK?
+
+R1
+
+What is the capital of USA?
+
+What is the UNK of UNK?
+
+Source:
+Target:
+
+4
+
+4.1
+
+Offline Question Template Library
+
+We use a labeled conversation corpus (Section 5.1), which contains
+the previous complete question Q1, the previous answer A1, the
+incomplete follow-up question Q2 and the corresponding resolved
+complete question R1 to create a question template library offline.
+We use transformations to replace all out-of-vocabulary (OOV)
+words with new symbols, and then use the transformed complete
+questions R1 from the training split as templates.
+In this work, we only experimented with syntactic transformations, where a new symbol is assigned based on its position in
+the sequence. It is worth noting that there are many other possible methods: one can create semantic abstractions as specified
+in semantic sequence model [25], or an entity, or part of speech
+based abstraction. Syntactic transformations allow us to look at an
+abstraction of the original data, and thus enables us to generalize
+even using a small dataset. For example, there are 6420 resolved
+questions R1 in our training data, but after syntactic transformation,
+this number is reduced to 5451 templates. This shows, that syntactic transformations already enable us to find patterns in complete
+questions.
+
+What is the UNK of UNK? EOS UNK EOS and UNK?
+What is the UNK of UNK?
+
+SYSTEM DESCRIPTION
+
+In this section, we describe our complete end-to-end system to
+handle incomplete follow-up question given conversation context.
+Figure 1 gives a high level description. The offline component works
+with two corpus: a labeled conversations corpus (Section 5.1), and
+an unlabelled corpus of questions. The labeled conversations corpus
+is used to train the syntactic sequence model (Section 3.2). The
+training corpus from the labeled conversation corpus is also used
+to create an offline library of candidate question templates after
+performing syntactic transformations. The unlabelled question
+corpus used to train a neural language model (Section 3.3).
+The online component handles an incomplete follow-up question,
+by returning a ranked list of candidate questions. Conversation
+context (the previous question Q1 and the previous answer A1)
+along with the incomplete follow-up question Q2 is fed to syntactic
+transformation unit. This converts the input to a source sequence
+(Table 3) along with a symbol map. The source sequence is fed
+to candidate selection module, which uses a trained syntactic sequence model to select candidate question templates from an offline
+
+4.2
+
+Candidate Question Template Selector
+
+At run time, candidate question template selector uses a trained
+syntactic sequence model to return a list of candidate question
+templates. A naive implementation would require to compute probability of each candidate given the source sequence. For example, in
+our specific case this would require 5451 probability computations
+for each incomplete follow-up question. This makes the run-time
+selection of candidate question templates slow. We address this
+challenge by using a prefix-tree based approach. Figure 2 depicts
+
+708
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Oﬄine
+Labeled
+Conversation
+Corpus
+
+Question
+Template
+Library
+
+Unlabeled
+Question
+Corpus
+
+Trained
+Language
+Model
+
+Trained
+Syntactic
+Sequence
+Model
+
+Online
+
+Conversation Context
+
+Syntactic Tx
+
+Incomplete follow-up
+question Q2
+
+Source Sequence
+UNK Symbol Map
+
+Candidate
+Question
+Question Template Templates
+Selector
+
+Syntactic Tx
+
+Selected
+Questions
+
+Re-scoring using
+Language Model
+
+Final Candidate
+Questions
+
+Figure 1: System description
+
+what
+
+why
+
+is
+
+are
+
+how
+
+…
+
+…
+
+queue after computing the probability of the prefix given the source
+sequence. At this stage we prune the queue to only keep Top-ws
+nodes. We repeat the process, till we are only left with the leaf
+nodes, and return the list of selected question templates. Note that
+the window size ws, represents a tradeoff between time required
+and accuracy obtained. A small window size would discard most
+of candidate questions early, but would do quick computations. A
+large window size would be more accurate, but would have more
+computation requirements. Section 6.2 gives more details on how
+the window size is selected.
+A seq2seq model can be used to compute the probability of a target sequence y1 , y2 , · · · , yTy , given an input sequence x 1 , x 2 , · · · , xTx .
+We compute the seq2seq score (ss) by computing the average probability of an output token, as follows:
+
+where
+
+UNK3
+UNK1
+
+the
+
+UNK1
+
+UNK1
+UNK4
+
+UNK2
+
+?
+What is the UNK1
+of UNK2?
+
+…
+
+What is UNK1 of
+UNK4?
+
+…
+
+How is UNK3
+UNK2?
+
+…
+
+Where is UNK1
+located?
+
+Figure 2: Prefix tree for syntactic question templates.
+Nodes at the first level denote start of a question template
+The leaves denote all the question templates.
+
+ss =
+
+Ty
+1 X
+Pr (yi |x 1 , x 2 , · · · xTx , y1 , · · · yi−1 )
+Ty i=1
+
+(6)
+
+A candidate template question can then be converted trivially
+to a candidate question, by replacing all the new symbols U N Ki
+using the symbol map.
+
+a sample prefix tree for a library of question templates built using
+syntactic transformations. The very first level of tree represents the
+start of a candidate question template such as ‘why’, ‘how’ and ‘is’.
+The subsequent level represents the second token in a candidate
+question, and finally the leaves represent the candidate question
+templates.
+For a given incomplete question, first a source sequence is generated using syntactic transformation (Table 3). We use the prefix
+tree at runtime, by using a beam search based approach, with a
+window size ws. We initialize a priority queue (highest probability
+node first) with the root of the prefix tree. We then de-queue the
+first entry (in this case the root node), and add all its children to the
+
+4.3
+
+Language Model for probability
+computation
+
+We use a RNN based language model to compute the language
+score ls for a question. Probability of a question can be computed
+as follows:
+Y
+Pr (x 1 , x 2 , · · · , x t ) =
+Pr (x i |x 1 , x 2 , · · · x i−1 )
+(7)
+i
+
+709
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 5: Dataset statistics
+
+However, Equation 7 favours short questions over long questions.
+For our purposes of computing a grammatically correct question,
+we are more concerned if each token selected has a high probability.
+We compute the language score ls for a question as follows:
+ls =
+
+t
+1X
+Pr (x i |x 1 , x 2 , · · · x i−1 )
+t i=1
+
+(8)
+
+where Pr (x i |x 1 , x 2 , · · · x i−1 ) is computed using Equation 3.
+
+4.4
+
+Re-ranking candidates with Language
+Model
+
+Seq2Seq model returns a list of k candidates. For each candidate,
+seq2seq score (ss) and language model score (ls) is computed. The
+final score scorei for a candidate i is computed as follows:
+ssi
+lsi
+scorei = λ ∗
++ (1 − λ) ∗
+(9)
+k ss
+k
+max j=1
+max
+j
+j=1ls j
+
+5.2
+
+5 EXPERIMENTS
+5.1 Dataset
+For all our experiments, we use the question completion dataset [38]
+which has 7220 labeled conversations. Each labeled conversation
+has four parts: a previous complete question Q1, a previous answer
+A1, an incomplete follow-up question Q2 and the corresponding
+intended complete question R1. Table 4 lists a few examples from
+the dataset.
+Table 4: Sample conversations from the dataset
+What is a native animal of Ireland?
+Hedgehog
+What about Australia?
+What is a native animal of Australia?
+
+Q1
+A1
+Q2
+R1
+
+Where does a white faced saki live?
+Suriname
+What does it eat?
+What does a white faced saki eat?
+
+Q1
+A1
+Q2
+R1
+
+Where are Porsche made?
+Germany
+and when was the first?
+When was the first Porsche produced?
+
+7220
+6420
+400
+400
+
+|V |
+|V | (With Phrases)
+Words (Train)
+Words (Dev)
+Words (Test)
+
+11759
+13938
+157K
+9893
+9853
+
+Syntactic Sequence Model Training
+
+We train a syntactic sequence model (Section 3.2) on the 6420 conversations from the training dataset (Section 5.1). Training a syntactic sequence model differs from a standard seq2seq model in
+its pre processing and post processing step. As a pre processing
+step, the vocabulary is fixed, and for each conversation all the outof-vocabulary (OOV) tokens are assigned a new unknown symbol
+(U N Ki ) according to its position in the sequence. As a post processing step, all the new unknown symbols are replaced by their
+original tokens using the symbol map. Table 3 gives an instance of
+a conversation after replacement with unknown symbols and the
+corresponding symbol map. Another important difference from a
+standard machine translation based seq2seq network, is that we use
+the same vocabulary for both source and target, as we are dealing
+with the same language (English), and more importantly tokens in
+source and target mean the same thing.
+We use a recurrent neural network (RNN) [10] based encoder
+decoder network with gated recurrent unit (GRU) [9] as our seq2seq
+model. Adam [23] with default recommended parameters β1 =
+0.9, β 2 = 0.999, ϵ = 10−8 is used as the optimization algorithm. We
+extend an open source implementation 5 of a machine translation
+model based on tensorflow [1] to train our seq2seq models.
+As we are only interested in learning syntactic and linguistic patterns, we restrict our vocabulary to use only stop words. We include
+all the question keywords such as ‘what’, ‘when’ and ‘why’ in our
+stopword list. All our models are trained with a vocabulary size of
+159, which includes tokens for new unknown symbols (U N Ki ). We
+select all other hyper-parameters such as the embedding size (128),
+number of hidden units (128) and number of layers (1) that returns
+the highest BLEU score on Top-100 candidates (Section 4.2) for the
+development set. For all our experiments, we lowercase the text and
+use NLTK tokenizer [5] to generate tokens. We further convert the
+tokens to phrases using textblob [27]. For BLEU score computation
+we convert the phrases back to their constituent tokens.
+
+where λ is a parameter that is learnt using the best BLEU Score
+obtained on the development data for k candidates.
+
+Q1
+A1
+Q2
+R1
+
+Conversations
+Train
+Dev
+Test
+
+This dataset was created using Amazon Mechanical Turk4 (AMT),
+by giving users question answer pairs (Q1, A1) and asking them to
+generate follow-up questions Q2. Users were also asked to generate
+the complete question R1.
+For our experiments, we randomly split the dataset into training,
+development and test set. Table 5 lists a few details of the dataset,
+where |V | refers to the number of unique tokens seen in the training
+data. We use the resolved questions R1 from the training set to
+create an offline library of question templates (Section 4.1).
+
+5.3
+
+Language Model Training
+
+We train a RNN based language model as described in Section 3.3
+using questions from knowitall dataset [12]. This dataset has about
+30M questions (questions.txt). We restrict it to only questions that
+begin with question keywords (such as ‘why’, ‘when and ‘how’),
+which reduces the number of questions to 24M questions. We further randomize this dataset, and train the neural language model
+
+4 https://www.mturk.com
+
+5 https://github.com/tensorflow/models/tree/master/tutorials/rnn/translate
+
+710
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+on 2M questions. We use Long Short Term Memory (LSTM) [18]
+units, and apply dropout to train our networks [53]. We train our
+language model by applying dropout to LSTM We use an open
+source implementation6 based on tensorflow [1] by using the default parameters specified in LargeConfig.
+
+6 RESULTS
+6.1 Evaluation using BLEU
+As described in Section 4, our system returns Top-k candidate questions for an incomplete follow-up question (and the conversation
+context). We evaluate our system using BLEU [34]. We use the
+standard BLEU evaluation script 7 , which computes and reports
+the exponential average of BLEU-1, BLEU-2, BLEU-3 and BLEU4 scores. We measure BLEU by comparing each of k candidates
+against the gold resolved question, and report the highest BLEU
+score returned by a candidate. Thus, if Top-4 candidates have BLEU
+scores of 13.45, 40.34, 70.89 and 34.89, we report the BLEU as 70.89
+when considering k = 4, and 40.34 when considering k = 2.
+Table 6 reports the BLEU scores on a held out test set of 400
+conversations. When we only select the top candidate (k = 1) returned by the retrieval based syntactic sequence model, we achieve
+a BLEU score of 41.28, as compared to 29.11 reported in our previous generation based approach [25]. After re-ranking the Top-100
+candidates returned by the system with a trained language model
+(Section 4.4), and selecting the top (k = 1) candidate, we see further
+improvements and our final system can achieve a BLEU score of
+42.91.
+Figure 3 depicts BLEU scores attained by retrieval based model
+and the final system (when candidates are re-ranked using language
+model). As expected, we obtain higher BLEU scores when the
+number of candidates k increases. Re-ranking with language model
+helps further. It is also interesting to note that as k increases,
+the boost provided by the language model decreases. This can be
+explained by the fact, that with large k, the candidates selected by
+the language model are already present in Top-k candidates. Thus,
+the highest BLEU score does not change. Table 7 lists a few concrete
+examples where re-scoring with a trained neural language model
+helps. Finally, in Table 8 we highlight the candidate questions
+returned by our system.
+
+Figure 3: BLEU Scores
+
+Figure 4: Total time taken and the best BLEU score for 10
+incomplete follow-up questions from the development set
+over 100 candidates.
+
+Table 6: BLEU Score on Test Set
+
+6.2
+
+Model
+
+BLEU
+
+Baseline RNN (Kumar & Joshi) [25]
+Syntactic Sequence (Kumar & Joshi) [25]
+Our approach: Retrieval Model
+Our approach: Retrieval Model + LM
+
+18.54
+29.11
+41.28
+42.91
+
+follow-up questions from the development set. We select ws = 8,
+as the window size, as after this BLEU score increases marginally,
+though time taken increases considerably.
+
+6.3
+
+Comparison with Siri
+
+Our system can generate the complete question for an incomplete
+follow-up question given the conversation context. This can be of
+value to an IPA such as Siri, as it can now process the generated
+complete question directly, without changing its existing pipeline.
+In this section, we demonstrate how our system, when added as a
+plug-in module enables Siri to answer more follow-up questions.
+In order to asses the utility of our system, we create a follow-up
+question dataset of 100 incomplete questions, along with the gold
+resolved questions. We only select questions which can be directly
+answered by Siri (and remove questions which return only a web
+
+Window size ws selection of prefix tree
+
+In Section 4.2 we described how candidate question templates are
+selected from an offline question template library. Figure 4 depicts
+the total time taken for selecting 100 candidates for 10 incomplete
+6 https://github.com/tensorflow/models/tree/master/tutorials/rnn/ptb
+
+7 https://github.com/moses-smt/mosesdecoder/blob/master/scripts/generic/multi-
+
+bleu.perl
+
+711
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 7: Language Model helps in reordering seq2seq candidates
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+(e)
+
+(f)
+
+Utterance
+
+Seq2seq Retrieval Model
+
+Seq2seq Retrieval Model + LM
+
+Q1
+A1
+Q2
+Gold
+
+Who is the chief of Indian army navy and air force?
+President Pranab Mukherjee
+Is he in charge of anything else?
+
+who is the chief of indian army navy and charge ?
+is president pranab mukherjee chief in air force a charge number ?
+is president pranab mukherjee in charge of anything else ?
+
+is president pranab mukherjee in charge of anything else ?
+is president pranab mukherjee chief in air force a charge number ?
+who is the chief of indian army navy and charge ?
+
+Q1
+A1
+Q2
+Gold
+
+What sport is the most common cause of eye injuries in US?
+baseball
+knee injuries?
+
+what sport is the knee injuries most common in eye injuries ?
+what sport is the most knee injuries cause of eye injuries in us ?
+what sport is the most common cause of knee injuries in us ?
+
+what sport is the most common cause of knee injuries in us ?
+what sport is the knee injuries most common in eye injuries ?
+what sport is the most knee injuries cause of eye injuries in us ?
+
+Q1
+A1
+Q2
+Gold
+
+type of joints used in squats?
+knee
+and in push-ups ?
+
+what type of joints used in push-ups ?
+type of joints used in push-ups ?
+what type of joints are used in push-ups ?
+
+what type of joints are used in push-ups ?
+what type of joints used in push-ups ?
+type of joints used in push-ups ?
+
+Q1
+A1
+Q2
+Gold
+
+in which sport was wally lewis a champion ?
+rugby
+and how many goals did he score ?
+
+how many goals did rugby score ?
+how many goals did wally score ?
+
+how many goals did wally score ?
+how many goals did rugby score ?
+
+Q1
+A1
+Q2
+
+a fuel that is burnt to form water. it is expensive
+and difficult to transport. what is it ?
+hydrogen
+Why is it difficult to transport?
+
+why is hydrogen UNK to UNK ?
+why are hydrogen burnt to form ?
+why is hydrogen difficult to transport ?
+
+why is hydrogen difficult to transport ?
+why is hydrogen UNK to UNK ?
+why are hydrogen burnt to form ?
+
+Gold
+
+Why is hydrogen difficult to transport?
+
+Q1
+A1
+Q2
+Gold
+
+What are some of Maryland’s major highways ?
+U.S. route 10
+how about in New York?
+
+what are some maryland in new york?
+what are some maryland major highways in new york ?
+what are some of maryland ’s new york ?
+
+what are some of new york ’s major highways ?
+what are some maryland in new york?
+what are some maryland major highways in new york ?
+
+What are some of New York ’s major highways ?
+
+what are some of new york ’s major highways ?
+
+what are some of maryland ’s new york ?
+
+Is President Pranab Mukherjee in charge of anything else
+besides the indian military?
+
+What sport is the most common cause of knee injuries
+in the US ?
+
+type of joints used in push-ups ?
+
+and how many goals did wally lewis score ?
+
+search). All the experiments were done on 14 Jan 2017 on iPhone
+6S with iOS v10.2 (14C92). The dataset8 is created as follows:
+
+7
+
+CONCLUSION
+
+IPA and IQA systems frequently encounter incomplete follow-up
+questions which require the conversation context (previous question and answer) to make complete sense. In order to generate an
+appropriate response, IPA and IQA systems need to handle incomplete follow-up questions. In this paper, we present a retrieval based
+sequence to sequence learning system, that can return a compete
+question for an incomplete follow-up question (given conversation context). As there is paucity of labeled conversation data, we
+decompose the original problem into two simpler and independent problems. The first problem used a small labeled conversation
+corpus to select candidate questions. The second problem uses a
+trained neural language model (which can be trained on millions of
+unlabelled questions) to re-rank candidate questions, and thus return grammatically well-formed questions. Our system can achieve
+a BLEU score of 42.19, as compared to 29.11 reported by an existing generation based approach. We further demonstrate how our
+system can be added as a plug-in module to an existing IPA, such
+as SIRI and enable it to handle more follow-up questions.
+As future work, we plan to experiment with retrieval models
+that look at other abstractions such as entities and concepts, and
+use an ensemble model to combine them.
+
+• We start with question answer pairs from the Question
+Answer dataset [44]. This dataset contains about 4000
+question pairs. We eliminate all the questions which have
+a ‘yes/no’ answer.
+• We further eliminate all the questions that cannot be answered directly by Siri. Thus, we do not consider questions
+that return a web search, as it is hard to check if the question is answered correctly.
+• We further add questions from the list of documented questions that Siri can answer 9 .
+• We create incomplete follow-up questions for the remaining questions, by referring to the entities and concepts
+mentioned in the conversation.
+Table 10 shows that our system enables Siri to answer 88 incomplete follow-up questions as compared to 38 questions, thus
+enabling Siri to achieve an improvement of 131.57%. We first ask
+Siri the complete question Q1, followed by the incomplete question
+Q2, and note the response generated by Siri. We then ask Siri the
+resolved gold question R1. We assume Siri has correctly answered
+the follow-up question if the response generated by R1 is same as
+Q2. Table 9 depicts a few example of Ellipsis follow-up questions,
+and how our system can enable Siri to answer them.
+
+8 https://github.com/vineetm/siri-incomplete-questions
+9 http://www.apple.com/ios/siri/
+
+712
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 8: Candidate questions generated by our system for some incomplete follow-up questions
+Utterance
+
+Gold Question (R1)
+
+Candidate Question(s)
+
+(a)
+
+Q1
+A1
+Q2
+
+What is the abbreviated form of the month of April ?
+apr
+and for the month of September?
+
+and what is the abbreviated form of the month
+of september?
+
+what is the abbreviated form of the month
+of september ?
+
+(b)
+
+Q1
+A1
+Q2
+
+what kind of gelatin is used in haricot strawberry cream gummies ?
+beef
+what kind of sweetener?
+
+what kind of sweetener is used in haricot strawberry
+cream gummies?
+
+what kind of sweetener is used in haricot strawberry
+cream gummies ?
+
+(c)
+
+Q1
+A1
+Q2
+
+What is food refuse?
+waste
+What are the consequences ?
+
+what are the consequences of food refuse ?
+
+what are the consequences of food refuse ?
+what are the consequences of UNK waste ?
+
+(d)
+
+Q1
+A1
+Q2
+
+Who desired to westernize Russia?
+Mikhail Gorbachev
+in what year?
+
+In what year did Gorbachev desire
+to westernize russia ?
+
+in what year did mikhail gorbachev
+UNK westernize russia ?
+
+(e)
+
+Q1
+A1
+Q2
+
+Who was the mayor before Rob Ford ?
+David Miller
+and before him?
+
+Who was the mayor before David Miller?
+
+who was the mayor in UNK ?
+who was the mayor before david miller ?
+
+(f)
+
+Q1
+A1
+Q2
+
+minimum age to be a US representative ?
+25
+to be a senator?
+
+minimum age to be a senator ?
+
+minimum age to be a us senator ?
+
+(g)
+
+Q1
+A1
+Q2
+
+Who is the inventor of the ac-130 ?
+lockheed
+when was that?
+
+when did lockheed invent the ac-130 ?
+
+when was the inventor of the ac-130 ?
+when was lockheed the inventor of ac-130 ?
+
+(h)
+
+Q1
+A1
+Q2
+
+What year did the US troops leave Vietnam?
+1973
+and how long did that war last ?
+
+How long did the Vietnam war last?
+
+how long did 1973 war last ?
+how long did vietnam war last ?
+
+(i)
+
+Q1
+A1
+Q2
+
+Who is the fastest man in the world?
+Usain Bolt
+how fast did he run ?
+
+How fast did Usain Bolt run?
+
+how fast did usain bolt run ?
+
+(j)
+
+Q1
+A1
+Q2
+
+Who is considered the father of the US Constitution?
+James Madison
+Who was he?
+
+Who was James Madison?
+
+who is considered the father of the us james madison ?
+who was james madison ?
+who is james madison the father of the us constitution ?
+
+(k)
+
+Q1
+A1
+Q2
+
+the capital of new zealand ?
+wellington
+what is it’s population?
+
+what is the population of wellington,
+new zealand?
+
+what is new zealand ’s population ?
+what is the new zealand ’s population ?
+what is wellington ’s population ?
+
+Table 9: Follow-up questions resolution comparison with Siri
+Q1
+
+Q2
+
+How many miles in 5 kilometres ?
+
+and 15 kilometres?
+and 15 ?
+
+How many miles in 15 kilometres?
+
+Where did he die?
+where?
+
+Where did Yuan Shikai die?
+
+X
+
+X
+X
+
+What is the square root of 64?
+
+and cube root?
+
+What is the cube root of 64?
+
+X
+
+X
+
+Who is the president of India?
+
+how about prime minister?
+and prime minister?
+
+X
+Who is the prime minister of India?
+
+X
+X
+
+When did Yuan Shikai die?
+
+R1
+
+[2]
+[3]
+
+Baseline
+Our System
+
+With our system
+
+X
+X
+
+X
+
+X
+
+Table 10: Follow-up questions correctly answered by Siri. If
+the response generated for a follow-up question Q2 (after
+asking Siri Q1) is same as the response generated by R1, we
+assume Siri has correctly answered the follow-up question.
+System
+
+Siri Response
+
+X
+
+Correctly Answered
+
+[4]
+
+38/100
+88/100
+
+[5]
+
+REFERENCES
+
+[6]
+
+[1] Martın Abadi, Ashish Agarwal, Paul Barham, Eugene Brevdo, Zhifeng Chen,
+Craig Citro, Greg S Corrado, Andy Davis, Jeffrey Dean, Matthieu Devin, and
+
+713
+
+X
+
+others. 2016. Tensorflow: Large-scale machine learning on heterogeneous distributed systems. arXiv preprint arXiv:1603.04467 (2016).
+Layla El Asri, Jing He, and Kaheer Suleman. 2016. A Sequence-to-Sequence
+Model for User Simulation in Spoken Dialogue Systems. CoRR abs/1607.00070
+(2016).
+Amos Azaria, Jayant Krishnamurthy, and Tom M. Mitchell. 2016. Instructable
+Intelligent Personal Agent. In AAAI.
+Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. 2014. Neural Machine
+Translation by Jointly Learning to Align and Translate. CoRR abs/1409.0473
+(2014).
+Steven Bird. 2006. NLTK: the natural language toolkit. In Proceedings of the
+COLING/ACL on Interactive presentation sessions. Association for Computational
+Linguistics, 69–72.
+Marco De Boni and Suresh Manandhar. 2005. Implementing clarification dialogues in open domain question answering. Natural Language Engineering 11
+(2005), 343–361.
+
+Session 6B: Conversations and Question Answering
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+[36] Aaditya Prakash, Sadid A. Hasan, Kathy Lee, Vivek Datla, Ashequl Qadir, Joey
+Liu, and Oladimeji Farri. 2016. Neural Paraphrase Generation with Stacked
+Residual LSTM Networks. In COLING.
+[37] Silvia Quarteroni and Suresh Manandhar. 2009. Designing an interactive opendomain question answering system. Natural Language Engineering 15, 01 (2009),
+73–95.
+[38] Dinesh Raghu, Sathish Indurthi, Jitendra Ajmera, and Sachindra Joshi. 2015. A
+Statistical Approach for Non-Sentential Utterance Resolution for Interactive QA
+System. In 16th Annual Meeting of the Special Interest Group on Discourse and
+Dialogue. 335.
+[39] Norbert Reithinger, Simon Bergweiler, Ralf Engel, Gerd Herzog, Norbert Pfleger,
+Massimo Romanelli, and Daniel Sonntag. 2005. A look under the hood: design
+and development of the first SmartWeb system demonstrator. In ICMI.
+[40] Boris Van Schooten and Rieks Op Den Akker. 2010. Vidiam: Corpus-based
+Development of a Dialogue Manager for Multimodal Question Answering.
+[41] Louis Shao, Stephan Gouws, Denny Britz, Anna Goldie, Brian Strope, and Ray
+Kurzweil. 2017. Generating Long and Diverse Responses with Neural Conversation Models.
+[42] Yangyang Shi, Kaisheng Yao, Hu Chen, Yi-Cheng Pan, Mei-Yuh Hwang, and
+Baolin Peng. 2015. Contextual spoken language understanding using recurrent
+neural networks. In ICASSP.
+[43] Max Sklar. 2016. Marsbot: Building a Personal Assistant. In RecSys.
+[44] Noah A Smith, Michael Heilman, and Rebecca Hwa. 2008. Question generation as
+a competitive undergraduate course project. In Proceedings of the NSF Workshop
+on the Question Generation Shared Task and Evaluation Challenge.
+[45] Jinsong Su, Zhixing Tan, Deyi Xiong, and Yang Liu. 2016. Lattice-Based Recurrent
+Neural Network Encoders for Neural Machine Translation. CoRR abs/1609.07730
+(2016).
+[46] Ilya Sutskever, Oriol Vinyals, and Quoc V Le. 2014. Sequence to sequence
+learning with neural networks. In Advances in neural information processing
+systems. 3104–3112.
+[47] Gökhan Tür, Ye-Yi Wang, and Dilek Z. Hakkani-Tür. 2014. Understanding Spoken
+Language. In Computing Handbook, 3rd ed.
+[48] Boris W. van Schooten, Rieks op den Akker, Sophie Rosset, Olivier Galibert,
+Aurélien Max, and Gabriel Illouz. 2009. Follow-up question handling in the IMIX
+and Ritel systems: A comparative study. Natural Language Engineering 15 (2009),
+97–118.
+[49] Haifeng Wang. 2016. Duer: Intelligent Personal Assistant. In CIKM.
+[50] Jason D Williams, Pascal Poupart, and Steve Young. 2005. Factored Partially
+Observable Markov Decision Processes for Dialogue Management.
+[51] Kelvin Xu, Jimmy Ba, Jamie Ryan Kiros, Kyunghyun Cho, Aaron C. Courville,
+Ruslan Salakhutdinov, Richard S. Zemel, and Yoshua Bengio. 2015. Show, Attend
+and Tell: Neural Image Caption Generation with Visual Attention. In ICML.
+[52] Rui Yan, Yiping Song, and Hua Wu. 2016. Learning to Respond with Deep Neural
+Networks for Retrieval-Based Human-Computer Conversation System. In SIGIR.
+[53] Wojciech Zaremba, Ilya Sutskever, and Oriol Vinyals. 2014. Recurrent Neural
+Network Regularization. CoRR abs/1409.2329 (2014).
+[54] Barret Zoph, Deniz Yuret, Jonathan May, and Kevin Knight. 2016. Transfer
+Learning for Low-Resource Neural Machine Translation. In EMNLP.
+
+[7] Jaime G Carbonell. 1983. Discourse pragmatics and ellipsis resolution in taskoriented natural language interfaces. In Proceedings of the 21st annual meeting
+on Association for Computational Linguistics. Association for Computational
+Linguistics, 164–168.
+[8] Yun-Nung Chen, Dilek Hakkani-Tür, Gokhan Tur, Jianfeng Gao, and Li Deng.
+2016. End-to-end memory networks with knowledge carryover for multi-turn
+spoken language understanding. In Proceedings of Interspeech.
+[9] Junyoung Chung, Caglar Gülçehre, Kyunghyun Cho, and Yoshua Bengio. 2015.
+Gated feedback recurrent neural networks. CoRR, abs/1502.02367 (2015).
+[10] Jeffrey L. Elman. 1990. Finding Structure in Time. Cognitive Science 14 (1990),
+179–211.
+[11] Emad Elwany. 2014. Enhancing Cortana User Experience Using Machine Learning.
+[12] Oren Etzioni, Michael Cafarella, Doug Downey, Stanley Kok, Ana-Maria Popescu,
+Tal Shaked, Stephen Soderland, Daniel S Weld, and Alexander Yates. 2004. Webscale information extraction in knowitall:(preliminary results). In Proceedings of
+the 13th international conference on World Wide Web. ACM, 100–110.
+[13] Junichi Fukumoto. 2006. Answering questions of Information Access Dialogue
+(IAD) task using ellipsis handling of follow-up questions. In Proceedings of the
+Interactive Question Answering Workshop at HLT-NAACL 2006. Association for
+Computational Linguistics, 41–48.
+[14] Junichi Fukumoto, Tatsuhiro Niwa, Makoto Itoigawa, and Megumi Matsuda.
+2004. RitsQA: List answer detection and context task with ellipses handling. In
+Working notes of the Fourth NTCIR Workshop Meeting, Okyo, Japan. 310–314.
+[15] Olivier Galibert, Gabriel Illouz, and Sophie Rosset. 2005. Ritel: an open-domain,
+human-computer dialog system. In INTERSPEECH.
+[16] Sadid A Hasan, Bo Liu, Joey Liu, Ashequl Qadir, Kathy Lee, Vivek Datla, Aaditya
+Prakash, and Oladimeji Farri. 2016. Neural Clinical Paraphrase Generation with
+Attention.
+[17] Sepp Hochreiter. 1998. The vanishing gradient problem during learning recurrent
+neural nets and problem solutions. International Journal of Uncertainty, Fuzziness
+and Knowledge-Based Systems 6, 02 (1998), 107–116.
+[18] Sepp Hochreiter and Jürgen Schmidhuber. 1997. Long short-term memory. Neural
+computation 9, 8 (1997), 1735–1780.
+[19] Kentaro Inui, Akiko Yamashita, and Yuji Matsumoto. 2003. Dialogue Management
+for Language-based Information Seeking.
+[20] Xu Jia, Efstratios Gavves, Basura Fernando, and Tinne Tuytelaars. 2015. Guiding
+the Long-Short Term Memory Model for Image Caption Generation. In ICCV.
+[21] Anjuli Kannan, Karol Kurach, Sujith Ravi, Tobias Kaufmann, Andrew Tomkins,
+Balint Miklos, Greg Corrado, László Lukács, Marina Ganea, Peter Young, and
+others. 2016. Smart Reply: Automated Response Suggestion for Email. In Proceedings of the ACM SIGKDD Conference on Knowledge Discovery and Data Mining
+(KDD), Vol. 36. 495–503.
+[22] Andrej Karpathy and Li Fei-Fei. 2015. Deep visual-semantic alignments for
+generating image descriptions. In CVPR.
+[23] Diederik Kingma and Jimmy Ba. 2014. Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980 (2014).
+[24] Natalia Konstantinova and Constantin Orasan. 2012. Interactive question answering. (2012).
+[25] Vineet Kumar and Sachindra Joshi. 2016. Non-sentential Question Resolution
+using Sequence to Sequence Learning. In COLING.
+[26] Gakuto Kurata, Bing Xiang, Bowen Zhou, and Mo Yu. 2016. Leveraging Sentencelevel Information with Encoder LSTM for Semantic Slot Filling. In EMNLP.
+[27] Steven Loria. 2014. TextBlob: simplified text processing. Secondary TextBlob:
+Simplified Text Processing (2014).
+[28] Megumi Matsuda and Jun-ichi Fukumoto. 2005. Answering Questions of IAD
+Task using Reference Resolution of Follow-up Questions.. In NTCIR. Citeseer.
+[29] Yoichi Matsuyama, Arjun Bhardwaj, Ran Zhao, Oscar Romeo, Sushma Akoju,
+and Justine Cassell. 2016. Socially-Aware Animated Intelligent Personal Assistant
+Agent. In SIGDIAL Conference.
+[30] Jason Merchant. 2001. The syntax of silence: Sluicing, islands, and the theory of
+ellipsis. Oxford University Press on Demand.
+[31] Tomas Mikolov, Anoop Deoras, Daniel Povey, Lukás Burget, and Jan Cernocký.
+2011. Strategies for training large scale neural network language models. In
+ASRU.
+[32] Tomas Mikolov, Martin Karafiát, Lukás Burget, Jan Cernocký, and Sanjeev Khudanpur. 2010. Recurrent neural network based language model. In INTERSPEECH.
+[33] Karen L. Myers, Pauline M. Berry, Jim Blythe, Ken Conley, Melinda T. Gervasio, Deborah L. McGuinness, David N. Morley, Avi Pfeffer, Martha E. Pollack,
+and Milind Tambe. 2007. An Intelligent Personal Assistant for Task and Time
+Management. AI Magazine 28 (2007), 47–61.
+[34] Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. 2002. BLEU: a
+method for automatic evaluation of machine translation. In Proceedings of the
+40th annual meeting on association for computational linguistics. Association for
+Computational Linguistics, 311–318.
+[35] Razvan Pascanu, Tomas Mikolov, and Yoshua Bengio. 2013. On the difficulty of
+training recurrent neural networks. ICML (3) 28 (2013), 1310–1318.
+
+714
+
+

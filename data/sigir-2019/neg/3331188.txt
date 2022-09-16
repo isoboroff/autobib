@@ -1,0 +1,1563 @@
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Relational Collaborative Filtering:
+Modeling Multiple Item Relations for Recommendation
+Xin Xin
+
+Xiangnan He
+
+Yongfeng Zhang
+
+School of Computing Science
+University of Glasgow
+x.xin.1@research.gla.ac.uk
+
+School of Information Science and
+Technology, USTC
+xiangnanhe@gmail.com
+
+Department of Computer Science
+Rutgers University
+yongfeng.zhang@rutgers.edu
+
+Yongdong Zhang
+
+Joemon Jose
+
+School of Information Science and
+Technology, USTC
+zhyd73@ustc.edu.cn
+
+School of Computing Science
+University of Glasgow
+Joemon.Jose@glasgow.ac.uk
+
+ABSTRACT
+
+KEYWORDS
+
+Existing item-based collaborative filtering (ICF) methods leverage
+only the relation of collaborative similarity — i.e., the item similarity
+evidenced by user interactions like ratings and purchases. Nevertheless, there exist multiple relations between items in real-world
+scenarios, e.g., two movies share the same director, two products
+complement with each other, etc. Distinct from the collaborative
+similarity that implies co-interact patterns from the user’s perspective, these relations reveal fine-grained knowledge on items
+from different perspectives of meta-data, functionality, etc. However, how to incorporate multiple item relations is less explored in
+recommendation research.
+In this work, we propose Relational Collaborative Filtering (RCF)
+to exploit multiple item relations in recommender systems. We find
+that both the relation type (e.g., shared director) and the relation
+value (e.g., Steven Spielberg) are crucial in inferring user preference. To this end, we develop a two-level hierarchical attention
+mechanism to model user preference — the first-level attention
+discriminates which types of relations are more important, and
+the second-level attention considers the specific relation values to
+estimate the contribution of a historical item. To make the item embeddings be reflective of the relational structure between items, we
+further formulate a task to preserve the item relations, and jointly
+train it with user preference modeling. Empirical results on two
+real datasets demonstrate the strong performance of RCF1 . Furthermore, we also conduct qualitative analyses to show the benefits of
+explanations brought by RCF’s modeling of multiple item relations.
+
+Collaborative Filtering, Attention Mechanism, Relation Learning
+ACM Reference Format:
+Xin Xin, Xiangnan He, Yongfeng Zhang, Yongdong Zhang, and Joemon Jose.
+2019. Relational Collaborative Filtering: Modeling Multiple Item Relations
+for Recommendation. In Proceedings of the 42nd International ACM SIGIR
+Conference on Research and Development in Information Retrieval (SIGIR
+’19), July 21–25, 2019, Paris, France. ACM, New York, NY, USA, 10 pages.
+https://doi.org/10.1145/3331184.3331188
+
+1
+
+CCS CONCEPTS
+• Information systems → Recommender systems; Retrieval
+models and ranking; Novelty in information retrieval.
+1 Codes
+
+INTRODUCTION
+
+Recommender system has been widely deployed in Web applications to address the information overload issue, such as E-commerce
+platforms, news portals, lifestyle apps, etc. It not only can facilitate
+the information-seeking process of users, but also can increase the
+traffic and bring profits to the service provider [1]. Among the various recommendation methods, item-based collaborative filtering
+(ICF) stands out owing to its interpretability and effectiveness [16,
+20], being highly preferred in industrial applications [8, 10, 32]. The
+key assumption of ICF is that a user shall prefer the items that are
+similar to her historically interacted items [31, 39, 45]. The similarity is typically judged from user interactions — how likely two
+items are co-interacted by users in the past.
+Despite prevalence and effectiveness, we argue that existing ICF
+methods are insufficient, since they only consider the collaborative
+similarity relation, which is macro-level, coarse-grained and lacks
+of concrete semantics. In real-world applications, there typically
+exist multiple relations between items that have concrete semantics,
+and they are particularly helpful to understand user behaviors.
+For example, in the movie domain, some movies may share the
+same director, actors, or other attributes; in E-commerce, some
+products may have the same functionality, similar image, etc. These
+relations reflect the similarity of items from different perspectives,
+and more importantly, they could affect the decisions of different
+users differently. For example, after two users (u1 and u2) watch
+the same movie “E.T. the Extra-Terrestrial”, u1 likes the director
+and chooses “Schindler’s List” to watch next, while u2 likes the
+fiction theme and watches “The Avenger” in the next. Without
+explicitly modeling such micro-level and fine-grained relations
+between items, it is conceptually difficult to reveal the true reasons
+behind a user’s decision, not to mention to recommend desired items
+with persuasive explanations like “The Avenger” is recommended to
+
+are available at https://github.com/XinGla/RCF.
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+SIGIR ’19, July 21–25, 2019, Paris, France
+© 2019 Association for Computing Machinery.
+ACM ISBN 978-1-4503-6172-9/19/07. . . $15.00
+https://doi.org/10.1145/3331184.3331188
+
+125
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+interacted items to obtain the user’s representation. Furthermore,
+to enhance the item embeddings with the multi-relational data, we
+formulate another learning task that preserves the item relations
+with embedding operations. Finally, we jointly optimize the two
+tasks to make maximum usage of multiple relations between items.
+To summarize, this work makes the key contributions as follows:
+• We propose a new and general recommendation task, that is,
+incorporating the multiple relations between items to better
+predict user preference.
+• We devise a new method RCF, which leverages the relations
+in two ways: constructing user embeddings by improved
+modeling of historically interacted items, and enhancing
+item embeddings by preserving the relational structure.
+• We conduct experiments on two datasets to validate our
+proposal. Quantitative results show RCF outperforms several recently proposed methods, and qualitative analyses
+demonstrate the recommendation explanations of RCF with
+multiple item relations.
+
+Figure 1: An example of multiple item relations. Each relation is described with a two-level hierarchy of type and
+value. Multiple relations may exist between two items and
+the same value may occur in relations of different types.
+you because it is a fiction movie like “E.T. the Extra-Terrestrial” you
+watched before for the user u2.
+In this paper, we propose a novel ICF framework Relational
+Collaborative Filtering (RCF), aiming to integrate multiple item
+relations for better recommendation. To retain the fine-grained semantics of a relation and facilitate the reasoning on user preference,
+we represent a relation as a concept with a two-level hierarchy:
+
+2
+
+METHODOLOGY
+
+We first introduce the problem of using multiple item relations for
+CF, and then elaborate our proposed RCF method.
+
+2.1
+
+Problem Formulation
+
+Given a user and his interaction history, conventional ICF methods
+aim at generating recommendations based on the collaborative similarity which encode the co-interact patterns of items. Its interaction
+graph can be shown as the left part of Figure 2, where the links
+between items are just the implicit collaborative similarity. However, there are multiple item relations in the real world which have
+meaningful semantics. In this work, we define the item relations as:
+
+(1) Relation type, which can be shared director and genre in the
+above movie example, or functionality and visually similar for
+E-commerce products. It describes how items are related with
+each other in an abstract way. The collaborative similarity is
+also a relation type from the macro view of user behaviors.
+(2) Relation value, which gives details on the shared relation of two
+items. For example, the value of relation shared director for “E.T.
+the Extra-Terrestrial” and “Schindler’s List” is Steven Spielberg,
+and the values for relation shared genre include fiction, action,
+romantic, etc. The relation values provide important clues for
+scrutinizing a user’s preference, since a user could weigh different values of a relation type differently when making decisions.
+
+Definition 2.1. Given an item pair (i, j), the relations between
+them are defined as a set of r =< t, v > where t denotes the relation
+type and v is the relation value.
+The target of RCF is to generate recommendations based on
+both the user-item interaction history and item relational data.
+Generally speaking, the links between items in the interaction graph
+of RCF contain not only the implicit collaborative similarity, but
+also the explicit multiple item relations, which are represented by
+the heterogeneous edges in the right part of Figure 2. Our notations
+are summarized in Table 1.
+
+Figure 1 gives an illustrative example on the item relations. Note
+that multiple relations may exist between two items; for example,
+badminton birdies balls and badminton rackets have two relations
+of complementary functionality and shared category. Moreover, a
+relation value may occur in multiple relations of different types; for
+example, a director can also be the leading actor of other movies,
+thus it is likely that two types of relations have the same value
+which refers to the same stuff. When designing a method to handle
+multiple item relations, these factors should be taken into account,
+making the problem more complicated than the standard ICF.
+To integrate such relational data into ICF, we devise a two-level
+neural attention mechanism [3] to model the historically interacted
+items. Specifically, to predict a user’s preference on a target item,
+the first-level attention examines the types of the relations that
+connect the interacted items with the target item, and discriminates
+which types affect more on the user. The second-level attention is
+operated on the interacted items under each relation type, so as to
+estimate the contribution of an interacted item in recommending
+the target item. The two-level attention outputs a weight for each
+interacted item, which is used to aggregate the embeddings of all
+
+In the remainder of this section, we first present the attention-based
+model to infer user-item preference. We then illustrate how to
+model the item relational data to introduce the relational structure
+between item embeddings. Based on that, we propose to integrate
+the two parts in an end-to-end fashion through a multi-task learning
+framework. Finally, we provide a discussion on the relationship
+between RCF and some other models.
+
+2.2
+
+User-Item Preference Modeling
+
+An intuitive motivation when modeling user preference is that
+users tend to pay different weights to relations of different types
+(e.g., some users may prefer movies which share same actors, some
+users may prefer movies fall into same genres). Given multiple
+item relations which consist of relation types and relation values,
+
+126
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Figure 2: Comparison between ICF and RCF. The links between items of ICF are implicit and single, which denote the
+collaborative similarity. However, the links between items
+of RCF are explicit and multiple.
+Notation
+U, I
+T
+V
+Iu+
+t
+Iu,i
+Ir (i, j)
+pu ∈ Rd
+qi ∈ Rd
+xt ∈ Rd
+zv ∈ Rd
+
+Table 1: Notations
+Description
+Figure 3: Illustration of the proposed recommendation
+model. The target-aware user embedding (mu,i ) is modeled
+with a two-level hierarchy attention mechanism. The input
+of the first level attention contains the user ID embedding
+and relation types. The second level attention is used to
+calculate the weights of specific historical items. There are
+three inputs during this state, including the target item, the
+historical item and the relation value. Note that one histort when there are
+ical item (e.g., i 1 ) can occur in different Iu,i
+multiple relations between it and the target item.
+
+the set of users and items
+the set of relation types
+the set of relation values
+the item set which user u has interacted with
+the items in Iu+ that have the relation of type t with
+the target item i
+an indicator function where Ir (i, j) = 1 if relation r
+holds for item i and j, otherwise 0
+the ID embedding for user u ∈ U, which represents
+the user’s inherent interests
+the embedding for item i ∈ I
+the embedding for relation type t ∈ T
+the embedding for relation value v ∈ V
+
+where a(pu , xt ) is the attention score between user u and relation
+type t. We define it with a feedforward neural network, as shown
+in Eq.(3)
+a(pu , xt ) = hT1 (ReLU (W1 (pu ⊗ xt ) + b1 )).
+
+we propose to use a hierarchy attention mechanism to model the
+user preference. Figure 3 demonstrates the overall structure of our
+model.
+Given the item relational data, we first divide the interacted
+t ) according to
+items of user u (i.e., Iu+ ) into different sets (i.e., Iu,i
+the relation types between these items and the target item. Note that
+t when there are multiple
+a single item may occur in different Iu,i
+relations between this item and i. Besides, there may be some items
+which have no explicit relation with the target item. To tackle with
+these items, we introduce a latent relation r 0 =< t 0 , v 0 > and put
+t0
+these items into Iu,i
+, as shown in Figure 3. Here r 0 can be regarded
+as the collaborative similarity which just indicates the item cointeract patterns. Then the target-aware user embedding can be
+formulated as
+Õ
+t
+mu,i = pu +
+α(u, t) · su,i
+,
+(1)
+
+(3)
+
+W1 and b1 are corresponding weight matrix and bias vector that
+project the input into a hidden state, and hT1 is the vector which
+projects the hidden state into the attention score. We term the
+size of hidden state as “attention factor”, for which a larger value
+brings a stronger representation power for the attention network.
+⊗ denotes the element-wise product.
+t . It’s obvious that the relation value
+The next step is to model su,i
+accounts for an important part during this process. For example, a
+user may pay attention to genres when watching a movie. However,
+among all the genres, he is most interested in fiction other than
+romantic. As a result, we should consider both the items and the
+corresponding relation values when modeling the second-level
+t as
+attentions. From that view, we define su,i
+Õ
+t
+su,i
+=
+βt (i, j, v) · qj ,
+(4)
+
+t ∈T
+
+where α(u, t) is the first-level attention which aims to calculate the
+t describes
+importance of different relation types for this user and su,i
+t . More precisely, we
+the user’s profile based on the items in Iu,i
+define α(u, t) with the standard so f tmax function:
+exp(a(pu , xt ))
+α(u, t) = Í
+,
+(2)
+t ′ ∈ T exp(a(pu , xt ′ ))
+
+t
+j ∈Iu,i
+
+where βt (i, j, v) represents the specific weight of item j.
+Similar to Eq.(2), a straight-forward solution to calculate βt (i, j, v)
+is to use the so f tmax function. However we found that such a simple solution would lead to bad performance. Same observations can
+also be found in [16] under similar circumstances. The reason is
+
+127
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+t vary greatly. For
+that the number of items between different Iu,i
+t
+those items in large Iu,i , the standard so f tmax function will have
+very big denominator, causing the gradient vanishing problem of
+corresponding qj .
+To tackle with this problem, we utilize a smoothed so f tmax
+function to replace the standard solution. As a result, the weight
+βt (i, j, v) is formulated as
+
+exp(bt (qi , qj , zv ))
+,
+βt (i, j, v) = Í
+[ j ′ ∈I t exp(bt (qi , qj ′ , zv ′ ]ρ
+
+(1) The item relation is defined with a two-level hierarchy: relation type and relation value. As shown in Figure 1, the relation between “E.T. the Extra-Terrestrial” and “The Avenger”
+is described as <shared genre,fiction>. To represent this relation properly, we must consider both the first-level (i.e., shared
+genre) for type constrains and the second-level (i.e., fiction) for
+model fidelity. As a result, we can not assign a single embedding
+for an item relation r =< t, v >, which is a common case in the
+field of KGE [4, 25, 46].
+(2) Different from the conventional KG which is represented as a
+directed graph, the item relations are reversible (i.e., the relation r holds for both (e 1 , e 2 ) and (e 2 , e 1 )), resulting in an undirected graph structure. Traditional KGE methods [4, 25] may
+encounter difficulties under such situations. For example, the
+most popular TransE [4] models the relation between two entities as a translation operation between their embeddings, that is,
+e1 + r ≈ e2 when (e 1 , r, e 2 ) holds, where e1 , r, e2 are corresponding embeddings for head entity, relation and tail entity. Based
+on that, TransE defines the scoring function for this triplet as
+f (e 1 , r , e 2 ) = ∥e1 + r − e2 ∥2 where ∥ · ∥2 denotes the L 2 norm
+of a vector. However, because of the undirected structure, we
+will get both e1 + r ≈ e2 and e2 + r ≈ e1 on our item relational
+data. Optimizing objective functions based on such equations
+may lead to a trivial solution that r ≈ 0 and e1 ≈ e2 .
+
+(5)
+
+u,i
+
+where ρ is a smoothing factor between (0,1] and is commonly set
+as 0.5 [16]. bt (qi , qj , zv ) is the second-level attention score which
+is defined as
+ qi 
+ 
+bt (qi , qj , zv ) = hT2,t (ReLU (W2,t  qj  + b2,t )),
+(6)
+zv 
+ 
+where [·] denotes the vector concatenation. W2,t , b2,t and h2,t are
+corresponding attention parameters. Different from Eq.(3) which
+utilizes element-wise product to learn signals from inputs, here we
+concatenate the input embeddings and send it to a feedforward
+neural netwrok. The reason is that there are three inputs when
+modeling the second-level attentions. Utilizing element-wise product under such situation would have a high risk of suffering from
+vanishing or exploding gradients.
+Now we have completed the modeling of the target-aware user
+embedding mu,i . Based on that, we utilize a multilayer perceptron
+(MLP) to calculate the final predicted score of user u on item i,
+which is shown as:2
+ŷui = MLP(mu,i ⊗ qi ),
+
+To tackle with the first challenge, we use the summation of
+the two-level hierarchy components as relation embeddings. More
+precisely, the representation of a specific relation r =< t, v > is
+formulated as the following equation:
+r = xt + zv .
+
+(7)
+
+By doing so, we can make sure that relations with the same type
+keep similar with each other in some degree. Meanwhile, the model
+fidelity is also guaranteed because of the value embedding. It also
+empowers the model with the ability to tackle the situation that
+same values occur in relations of different types.
+To address the second challenge, we find that the source of
+the trivial solution is the minus operation in TransE, which only
+suits for directed structures. To model undirected graphs, we need
+the model which satisfies the commutative law (i.e., f (e 1 , r, e 2 ) =
+f (e 2 , r , e 1 )). Another state-of-the-art methods of KGE is DistMult
+[46]. It defines the scoring function as f (e 1 , r , e 2 ) = eT1 Mr e2 , where
+Mr is a matrix representation of r . It’s obvious that DistMult is based
+on the multiply operation and satisfies the desired commutative
+property. Based on that, given a triplet (i, r , j) which means item i
+and j has relation r , we define the scoring function for this triplet
+as
+f (i, r , j) = qTi · diaд(r) · qj .
+(11)
+
+Given the final predicted score ŷui , we want the positive items to
+have a higher rank than negative ones. We utilize the BPR pairwise
+learning framework [30] to define the objective function, which is
+shown as
+Õ
+ln σ (ŷui − ŷuk ),
+(8)
+Lr ec = −
+(u,i,k )∈ DI
+
+where σ denotes the sigmoid function and DI is the set of training
+triplets:
+
+DI = (u, i, k)|u ∈ U ∧ i ∈ Iu+ ∧ k ∈ I\Iu+ .
+(9)
+
+2.3
+
+(10)
+
+Item-Item Relational Data Modeling
+
+The second task of RCF is to model the item relational data. Typically, the relational data is organized as knowledge graphs (KG).
+A knowledge graph is a directed heterogeneous graph in which
+nodes correspond to entities and edges correspond to relations. It
+can be represented by a set of triplets (e 1 , r, e 2 ) where e 1 denotes
+the head entity, r is the relation and e 2 represents the tail entity.
+Knowledge graph embedding (KGE) is a popular approach to learn
+signals from relational data which aims at embedding a knowledge
+graph into a continuous vector space.
+However, directly using techniques from KGE [4, 25, 46] to model
+the item relations of RCF is infeasible due to the following challenges in our specific domain:
+
+Here diaд(r) denotes a diagonal matrix whose diagonal elements
+equal to r correspondingly.
+Similar to the BPR loss used in the recommendation part, we
+want to maximize f (i, r , j) for positive examples and minimize it for
+negative ones. Based on that, the objective function is defined by
+contrasting the scores of observed triplets (i, r , j) versus unobserved
+ones (i, r, j − ):
+Õ
+Lr el = −
+ln σ (f (i, r , j) − f (i, r , j − )),
+(12)
+
+2 We introduce a dropout layer [33] before each layer of the MLP to prevent overfitting.
+
+(i,r, j, j − )∈ DR
+
+128
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+where DR is defined as
+−
+
+−
+
+2.5.1 Conventional collaborative filtering. RCF extends the item
+relations from the collaborative similarity to multiple and semantically meaningful relations. It can easily generalize the conventional
+CF methods. If we downgrade the MLP in Eq.(7) to inner product
+and only consider one item relation (i.e., the collaborative similarity), we can get the following predicted score:
+
+−
+
+DR = {(i, r, j, j )|i, j, j ∈ I ∧ Ir (i, j) = 1 ∧ Ir (i, j ) = 0 ∧ r , r 0 } .
+(13)
+The above objective function encourages the positive item j to be
+ranked higher than negative items j − given the context of the head
+item i and relation r . Because r 0 is defined as a latent relation so
+we don’t include it during this process.
+
+2.4
+
+© Õ
+ª
+ŷui = pTu qi + qTi ­
+β(i, j) · qj ®,
+|{z}
+«j ∈Iu+ \{i }
+¬
+MF
+|
+{z
+}
+
+Multi-Task Learning
+
+To effectively learn parameters for recommendation, as well as
+preserve the relational structure between item embeddings, we
+integrate the recommendation part (i.e., Lr ec ) and the relation modeling part (i.e., Lr el ) in an end-to-end fashion through a multi-task
+learning framework. The total objective function of RCF is defined
+as
+min L = Lr ec + γ Lr el ,
+
+NAIS
+
+which can be regarded as en ensemble of matrix factorization (MF)
+[23] and the item-based NAIS model [20]. In fact, compared with
+conventional CF methods, RCF captures item relations in an explicit
+and fine-grained level, and thus enjoys much more expressiveness
+to model user preference.
+
+Θ
+
+s.t .
+
+∥pu ∥2 ≤ 1, ∥qi ∥2 ≤ 1, ∥xt ∥2 ≤ 1, ∥zv ∥2 ≤ 1
+
+2.5.2 Knowledge graph enhanced recommendation. Recently, incorporating KG as an additional data source to enhance recommendation has become a hot research topic. These works can be
+categorized into embedding-based methods and path-based methods. Embedding-based methods [5, 18, 38, 47] utilize KG to guide
+the representation learning. However, the central part of ICF is the
+item similarity and none of these methods is designed to explicitly
+model it. On the contrary, RCF aims at directly modeling the item
+similarity from both the collaborative perspective and the multiple
+concrete relations. Path-based methods [2, 17, 34, 37, 40] first construct paths to connect users and items, then the recommendation
+is generated by reasoning over these paths. However, constructing
+paths between users and items isn’t a scalable approach when the
+number of users and items are very large. Under such situation,
+sampling [2, 37] and pruning [34, 40] must be involved. However,
+RCF is free from this problem. Besides, the recommendation model
+of RCF is totally different from the path-based methods.
+
+(14)
+
+∀u ∈ U, i ∈ I, t ∈ T, v ∈ V
+where Θ is the total parameter space, including all embeddings and
+variables of attention networks. It’s obvious that both Lr ec and Lr el
+can be decreased by simply scaling up the norm of corresponding
+embeddings. To avoid this problem during the training process, we
+explicitly constrain the embeddings to fall into a unit vector space.
+This constraint differs from traditional L 2 regularization which
+pushes parameters to the origin. It has been shown to be effective
+in both fields of KGE [4, 25] and recommendation [13, 22, 35]. The
+training procedure of RCF is illustrated in Algorithm 1.
+Algorithm 1 Learning algorithm for RCF
+Input: user-item interaction data DI , item relationl data DR , learning rate η, smoothing factor ρ, γ
+Output: all parameters in the learning space Θ
+1: Initialize all parameters in Θ
+2: repeat
+3:
+Draw a mini-batch of (u, i, k) from DI
+4:
+Draw a mini-batch of (i, r , j, j − ) from DR
+5:
+Compute Lr ec according to Eq.(1)-(9)
+6:
+Compute Lr el according to Eq.(10)-(13)
+7:
+L ← Lr ec + γ Lr el
+8:
+for each parameter ϑ ∈ Θ do
+9:
+Compute ∂L/∂ϑ on the mini-batch by back-propagation
+10:
+Update ϑ ← ϑ − η · ∂L/∂ϑ
+11:
+end for
+12:
+for θ ∈ {pu , qi , xt , zv } do
+13:
+θ ← θ /max(1, ∥θ ∥2 )
+14:
+end for
+15: until converge
+16: return all parameters in Θ
+
+2.5
+
+(15)
+
+2.5.3 Relation-aware recommendation. MCF [28] proposed to utilize the “also-viewed” relation to enhance rating prediction. However, the “also-viewed” relation is just a special case of the item
+co-interact patterns and thus still belongs to the collaborative similarity. Another work which considers heterogeneous item relations
+is MoHR [22]. But it only suits for the sequential recommendation.
+The idea of MoHR is to predict both the next item and the next relation. The major drawback of MoHR is that it can only consider the
+relation between the last item of Iu+ and the target item. As a result,
+it fails to capture the long-term dependencies. On the contrary, RCF
+models the user preference based on all items in Iu+ . The attention
+mechanism empowers RCF to be effective when capturing both
+long-term and short-term dependencies.
+
+3
+
+EXPERIMENTS
+
+In this section, we conduct experiments on two real-world datasets
+to evaluate the proposed RCF model. We aim to answer the following research questions:
+RQ1: Compared with state-of-the-art recommendation models,
+how does RCF perform?
+RQ2: How do the multiple item relations affect the model performance?
+
+Discussion
+
+Here we examine three types of related recommendation models
+and discuss the relationship between RCF and them.
+
+129
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Table 2: Dataset statistics.
+Dataset
+
+MovieLens
+
+KKBox
+
+943
+1,682
+100,000
+
+24,613
+61,877
+2,170,690
+
+4
+5,126
+924,759
+
+5
+42,532
+70,237,773
+
+#users
+User-Item
+#items
+Interactions
+#interactions
+Item-Item
+Relations
+
+#types
+#values
+#triplets
+
+The recommendation quality is measured by three metrics: hit
+ratio (HR), mean reciprocal rank (MRR) and normalized discounted
+cumulative gain (NDCG). HR@k is a recall-based metric, measuring
+whether the test item is in the top-k positions of the recommendation list (1 for yes and 0 otherwise). MRR@k and NDCG@k are
+weighted versions which assign higher scores to the top-ranked
+items in the recommendation list [19].
+3.1.3 Compared methods. We compare the performance of the
+proposed RCF with the following baselines:
+• MF [30]: This is the standard matrix factorization which
+models the user preference with inner product between user
+and item embeddings.
+• FISM [20]: This is a state-of-the-art ICF model which characterizes the user with the mean aggregation of the embeddings
+of his interacted items.
+• NAIS [16]: This method enhances FISM through a neural
+attention network. It replaces the mean aggregation of FISM
+with an attention-based summation.
+• FM [29]: Factorization machine is a feature-based baseline
+which models the user preference with feature interactions.
+Here we treat the auxiliary information of both datasets as
+additional input features.
+• NFM [14]: Neural factorization machine improves FM by
+utilizing a MLP to model the high-order feature interactions.
+• CKE [47]: This is an embedding-based KG-enhanced recommendation method, which integrates the item embeddings
+from MF and TransR [25].
+• MoHR [22]: This method is a state-of-the-art relation-aware
+CF method. We only report its results on the MovieLens
+dataset because it’s designed for sequential recommendation
+and the KKBox dataset contains no timestamp information.
+
+RQ3: How does RCF help to comprehend the user behaviour?
+Can it generate more convincing recommendation?
+In the following parts, we will first present the experimental
+settings and then answer the above research questions one by one.
+
+3.1
+
+Experimental Settings
+
+3.1.1 Datasets. We perform experiments with two publicly accessible datasets: MovieLens3 and KKBox4 , corresponding to movie
+and music recommendation, respectively. Table 2 summarizes the
+statistics of the two datasets.
+1. MovieLens. This is the stable benchmark published by GroupLens [12], which contains 943 users and 1,682 movies. We binarize
+the original user ratings to convert the dataset into implicit feedback. To introduce item relations, we combine it with the IMBD
+dataset5 . The two datasets are linked by the titles and release dates
+of movies. The relation types of this data contains genres6 , directors,
+actors, and t 0 , which is the relation type of the latent relation.
+2. KKBox. This dataset is adopted from the WSDM Cup 2018
+Challenge7 and is provided by the music streaming service KKBox.
+Besides the user-item interaction data, this dataset also contains
+description of music, which can help us to introduce the item relations. We process this dataset by removing the songs that have
+missing description. The final version contains 24,613 users, 61,877
+items and 2,170,690 interactions. The relation types of this dataset
+contain genre, artist, composer, lyricist, and t 0 .
+
+3.1.4 Parameter settings. To fairly compare the performance of
+models, we train all of them by optimizing the BPR loss (i.e.,Eq(8))
+with mini-batch Ada-grad [9]. The learning rate is set as 0.05 and
+the batch size is set as 512. The embedding size is set as 64 for
+all models. For all the baselines, the L 2 regularization coefficients
+are tuned between [1e −5 , 1e −4 , 1e −3 , 0]. For FISM, NAIS and RCF,
+the smoothing factor ρ is set as 0.5. We pre-train NAIS with 100
+iterations of FISM. For the attention-based RCF and NAIS, the
+attention factor is set as 32. Regarding NFM, we use FM embeddings
+with 100 iterations as pre-training vectors. The number of MLP
+layers is set as 1 with 64 neurons, which is the recommended setting
+of their original paper [14]. The dropout ratio is tuned between
+[0, 0.1, ···, 0.9]. For the MLP of RCF, we adopt the same settings with
+NFM to guarantee a fair comparison. For MoHR, we set the multitask learning weights as 1 and 0.1 according to their original paper
+[22]. For RCF, we find that it achieves satisfactory performance
+when γ = 0.01. We report the results under this setting if there is
+no special mention.
+
+3.1.2 Evaluation protocols. To evaluate the performance of item
+recommendation, we adopt the leave-one-out evaluation, which
+has been widely used in literature [6, 16, 20]. More precisely, for
+each user in MovieLens, we leave his latest two interactions for
+validation and test and utilize the remaining data for training. For
+the KKBox dataset, because of the lack of timestamps, we randomly
+hold out two interactions for each user as the test example and the
+validation example and keep the remaining for training. Because the
+number of items is large in this dataset, it’s too time consuming to
+rank all items for every user. To evaluate the results more efficiently,
+we randomly sample 999 items which have no interaction with the
+target user and rank the validation and test items with respect to
+these 999 items. This has been widely used in many other works
+[6, 16, 35, 40].
+
+3.2
+
+3 https://grouplens.org/datasets/movielens/
+4 https://www.kaggle.com/c/kkbox-music-recommendation-challenge/data
+
+Model Comparison (RQ1)
+
+Table 3 demonstrates the comparison between all methods when
+generating top-k recommendation. It’s obvious that the proposed
+RCF achieves the best performance among all methods on both
+datasets regarding to all different top-k values.
+
+5 https://www.imdb.com/interfaces/
+6 Here, genres means that two movies share at least one same genre, as shown in Figure
+1. Same definition also suits for the following relation types.
+7 https://wsdm-cup-2018.kkbox.events/
+
+130
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Table 3: Top-k recommendation performance comparison of different models (k = 5, 10, 20). The last column RI
+denotes the relative improvement on average of RCF over the baseline. ∗ denotes the significance p-value < 0.05
+compared with the best baseline on the corresponding metric (indicated by boldface).
+MovieLens
+
+Models
+MF
+FISM
+NAIS
+FM
+NFM
+CKE
+MoHR
+RCF
+
+HR@5
+
+MRR@5
+
+NDCG@5
+
+HR@10
+
+MRR@10
+
+NDCG@10
+
+HR@20
+
+MRR@20
+
+NDCG@20
+
+RI
+
+0.0774
+0.0795
+0.0827
+0.0827
+0.0880
+0.0827
+0.0832
+0.1039∗
+
+0.0356
+0.0404
+0.0405
+0.0421
+0.0427
+0.0414
+0.0490
+0.0517∗
+
+0.0458
+0.0500
+0.0508
+0.0521
+0.0529
+0.0515
+0.0499
+0.0646∗
+
+0.1273
+0.1325
+0.1367
+0.1410
+0.1495
+0.1404
+0.1463
+0.1591∗
+
+0.0430
+0.0474
+0.0477
+0.0496
+0.0495
+0.0476
+0.0485
+0.0598∗
+
+0.0642
+0.0671
+0.0683
+0.0707
+0.0725
+0.0688
+0.0733
+0.0821∗
+
+0.2110
+0.2099
+0.2142
+0.1994
+0.2153
+0.2089
+0.2249
+0.2354∗
+
+0.0482
+0.0526
+0.0528
+0.0535
+0.0540
+0.0528
+0.0554
+0.0642∗
+
+0.0833
+0.0865
+0.0876
+0.0852
+0.0889
+0.0884
+0.0882
+0.1015∗
+
++25.2%
++20.3%
++17.9%
++18.6%
++13.4%
++15.2%
++11.2%
+
+KKBox
+
+Models
+MF
+FISM
+NAIS
+FM
+NFM
+CKE
+RCF
+
+HR@5
+
+MRR@5
+
+NDCG@5
+
+HR@10
+
+MRR@10
+
+NDCG@10
+
+HR@20
+
+MRR@20
+
+NDCG@20
+
+RI
+
+0.5575
+0.5676
+0.5862
+0.5793
+0.5973
+0.5883
+0.7158∗
+
+0.3916
+0.4084
+0.4156
+0.4064
+0.4183
+0.4191
+0.5612∗
+
+0.4329
+0.4356
+0.4409
+0.4495
+0.4630
+0.4613
+0.5999∗
+
+0.6691
+0.6866
+0.6932
+0.6949
+0.7178
+0.6930
+0.7940∗
+
+0.4065
+0.4103
+0.4153
+0.4219
+0.4432
+0.4332
+0.5718∗
+
+0.4690
+0.4844
+0.4966
+0.4869
+0.5088
+0.4952
+0.6253∗
+
+0.7686
+0.7654
+0.7810
+0.7941
+0.7768
+0.7865
+0.8563∗
+
+0.4135
+0.4258
+0.4333
+0.4288
+0.4476
+0.4397
+0.5762∗
+
+0.4942
+0.5244
+0.5315
+0.5121
+0.5244
+0.5389
+0.6412∗
+
++29.1%
++26.2%
++24.0%
++24.4%
++19.9%
++21.3%
+
+Table 4: Performance when replacing the attention
+with average summation. Avg-1 denotes the firstlevel attention (i.e.,a(u, t)) is replaced. Avg-2 means
+the second-level attention (i.e., βt (i, j, v)) is replaced.
+Avg-both denotes replacing both attentions. Dec is
+the average decrease of performance. ∗ denotes the
+statistical significance for p < 0.05.
+
+Compared with the conventional item-based FISM and NAIS
+which only consider the collaborative similarity, our RCF is based
+on the multiple and concrete item relations. We argue that this is
+the major source of the the improvement. From this perspective,
+the results demonstrate the importance of multiple item relations
+when modeling the user preference.
+Compared with the feature-based FM and NFM, RCF still achieves
+significant improvement. The reason is that although FM and NFM
+also incorporate the auxiliary information, they fail to explicitly
+model the item relations based on that data. Besides, we can also see
+that NFM achieves better overall performance than FM because it
+introduces a MLP to learn high-order interaction signals. However,
+RCF achieves higher performance under the same MLP settings,
+which confirms the effectiveness of modeling item relations.
+Compared with CKE, we can see that although CKE utilizes KG
+to guide the learning of item embeddings, it fails to directly model
+user preference based on multiple item relations, resulting in lower
+performance than RCF. Besides, we can see that although MoHR
+is also relation-aware, RCF still achieves better results than it. The
+reason is that MoHR only considers the relation between the last
+historical item and the target item, and thus fails to capture the
+long-term dependencies among the user interaction history.
+
+3.3
+
+MovieLens
+
+Models
+Avg-1
+Avg-2
+Avg-both
+RCF
+
+HR@10
+
+MRR@10
+
+NDCG@10
+
+Dec
+
+0.1478
+0.1346
+0.1294
+0.1591∗
+
+0.0556
+0.0501
+0.0495
+0.0598∗
+
+0.0746
+0.0694
+0.0684
+0.0821∗
+
+-7.6%
+-15.6%
+-17.8%
+
+KKBox
+
+Models
+Avg-1
+Avg-2
+Avg-both
+RCF
+
+HR@10
+
+MRR@10
+
+NDCG@10
+
+Dec
+
+0.7657
+0.6983
+0.6792
+0.7940∗
+
+0.5484
+0.4331
+0.4103
+0.5718∗
+
+0.5773
+0.5249
+0.4946
+0.6253∗
+
+-5.0%
+-16.8%
+-20.4%
+
+necessary to capture user preference, especially the second-level
+attention, which aims at calculating a specific weight for every
+historical item and thus largely improves the model expressiveness.
+
+Studies of Item Relations (RQ2)
+
+3.3.1 Effect of the hierarchy attention. RCF utilizes a hierarchy
+attention mechanism to model user preference. In this part, we
+conduct experiments to demonstrate the effect of the two-level attentions. Table 4 shows the results of top-10 recommendation when
+replacing the corresponding attention with average summation. It’s
+obvious that both the first-level and the second-level attentions are
+
+3.3.2 Ablation studies on relation modeling. The proposed RCF
+defines the item relations with relation types and relation values.
+To demonstrate the effectiveness of these two components, we
+
+131
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Table 5: Modification of RCF. Single denotes only considering one relation (i.e., collaborative similarity). RCFtype only considers relation types for the attention. RCFvalue only considers relation values. д denotes the attention function.
+Modification
+Single
+RCF-type
+RCF-value
+
+Í
+Eq.(1)⇒ mu,i = pu + j ∈Iu+ д(i, j) · qj
+t =Í
+t д(i, j) · q j
+Eq.(4)⇒ su,i
+j ∈Iu,i
+Í
+Eq.(1)⇒ mu,i = pu + j ∈Iu+ д(i, j, v) · qj
+
+(a) MovieLens
+
+(b) KKBox
+
+Figure 4: Effect of γ on the two datasets
+Table 6: Performance of different relation ablations
+when generating top-10 recommendation. Dec is the
+average decrease of performance. ∗ denotes the statistical significance for p < 0.05.
+MovieLens
+
+Ablations
+Single
+RCF-type
+RCF-value
+RCF
+
+HR@10
+
+MRR@10
+
+NDCG@10
+
+Dec
+
+0.1399
+0.1484
+0.1548
+0.1591∗
+
+0.0481
+0.0587
+0.0558
+0.0598∗
+
+0.0691
+0.0804
+0.0801
+0.0821∗
+
+-14.6%
+-4.5%
+-3.4%
+
+KKBox
+
+Ablations
+Single
+RCF-type
+RCF-value
+RCF
+
+through the multi-task learning framework. In this part, we conduct
+experiments to show the effect of the later.
+Figure 4 reports the results of MRR@10 and NDCG@10 when
+changing the multi-task learning weight γ 8 . It’s obvious the performance of RCF boosts when γ increases from 0 to positive values on
+both two datasets. Because γ = 0 means only the recommendation
+task (i.e., Lr ec ) is considered, we can draw a conclusion that jointly
+training Lr ec and Lr el can definitely improve the model performance. In fact, the function of Lr el is to introduce a constraint that
+if there is relation between two items, there must be an inherent
+structure among their embeddings. This constraint explicitly guides
+the learning process of both item and relation embeddings and thus
+helps to improve the model performance. We can also see that with
+the increase of γ , the performance improves first and then starts
+to decrease. Because the primary target of RCF is recommendation other than predicting item relations, we must make sure that
+Lr ec accounts the crucial part in the total loss. Actually, we can
+see from Table 2 that the number of item-item relational triplets is
+much larger than the number of user-item interactions, leading to
+situation that γ is commonly set as a small value.
+
+HR@10
+
+MRR@10
+
+NDCG@10
+
+Dec
+
+0.6923
+0.7523
+0.7708
+0.7940∗
+
+0.4666
+0.5431
+0.5579
+0.5718∗
+
+0.5207
+0.5723
+0.5867
+0.6253∗
+
+-15.7%
+-6.2%
+-3.8%
+
+modify the proposed RCF by masking the corresponding parts.
+Table 5 shows the detail of the masked models. Table 6 reports the
+performance when masking different relation components. We can
+draw the following conclusions from this table.
+
+3.4
+
+Qualitative Analyses (RQ3)
+
+In this part, we conduct qualitative analyses to show how RCF helps
+us to comprehend user behaviors and generate more convincing
+recommendation.
+
+(1) RCF-type achieves better performance than the single model,
+demonstrating the importance of relation types. Generally speaking, the type component describes item relations in an abstract
+level. It helps to model the users’ preference on a class of items
+which share particular similarity in some macro perspectives.
+(2) The performance of RCF-value is also better than the single
+model. This finding verifies the effectiveness of relation values,
+which describe the relation between two specific items in a
+much fine-grained level. The relation value increases the model
+fidelity and expressiveness largely through capturing the user
+preference from micro perspective.
+(3) RCF achieves the best performance. It demonstrates that both
+relation types and relation values are necessary to model the
+user preference. Moreover, it also confirms the effectiveness of
+the proposed two-level attention mechanism to tackle with the
+hierarchical item relations.
+
+3.4.1 Users as a whole. Figure 5 illustrates the average a(u, t) for
+all u ∈ U on the two datasets. We can see that on the MovieLens
+dataset, the largest a(u, t) falls into genre, which means that users
+tend to watch movies that share same genres. The second position is
+actor. This finding is in concert with the common sense that genres
+and actors are the most two important elements that affect the users’
+choices on movies. Director is in the third position. Moreover, we
+can see that all these three relation types are more important than t 0 ,
+which denotes the collaborative similarity. It further confirms that
+only considering collaborative similarity is not enough to model
+user preference. Multiple and fine-grained item relations should be
+involved to generate better recommendation.
+For the music domain, we can see that the most important relation type falls into artist. Following that are comp. (short for
+composer) and lyri. (short for lyricist). They are the most three
+important factors that affect users when listening to music. Besides, compared with the movie domain, the attention a(u, t 0 ) in
+
+3.3.3 Effect of multi-task learning. RCF utilizes the item relational
+data in two ways: constructing the target-aware user embeddings
+and introducing the relational structure between item embeddings
+
+8 Results
+
+132
+
+of HR@10 show similar trends and are omitted due to the reason of space.
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+the music domain is much smaller. It indicates that user behaviour
+patterns when listening to music are more explicit than the ones
+when watching movies. As a result, our proposed RCF achieves
+bigger improvement on the KKBox dataset, as shown in Table 3.
+3.4.2 Invididual case studies. We randomly select a user u54 in the
+MovieLens dataset to see how RCF helps us to comprehend the
+individual user behavior. Figure 6 shows the attention visualization
+of this user. We can see that this user pays the most attention (0.4003)
+on the relation type “shared genres” when watching movies. Among
+the second-level relation values, he is most interested in “crime”
+(0.4477) and “sci-fic” (0.3928). Based on his historical interacted
+movies “Breakdown” and “The Fifth Element”, the recommended
+movie is “Face/Off”. From this perspective, we can also generate the
+explanation as “Face/Off” is recommended to you because it is a crime
+movie like “Breakdown” you have watched before. It’s obvious that a
+side benefit of RCF is that it can generate reasonable explanations
+for recommendation results.
+
+(a) MovieLens
+
+(b) KKBox
+
+Figure 5: Average a(u, t) on two datasets. a(u, t) denotes the
+user u’s attention on the relation type t.
+
+4 RELATED WORK
+4.1 Item-based Collaborative Filtering
+The idea of ICF is that the user preference on a target item i can be
+inferred from the similarity of i to all items the user has interacted
+in the past [16, 20, 26, 31]. Under this case, the relation between
+items is referred as the collaborative similarity, which measures the
+co-occurrence in the user interaction history. A popular approach
+of ICF is FISM [20], which characterizes the user representation
+as the mean aggregation of item embeddings which occur in his
+interaction history. Plenty of work has been done following this
+research line, such as incorporating user information [11, 43], neural
+network-enhanced approaches [15, 16, 41] and involving local latent
+space [7, 24].
+Although these methods has improved the performance of ICF,
+all of them are based solely on the collaborative similarity between
+items. This item relation is coarse-grained and lacks of semantic
+meaning, introducing the bottleneck of the model and the difficulty
+of generating convincing results.
+
+4.2
+
+Figure 6: Attention visualization of user u54 in MovieLens.
+
+5
+
+CONCLUSION
+
+In this work, we proposed a novel ICF framework namely RCF
+to model the multiple item relations for better recommendation.
+RCF extends the item relations of ICF from collaborative similarity to fine-grained and concrete relations. We found that both the
+relation type and the relation value are crucial for capturing user
+preference. Based on that, we proposed to utilize a hierarchy attention mechanism to construct user representations. Besides, to
+maximize the usage of relational data, we further defined another
+task which aims to preserve the relational structure between item
+embeddings. We jointly optimize it with the recommendation task
+in an end-to-end fashion through a multi-task learning framework.
+Extensive experiments on two real-world datasets show that RCF
+achieves significantly improvement over state-of-the-art baselines.
+Moreover, RCF also provides us an approach to better comprehend
+user behaviors and generate more convincing recommendation.
+Future work includes deploying RCF on datasts with more complex item relations. Besides, we also want to extend RCF to empower
+it with the ability to tackle with not only the static item relations
+but also the dynamic user relations. Another promising direction is
+how to utilize item relations to develop adaptive samplers for the
+pair-wise ranking framework.
+
+Attention Mechanism
+
+The attention mechanism has become very popular in fields of
+computer vision [27, 44] and natural language processing [3, 36]
+because of its good performance and interpretability for deep learning models. The key insight of attention is that human tends to
+pay different weights to different parts of the whole perception
+space. Based on this motivation, [16] improved FISM by replacing
+the mean aggregation with attention-based summation. [6] proposed to utilize the attention mechanism to generate multimedia
+recommendation. [21] exploited self-attention for sequential recommendation. There are many other works focusing on involving
+attention mechanism for better recommendation [35, 42]. However,
+all of them fail to model the multiple item relations. In fact, users
+tend to pay different weights on different item relations and it’s
+a promising direction to utilize attention mechanism under such
+circumstance.
+
+Acknowledgements. The GPUs used in this research are provided
+by NVIDIA Corporation with 1080Ti series. This research is supported by the Thousand Youth Talents Program 2018. Joemon Jose
+and Xiangnan He are corresponding authors.
+
+133
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+REFERENCES
+
+[23] Yehuda Koren, Robert Bell, and Chris Volinsky. 2009. Matrix factorization techniques for recommender systems. Computer 8 (2009), 30–37.
+[24] Joonseok Lee, Seungyeon Kim, Guy Lebanon, and Yoram Singer. 2013. Local
+low-rank matrix approximation. In International Conference on Machine Learning.
+82–90.
+[25] Yankai Lin, Zhiyuan Liu, Maosong Sun, Yang Liu, and Xuan Zhu. 2015. Learning
+entity and relation embeddings for knowledge graph completion.. In Proceedings
+of the 29th AAAI Conference on Artificial Intelligence, Vol. 15. AAAI Press, 2181–
+2187.
+[26] Greg Linden, Brent Smith, and Jeremy York. 2003. Amazon. com recommendations: Item-to-item collaborative filtering. IEEE Internet computing 1 (2003),
+76–80.
+[27] Volodymyr Mnih, Nicolas Heess, Alex Graves, et al. 2014. Recurrent models of
+visual attention. In Advances in neural information processing systems. 2204–2212.
+[28] Chanyoung Park, Donghyun Kim, Jinoh Oh, and Hwanjo Yu. 2017. Do AlsoViewed Products Help User Rating Prediction?. In Proceedings of the 26th International Conference on World Wide Web. ACM, 1113–1122.
+[29] Steffen Rendle. 2010. Factorization machines. In Data Mining (ICDM), 2010 IEEE
+10th International Conference on. IEEE, 995–1000.
+[30] Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, and Lars Schmidt-Thieme.
+2009. BPR: Bayesian personalized ranking from implicit feedback. In Proceedings
+of the twenty-fifth conference on uncertainty in artificial intelligence. AUAI Press,
+452–461.
+[31] Badrul Sarwar, George Karypis, Joseph Konstan, and John Riedl. 2001. Item-based
+collaborative filtering recommendation algorithms. In Proceedings of the 10th
+international conference on World Wide Web. ACM, 285–295.
+[32] Brent Smith and Greg Linden. 2017. Two Decades of Recommender Systems at
+Amazon.Com. IEEE Internet Computing 21, 3 (May 2017), 12–18.
+[33] Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan
+Salakhutdinov. 2014. Dropout: a simple way to prevent neural networks from
+overfitting. The Journal of Machine Learning Research 15, 1 (2014), 1929–1958.
+[34] Zhu Sun, Jie Yang, Jie Zhang, Alessandro Bozzon, Long-Kai Huang, and Chi Xu.
+2018. Recurrent Knowledge Graph Embedding for Effective Recommendation.
+In Proceedings of the 12th ACM Conference on Recommender Systems (RecSys ’18).
+ACM, 297–305.
+[35] Yi Tay, Luu Anh Tuan, and Siu Cheung Hui. 2018. Latent Relational Metric
+Learning via Memory-based A ention for Collaborative Ranking. In Proceedings
+of the 27th International Conference on World Wide Web. ACM.
+[36] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all
+you need. In Advances in Neural Information Processing Systems. 5998–6008.
+[37] Hongwei Wang, Fuzheng Zhang, Jialin Wang, Miao Zhao, Wenjie Li, Xing Xie,
+and Minyi Guo. 2018. Ripplenet: Propagating user preferences on the knowledge
+graph for recommender systems. In Proceedings of the 27th ACM International
+Conference on Information and Knowledge Management. ACM, 417–426.
+[38] Hongwei Wang, Fuzheng Zhang, Xing Xie, and Minyi Guo. 2018. DKN: Deep
+Knowledge-Aware Network for News Recommendation. Proceedings of the 27th
+International Conference on World Wide Web (2018), 1835–1844.
+[39] Xiang Wang, Xiangnan He, Meng Wang, Fuli Feng, and Tat-Seng Chua. 2019.
+Neural Graph Collaborative Filtering. In SIGIR.
+[40] Xiang Wang, Dingxian Wang, Canran Xu, Xiangnan He, Yixin Cao, and Tat-Seng
+Chua. 2019. Explainable Reasoning over Knowledge Graphs for Recommendation.
+In Proceedings of the 33rd AAAI Conference on Artificial Intelligence. AAAI Press.
+[41] Yao Wu, Christopher DuBois, Alice X Zheng, and Martin Ester. 2016. Collaborative denoising auto-encoders for top-n recommender systems. In Proceedings of
+the Ninth ACM International Conference on Web Search and Data Mining. ACM,
+153–162.
+[42] Jun Xiao, Hao Ye, Xiangnan He, Hanwang Zhang, Fei Wu, and Tat-Seng Chua.
+2017. Attentional factorization machines: Learning the weight of feature interactions via attention networks. In Proceedings of the 26th International Joint
+Conference on Artificial Intelligence. AAAI Press, 3119–3125.
+[43] Xin Xin, Dong Wang, Yue Ding, and Chen Lini. 2016. FHSM: factored hybrid similarity methods for top-n recommender systems. In Asia-Pacific Web Conference.
+Springer, 98–110.
+[44] Kelvin Xu, Jimmy Ba, Ryan Kiros, Kyunghyun Cho, Aaron Courville, Ruslan
+Salakhudinov, Rich Zemel, and Yoshua Bengio. 2015. Show, attend and tell: Neural
+image caption generation with visual attention. In International conference on
+machine learning. 2048–2057.
+[45] Feng Xue, Xiangnan He, Xiang Wang, Jiandong Xu, Kai Liu, and Richang Hong.
+2018. Deep Item-based Collaborative Filtering for Top-N Recommendation. ACM
+Transactions on Information Systems (TOIS).
+[46] Bishan Yang, Wen-tau Yih, Xiaodong He, Jianfeng Gao, and Li Deng. 2014. Embedding entities and relations for learning and inference in knowledge bases.
+arXiv preprint arXiv:1412.6575 (2014).
+[47] Fuzheng Zhang, Nicholas Jing Yuan, Defu Lian, Xing Xie, and Wei-Ying Ma.
+2016. Collaborative knowledge base embedding for recommender systems. In
+Proceedings of the 22nd ACM SIGKDD international conference on knowledge
+discovery and data mining. ACM, 353–362.
+
+[1] Gediminas Adomavicius and Alexander Tuzhilin. 2005. Toward the next generation of recommender systems: A survey of the state-of-the-art and possible
+extensions. IEEE Transactions on Knowledge & Data Engineering 6 (2005), 734–749.
+[2] Qingyao Ai, Vahid Azizi, Xu Chen, and Yongfeng Zhang. 2018. Learning Heterogeneous Knowledge Base Embeddings for Explainable Recommendation. Algorithms 11, 137 (2018).
+[3] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. 2014. Neural machine translation by jointly learning to align and translate. arXiv preprint
+arXiv:1409.0473 (2014).
+[4] Antoine Bordes, Nicolas Usunier, Alberto Garcia-Duran, Jason Weston, and Oksana Yakhnenko. 2013. Translating embeddings for modeling multi-relational
+data. In Advances in neural information processing systems. 2787–2795.
+[5] Yixin Cao, Xiang Wang, Xiangnan He, Tat-Seng Chua, et al. 2019. Unifying
+Knowledge Graph Learning and Recommendation: Towards a Better Understanding of User Preferences. In Proceedings of the 30th international conference on
+World Wide Web. ACM.
+[6] Jingyuan Chen, Hanwang Zhang, Xiangnan He, Liqiang Nie, Wei Liu, and TatSeng Chua. 2017. Attentive collaborative filtering: Multimedia recommendation
+with item-and component-level attention. In Proceedings of the 40th International
+ACM SIGIR conference on Research and Development in Information Retrieval. ACM,
+335–344.
+[7] Evangelia Christakopoulou and George Karypis. 2018. Local latent space models
+for top-n recommendation. In Proceedings of the 24th ACM SIGKDD International
+Conference on Knowledge Discovery & Data Mining. ACM, 1235–1243.
+[8] Paul Covington, Jay Adams, and Emre Sargin. 2016. Deep Neural Networks
+for YouTube Recommendations. In Proceedings of the 10th ACM Conference on
+Recommender Systems. ACM, 191–198.
+[9] John Duchi, Elad Hazan, and Yoram Singer. 2011. Adaptive subgradient methods
+for online learning and stochastic optimization. Journal of Machine Learning
+Research 12, Jul (2011), 2121–2159.
+[10] Chantat Eksombatchai, Pranav Jindal, Jerry Zitao Liu, Yuchen Liu, Rahul Sharma,
+Charles Sugnet, Mark Ulrich, and Jure Leskovec. 2018. Pixie: A System for
+Recommending 3+ Billion Items to 200+ Million Users in Real-Time. In Proceedings
+of the 27th International Conference on World Wide Web. ACM, 1775–1784.
+[11] Asmaa Elbadrawy and George Karypis. 2015. User-specific feature-based similarity models for top-n recommendation of new items. ACM Transactions on
+Intelligent Systems and Technology (TIST) 6, 3 (2015), 33.
+[12] F Maxwell Harper and Joseph A Konstan. 2016. The movielens datasets: History
+and context. Acm transactions on interactive intelligent systems (TIIS) 5, 4 (2016),
+19.
+[13] Ruining He, Wang-Cheng Kang, and Julian McAuley. 2017. Translation-based
+recommendation. In Proceedings of the Eleventh ACM Conference on Recommender
+Systems. ACM, 161–169.
+[14] Xiangnan He and Tat-Seng Chua. 2017. Neural factorization machines for sparse
+predictive analytics. In Proceedings of the 40th International ACM SIGIR conference
+on Research and Development in Information Retrieval. ACM, 355–364.
+[15] Xiangnan He, Zhankui He, Xiaoyu Du, and Tat-Seng Chua. 2018. Adversarial
+personalized ranking for recommendation. In The 41st International ACM SIGIR
+Conference on Research & Development in Information Retrieval. ACM, 355–364.
+[16] Xiangnan He, Zhenkui He, Jingkuan Song, Zhenguang Liu, Yu-Gang Jiang, and
+Tat-Seng Chua. 2018. NAIS: Neural Attentive Item Similarity Model for Recommendation. IEEE Transactions on Knowledge and Data Engineering (2018),
+2354–2366.
+[17] Binbin Hu, Chuan Shi, Wayne Xin Zhao, and Philip S Yu. 2018. Leveraging metapath based context for top-n recommendation with a neural co-attention model.
+In Proceedings of the 24th ACM SIGKDD International Conference on Knowledge
+Discovery & Data Mining. ACM, 1531–1540.
+[18] Jin Huang, Wayne Xin Zhao, Hongjian Dou, Ji-Rong Wen, and Edward Y Chang.
+2018. Improving sequential recommendation with knowledge-enhanced memory networks. In The 41st International ACM SIGIR Conference on Research &
+Development in Information Retrieval. ACM, 505–514.
+[19] Kalervo Järvelin and Jaana Kekäläinen. 2002. Cumulated gain-based evaluation
+of IR techniques. ACM Transactions on Information Systems (TOIS) 20, 4 (2002),
+422–446.
+[20] Santosh Kabbur, Xia Ning, and George Karypis. 2013. Fism: factored item similarity models for top-n recommender systems. In Proceedings of the 19th ACM
+SIGKDD international conference on Knowledge discovery and data mining. ACM,
+659–667.
+[21] Wang-Cheng Kang and Julian McAuley. 2018. Self-Attentive Sequential Recommendation. In 2018 IEEE International Conference on Data Mining (ICDM). IEEE,
+197–206.
+[22] Wang-Cheng Kang, Mengting Wan, and Julian McAuley. 2018. Recommendation
+Through Mixtures of Heterogeneous Item Relationships. In Proceedings of the
+27th ACM International Conference on Information and Knowledge Management.
+ACM, 1143–1152.
+
+134
+
+

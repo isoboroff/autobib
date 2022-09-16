@@ -1,0 +1,2744 @@
+Discrete Collaborative Filtering
+Hanwang Zhang1
+
+Fumin Shen2
+1
+
+2
+
+Wei Liu3
+
+Xiangnan He1
+
+Huanbo Luan4
+
+Tat-Seng Chua1
+
+School of Computing, National University of Singapore
+
+School of Computer Science and Engineering, University of Electronic Science and Technology of China
+3
+
+Didi Research, 4 Department of Computer Science & Technology, Tsinghua University
+
+{hanwangzhang,fumin.shen,xiangnanhe,luanhuanbo}@gmail.com; wliu@ee.columbia.edu; dcscts@nus.edu.sg
+
+ABSTRACT
+
+mender Systems, which have been widely known as one
+of the key technologies for the thrift of Web services like
+Facebook, Amazon and Flickr. However, their ever-growing
+scales make today’s recommendations even more challenging. Taking a typical Flickr user as an example, a practical
+recommender system should quickly prompt to recommend
+photos in a billion-scale collection by exploring extremely
+sparse user history; and, there are millions of such users1 !
+Collaborative Filtering (CF), more speciﬁcally, latent factor based CF (e.g., matrix factorization), has been demonstrated to achieve a successful balance between accuracy and
+eﬃciency in real-world recommender systems [4, 16, 1]. Such
+CF methods factorize an m × n user-item rating matrix of
+m users and n items into an r-d low-dimensional latent vector (a.k.a. feature) space. Then the predictions for useritem ratings can be eﬃciently estimated by inner products
+between the corresponding user and item vectors. In this
+way, recommendation by CF naturally falls into a similarity
+search problem—top-K item recommendation for a user can
+be cast into ﬁnding the top-K similar items queried by the
+user [30, 3, 12]. When m or n is large, storing user (or item)
+vectors of the size O(mr) (or O(nr)) and similarity search
+of the complexity O(n) will be a critical eﬃciency bottleneck, which has not been well addressed in recent progress
+on recommender eﬃciency [23].
+Fortunately, hashing has been widely shown as a promising approach to tackle fast similarity search [29]. First,
+by encoding real-valued data vectors into compact binary
+codes, hashing makes eﬃcient in-memory storage of massive data feasible. Second, as similarity calculation by inner product in a vector space is replaced by bit operations
+in a proper Hamming space, the time complexity of linear
+scan is signiﬁcantly reduced and even constant time search is
+made possible by exploiting lookup tables [28, 31]. Recently,
+several works have brought the advance of hashing into collaborative ﬁltering for better recommendation eﬃciency [18,
+33, 32]. However, those works essentially divide the hashing
+into two independent stages: real-valued optimization and
+binary quantization. More speciﬁcally, due to the discrete
+constraints imposed on the corresponding binary code learning procedure which is generally NP-hard [11], they resort
+to simply solving relaxed optimization problems by discarding the discrete constraints and then rounding oﬀ [32] or
+rotating [18, 33] the obtained continuous solutions to target
+binary codes. We argue that these “two-stage” approaches
+oversimplify original discrete optimization, resulting in a
+large quantization loss. Here, we refer to “quantization loss”
+
+We address the eﬃciency problem of Collaborative Filtering (CF) by hashing users and items as latent vectors in
+the form of binary codes, so that user-item aﬃnity can be
+eﬃciently calculated in a Hamming space. However, existing hashing methods for CF employ binary code learning
+procedures that most suﬀer from the challenging discrete
+constraints. Hence, those methods generally adopt a twostage learning scheme composed of relaxed optimization via
+discarding the discrete constraints, followed by binary quantization. We argue that such a scheme will result in a large
+quantization loss, which especially compromises the performance of large-scale CF that resorts to longer binary codes.
+In this paper, we propose a principled CF hashing framework called Discrete Collaborative Filtering (DCF), which
+directly tackles the challenging discrete optimization that
+should have been treated adequately in hashing. The formulation of DCF has two advantages: 1) the Hamming similarity induced loss that preserves the intrinsic user-item similarity, and 2) the balanced and uncorrelated code constraints
+that yield compact yet informative binary codes. We devise
+a computationally eﬃcient algorithm with a rigorous convergence proof of DCF. Through extensive experiments on
+several real-world benchmarks, we show that DCF consistently outperforms state-of-the-art CF hashing techniques,
+e.g., though using only 8 bits, DCF is even signiﬁcantly better than other methods using 128 bits.
+
+Keywords
+Recommendation; Discrete Hashing; Collaborative Filtering
+
+Categories and Subject Descriptors
+H.3.3 [Information Storage and Retrieval]: Information
+Search and Retrieval - information ﬁltering;
+
+1.
+
+INTRODUCTION
+
+Over the past decades, we have witnessed continued efforts in increasing the accuracy and eﬃciency of Recom-
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for proﬁt or commercial advantage and that copies bear this notice and the full citation on the ﬁrst page. Copyrights for components of this work owned by others than
+ACM must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior speciﬁc permission
+and/or a fee. Request permissions from permissions@acm.org.
+SIGIR ’16, July 17-21, 2016, Pisa, Italy
+c 2016 ACM. ISBN 978-1-4503-4069-4/16/07. . . $15.00
+
+
+1
+
+DOI: http://dx.doi.org/10.1145/2911451.2911502
+
+325
+
+https://www.ﬂickr.com/photos/franckmichel/6855169886
+
+User-Item Matrix
+
+a
+
+d
+
+B b
+
+Prediction
+
+c
+
+d
+
+-1 -1
+
++1 -1
+
+A 1 .5 1
+
+0
+
+B b
+
+C d
+
+B .5 1 .5 .5
+
+A a c
+
++
+
+d
+C
+
+Relaxed Solution
+
+Discrete CF
+
+C .2 ? .2 .4
+
++1 +1
+
+-1 +1
+
+A a c
+
+B .8 .8 ? .4
+
+Round-off
+
+-1 +1
+
++1 +1
+
+AB a b
+
+c
+
+-1 -1
+
++1 -1
+
+d
+
+a
+
+C
+
+b
+
+C 0 .5 0
+a
+
+b
+
+c
+
+1
+d
+
+A 1
+
+1 .5 .5
+
+B 1
+
+1 .5 .5
+
+C 0
+
+0 .5 .5
+
+Discrete Optimization
+
+Figure 1: Illustration of the key diﬀerence between existing hashing methods for CF (top) and our proposed
+DCF (bottom). DCF directly learns binary codes that
+preserve the user-item similarity discovered from the
+user-item matrix (with missing entries denoted as “?”);
+while traditional methods ﬁrst relax the discrete problem and then round-oﬀ the real-valued results to binary
+codes. As can be seen, such a rounding-oﬀ quantization step causes errors when two points are quite close
+but assigned to diﬀerent bits (e.g., A and B); while two
+points are quite far away but assigned to the same bits
+(e.g., C and d). However, DCF can preserve the intrinsic user-item geometry, so it predicts user-item ratings
+(normalized Hamming similarity, cf. Eq. (2)) with a lower
+error, e.g., the squared loss of DCF is only half of those
+of traditional methods.
+
+works neglect that CF is essentially a similarity search problem, where even linear time complexity is prohibitive for
+large-scale recommendation tasks. Therefore, another line
+of research focuses on encoding users and items into binary
+codes, e.g., hashing for the purpose of signiﬁcant eﬃciency.
+As a pioneering work, Das et al. [6] used Locality-Sensitive
+Hashing (LSH) [7] to generate hash codes of Google news
+users based on an item-sharing similarity. Karatzoglou et
+al. [14] learned user-item features with traditional CF and
+then randomly projected the features to acquire hash codes.
+Similarly, Zhou and Zha [33] rotated their learned features
+by running ITQ [9] to generate hash codes. Liu et al. [18] imposed the uncorrelated bit constraints on the traditional CF
+objective for learning user-item features and then rounded
+them to produce hash codes. Zhang et al. [32] argued that
+inner product is not a proper similarity, which is nevertheless
+the fundamental assumption about hashing, so subsequent
+hashing may harm the accuracy of preference predictions.
+To this end, they proposed to regularize the user/item features to compute their cosine similarities, and then quantized them by respectively thresholding their magnitudes
+and phases.
+One can easily sum up that the aforementioned hashing
+techniques for CF are essentially “two-stage” approaches,
+where hash codes for users and items are obtained through
+two independent steps: relaxed user-item feature learning
+and binary quantization (cf. Figure 1). As we will review
+next, such a two-stage relaxation is well-known to suﬀer from
+a large quantization loss, which is the main challenge we
+tackle in this paper.
+
+• We develop an eﬃcient algorithm for solving DCF. The
+convergence of our algorithm is rigorously guaranteed.
+• Through extensive experiments performed on three realworld datasets, we show that DCF consistently surpasses
+several state-of-the-art CF hashing techniques.
+
+RELATED WORK
+
+We ﬁrst review eﬃcient Collaborative Filtering (CF) algorithms using latent factor models, and then discuss recent
+advance in discrete hashing techniques. For comprehensive
+reviews of CF and hashing, please refer to [5] and [29], respectively.
+
+2.1
+
+c
+
+A 1 .8 .4 ?
+
+• We propose an eﬃcient CF approach called Discrete Collaborative Filtering (DCF). To the best of our knowledge,
+DCF is the ﬁrst principled framework that directly learns
+user-item binary codes via discrete optimization.
+
+2.
+
+b
+
+Traditional CF Hashing
+
+Binary Code Learning
+
+as the accumulated deviations of the binary bits originating from thresholding real values to integers; unsurprisingly,
+large deviations will violate the original data geometry in
+the continuous vector space (e.g., intrinsic user-item relations). As we can foresee, in real-world large-scale applications which require longer codes for accuracy, such accumulated errors will inevitably deteriorate the recommendation
+performance.
+In this paper, we propose a principled approach for eﬃcient collaborative ﬁltering, dubbed Discrete Collaborative
+Filtering (DCF), which has not been addressed yet. As illustrated in Figure 1, instead of choosing an erroneous twostage approach, we directly tackle the challenging discrete
+optimization that should have been treated adequately in
+hashing. Our formulation is directly based on the loss function of traditional CF, where the user/item features are
+replaced by binary codes and the user-item inner product
+is replaced by Hamming similarity (cf. Eq. (2)). By doing so, the proposed DCF explicitly optimizes the binary
+codes that ﬁt the intrinsic user-item similarities and hence
+the quantization error is expected to be smaller than those
+of two-stage approaches. Besides, we explicitly impose the
+balanced and uncorrelated bits on the codes. Though these
+two constraints make DCF even more challenging, they are
+crucial for achieving compact yet informative codes [31]. To
+tackle the discrete optimization of DCF in a computationally
+tractable manner, we develop an alternating optimization algorithm which consists of iteratively solving mixed-integer
+programming subproblems. In particular, we provide eﬃcient solutions that require fast bit-wise updates and eigen–
+decompositions for small matrices, and therefore they can
+easily scale up to large-scale recommendations. We evaluate
+the proposed DCF on three real-world datasets in various
+million-scale applications including movies, books and business recommendations.
+Our contributions are summarized as follows:
+
+Efﬁcient Collaborative Filtering
+
+One line of research towards eﬃcient CF includes designing scalable online methods such as preference ranking [10],
+matrix factorization [20], and regression [2]. In particular,
+our out-of-sample hashing scheme for new users/items (cf.
+Section. 4.2) follows a similar spirit of [25, 8], which projects
+new samples onto a learned factor space. However, these
+
+2.2
+
+Discrete Hashing
+
+In order to reduce quantization errors caused by the oversimplifying rounding-oﬀ step, discrete hashing—direct bi-
+
+326
+
+-1 +1
+
++1 +1
+
+-1 +1
+
++1 +1
+
+-1 +1
+
++1 +1
+
+-1 -1
+
++1 -1
+
+-1 -1
+
++1 -1
+
+-1 -1
+
++1 -1
+
+dimension, and UT V is expected to reconstruct the observed
+ratings as well as predict the unobserved ones. The objective is to minimize the following regularized squared loss on
+observed ratings:
+
+(Sij − uTi vj )2 + αU2F + βV2F ,
+argmin
+(1)
+U,V
+
+(a)
+
+(b)
+
+(c)
+
+Figure 2: Illustration of the eﬀectiveness of the balance
+and decorrelation constraints in DCF. The ellipse represents an intrinsic user-item relation manifold and the
+red dots denote four distinct real-valued user/item vectors that should be separated in Hamming space. (a)
+Three points are encoded as (−1, −1) and the other one
+as (−1, +1), which are not discriminative. However, after (b) balancing and (c) decorrelation, the codes are
+optimized to preserve the user-item relations.
+nary code learning by discrete optimization—is becoming
+popular recently. The most widely used discrete hashing
+technique is perhaps Iterative Quantization (ITQ) [9], which
+minimizes the quantization loss by alternatively learning the
+binary codes and hash functions. However, it has two drawbacks. First, ITQ requires the hash functions to use orthogonal projections, which is not a generic assumption; second, ITQ can also be considered as a two-stage approach
+since it ﬁrst learns relaxed solutions and then treats quantization as an independent post-processing, which does not
+necessarily capture the intrinsic data geometry. Thus, ITQ
+is suboptimal. Latest improvements on joint optimizations
+of quantization losses and intrinsic objective functions can
+be found in Discrete Graph Hashing [17] and Supervised
+Discrete Hashing [26], which demonstrate signiﬁcant performance gain over the above two-stage hashing methods. Our
+work is also an advocate of such a joint discrete optimization but focused on CF which is fundamentally diﬀerent from
+the above objectives. To the best of our knowledge, DCF
+is a research gap that we ﬁll in this paper; and due to the
+generic matrix factorization formulations in CF, we believe
+that DCF will have a high potential in plenty of machine
+learning and information retrieval tasks other than recommendations [18].
+
+3.
+3.1
+
+i,j∈V
+
+where Sij is the observed rating, whose index set is V. Since
+the number of observed ratings is sparse, we should properly regularize U and V by α, β > 0 in order to prevent
+from overﬁtting. After we obtain the optimized user and
+item vectors, recommendation is then reduced to a similarity search problem. For example, given a “query” user
+ui , we recommend items by ranking the predicted ratings
+VT ui ∈ Rn ; when n is large, such similarity search scheme
+is apparently an eﬃciency bottleneck for practical recommender systems [33, 32].
+To this end, we are interested in hashing users and items
+into binary codes for eﬃcient recommendation since the useritem similarity search can be eﬃciently conducted in Hamming space. Denote B = [b1 , ..., bm ] ∈ {±1}r×m and D =
+[d1 , ..., dn ] ∈ {±1}r×n respectively as r-length user and item
+binary codes, the Hamming similarity between bi and dj is
+deﬁned as [33]:
+sim(i, j) =
+1
+=
+2r
+1
+=
+2r
+
+
+
+
+r
+1
+I (bik = djk )
+r
+k=1
+
+r
+
+
+I(bik = djk ) + r −
+
+k=1
+
+r+
+
+r
+
+
+
+I(bik = djk )
+
+(2)
+
+k=1
+
+
+bik djk
+
+r
+
+
+=
+
+k=1
+
+1
+1 T
++
+bi dj
+2
+2r
+
+where I(·) denotes the indicator function that returns 1 if
+the statement is true and 0 otherwise. We can easily verify
+that sim(i, j) = 0 if all the bits of bi and dj are diﬀerent
+and sim(i, j) = 1 if bi = dj .
+Similar to the problem of conventional CF in Eq. (1), the
+above similarity score should reconstruct the observed useritem ratings. Therefore, the problem of the proposed Discrete Collaborative Filtering (DCF) is formulated as:
+2
+ 
+Sij − bTi dj ,
+argmin
+
+PROBLEM FORMULATION
+
+B,D
+
+i,j∈V
+
+s.t. B ∈ {±1}r×m , D ∈ {±1}r×n
+
+Preliminaries
+
+T
+
+(3)
+T
+
+B1 = 0, D1 = 0, BB = mI, DD = nI .
+
+
+
+We use bold uppercase and lowercase letters as matrices
+and vectors, respectively; In particular, we use ai as the ith row vector of matrix A, Aij as the entry at the i-th row
+and j-th column of A; alternatively, we rewrite Aij as aij to
+highlight the j-th entry of vector ai . We denote  · F as the
+Frobenius norm of a matrix and tr(·) as the matrix trace.
+We denote sgn(·) : R → {±1} as the round-oﬀ function.
+We focus on discussing matrix factorization CF models,
+which has been successfully applied in many recommender
+systems [16]. CF generally maps both users and items to a
+joint low-dimensional latent space where the user-item similarity (or preference) is estimated by vector inner product. Formally, suppose ui ∈ Rr is the i-th user vector
+and vj ∈ Rr is the j-th item vector, the rating of user i
+for item j is approximated by uTi vj . Thus, the goal is to
+learn user vectors U = [u1 , ..., um ] ∈ Rr×m and item vectors
+V = [v1 , ..., vn ] ∈ Rr×n , where r  min(m, n) is the feature
+
+Balanced Partition
+
+Decorrelation
+
+where we slightly abuse the notation Sij as a scaled score in
+[−r, r] as bTi dj ∈ {−r, −r + 2, ..., r − 2, r}2 . Due to the binary constraints in DCF, the regularization B2F +D2F as
+in Eq. (1) is constant and hence is canceled; however, DCF
+imposes two additional constraints on the binary codes in
+order to maximize the information encoded in short code
+length [31]. First, we require that each bit to split the
+dataset as balanced as possible. This will maximize the information entropy of the bit. Second, each bit should be as
+independent as possible, i.e., the bits are uncorrelated and
+the variance is maximized. This removes the redundancy
+among the bits. Figure 2 illustrates how binary code learning beneﬁts from the two constraints. Note that other latent
+2
+
+327
+
+Suppose the original Sij ∈ [0, 1], then we scale Sij ← 2rSij − r.
+
+models with various objective functions such as ranking [24]
+and regression [2] can be applied in this work with simple
+algebraic operations.
+
+3.2
+
+X/Y-subproblem attempts to regularize the learned binary
+codes should be as balanced and uncorrelated as possible.
+B-subproblem. In this subproblem, we update B with
+ﬁxed D, X and Y. Since the objective function in Eq. (5)
+is based on summing over independent users, we can update
+B by updating bi in parallel according to
+
+
+argmin bTi (
+dj dTj )bi − 2(
+Sij dTj )bi − 2αxTi bi , (6)
+
+Learning Model
+
+It is worth noting that the proposed DCF in Eq. (3) has
+two key advantages over related work [33, 32]. First, we
+strictly enforce the binary constraint while theirs relax discrete binary codes to continuous real values. Thus, DCF
+is expected to minimize the quantization loss during learning. Second, we require the binary codes to be balanced
+and uncorrelated. Therefore, DCF hashes users and items
+in a more informative and compact way. However, solving DCF in Eq. (3) is a challenging task since it is generally NP-hard that involves O(2(m+n)r ) combinatorial search
+for the binary codes [11]. Next, we introduce a learning
+model that can solve DCF in a computationally tractable
+manner. We propose to solve DCF in Eq. (3) by softening
+the balance and decorrelation constraints, since strictly imposing them may cause the original DCF infeasible. Let
+us deﬁne two sets: B = {X ∈ Rr×m |X1 = 0, XXT =
+mI}, D = {Y ∈ Rr×n |Y1 = 0, YY T = nI} and distances
+d(B, B) = minX∈B B−XF , d(D, D) = minY∈D D−YF .
+Therefore, we can soften the original DCF in Eq. (3) as:
+
+2
+argmin
+Sij − bTi dj + αd2 (B, B) + βd2 (D, D)
+B,D
+
+bi ∈{±1}r
+
+rest set of item codes excluding djk , and K(x, y) is a function that K(x, y) = x if x = 0 and K(x, y) = y otherwise,
+i.e., when b̂ik = 0, we do not update bik . In this way, bi
+is iteratively updated bit by bit in several passes until convergence (e.g., no more ﬂips of bits). Detailed derivation of
+Eq. (7) is given in Appendix.
+
+i,j∈V
+
+(4)
+where α > 0 and β > 0 are tuning parameters. The above
+Eq (4) allows a certain discrepancy between the binary codes
+(e.g., B) and delegate continuous values (e.g., X), to make
+the constraints computationally tractable. Note that if the
+constraints in Eq. (3) is feasible, we can enforce the distances
+d(B, B) = d(D, D) = 0 in Eq. (4) by imposing very large
+tuning parameters.
+By noting the decorrelation constraints imposed on B, D,
+X and Y, Eq. (4) is equivalent to:
+
+2
+Sij − bTi dj − 2αtr(BT X) − 2βtr(DT Y)
+argmin
+
+D-subproblem. In this subproblem, we update D with
+ﬁxed B, X and Y. Similar to the B-subproblem, we can
+update D by updating di in parallel according to
+
+
+argmin dTj (
+bi bTi )dj −2(
+Sij bTi )dj −2βyjT dj . (8)
+dj ∈{±1}r
+
+i∈Vj
+
+i∈Vj
+
+where Vj is the observed rating set for item j. Denote djk
+as the k-th bit of dj and dj k̄ as the rest codes excluding djk ,
+the DCD update for djk is given as:
+
+
+djk ← sgn K(dˆjk , djk ) ,
+(9)
+
+B,D,X,Y i,j∈V
+
+s.t., X1 = 0, XXT = mI, Y1 = 0, YY T = nI,
+B ∈ {±1}r×m , D ∈ {±1}r×n ,
+
+
+where dˆjk = i∈Vj Sij − bTik̄ dj k̄ bik + βyjk .
+
+(5)
+which is the proposed learning model for DCF. It is worth
+noting that we do not discard the binary constraint B ∈
+{±1}r×m , D ∈ {±1}r×n and directly optimize discrete B
+and D. Through joint optimization for the binary codes and
+the delegate real variables, we can obtain nearly balanced
+and uncorrelated hashing codes for users and items. Next,
+we will introduce an eﬃcient solution for the mixed-integer
+optimization problem in Eq. (5).
+
+X-subproblem. When B, D and Y are ﬁxed in Eq. (6),
+the X-subproblem is:
+argmax tr(BT X), s.t. X1 = 0, XXT = mI
+
+(10)
+
+X
+
+It can be solved with the aid of SVD. Denote
+ B is a row-wise
+1
+zero-mean matrix, where B ij = Bij − m
+j Bij . By SVD,
+
+
+
+
+we have B = Pb Σb QTb , where Pb ∈ Rr×r and Qb ∈ Rm×r
+are left and right singular vectors corresponding to the r
+(≤ r) positive singular values in the diagonal matrix Σb .
+In practice, we ﬁrst apply eigendecomposition
+for the small
+⎤
+⎡
+
+SOLUTION
+
+We alternatively solving four subproblems for DCF model
+in Eq. (5): B, D, X and Y. In particular, we show that
+1) B and D can be eﬃciently updated by parallel discrete
+optimization; and 2) X and Y can be eﬃciently updated by
+small-scale Singular Value Decomposition (SVD).
+
+4.1
+
+j∈Vi
+
+where Vi is the observed rating set for user i.
+Due to the binary constraints, the above minimization is
+generally NP-hard, we propose to use Discrete Coordinate
+Descent (DCD) to update binary codes bi bit by bit [26].
+Denote bik as the k-th bit of bi and bik̄ as the rest codes
+excluding bik , DCD will update bik while ﬁxing bik̄ . Thus,
+the DCD update rule for user binary codes bi can be derived
+as:
+
+
+(7)
+bik ← sgn K(b̂ik , bik ) ,
+
+
+
+where b̂ik = j∈Vi Sij − dTjk̄ bik̄ djk + αxik .3 , dTjk̄ is the
+
+s.t., B ∈ {±1}r×m , D ∈ {±1}r×n
+
+4.
+
+j∈Vi
+
+Σ2b 0
+
+b
+ b ]T , where P
+⎦ [Pb P
+0 0
+are the eigenvectors of the zero eigenvalues. Therefore, by
+
+r × r matrix B B
+
+Alternating Optimization
+
+T
+
+ b] ⎣
+= [Pb P
+
+3
+
+If linear algebra boosting library is available (e.g., Matlab), the ﬁrst
+
+T
+i ,
+b
+term of b̂ik can be rewritten in matrix form: (Di si )k − Di DT
+i
+
+It is worth highlighting that the following B/D-subproblem
+seeks binary latent features that preserves the intrinsic useritem relations due to the observed loss in Eq. (5); while
+
+k
+
+where Di is the subset of D selected by rows j ∈ Vi , si is as sij = Sij ,
+ i is as b̂ik = 0. Similar form can be obtained for dˆjk in Eq. (9).
+and b
+
+328
+
+T
+
+−1
+
+the deﬁnition of SVD, we have Qb = B Pb Σb . In order to
+satisfy the constraint X1 = 0, we further obtain additional
+ b ∈ Rm×(r−r ) by Gram-Schmidt orthogonalization based
+Q
+ Tb 1 = 0. The fact QTb 1 = 0 is
+on [Qb 1], thus, we have Q
+detailed in Appendix.
+Now we are ready to obtain a closed-form update rule for
+the X-subproblem in Eq. (10):
+√
+ b ][Qb Q
+ b ]T .
+(11)
+X ← m[Pb P
+
+Input : {Sij |i, j ∈ V}: observed user-item ratings,
+r: code length,
+α and β: trade-oﬀ parameter
+Output: B ∈ {±1}r×m : user codes,
+D ∈ {±1}r×n : item codes
+1 Initialization: B, D, X ∈ Rr×m and Y ∈ Rr×n by Eq. (18)
+2 repeat
+
+Y-subproblem. When B, D and X are ﬁxed in Eq. (5),
+the Y-subproblem is:
+
+6
+
+argmax tr(DT Y), s.t. Y1 = 0, YYT = nI
+
+(12)
+
+Y
+
+According to the above analysis, we can derive a closed form
+update rule for Y as:
+√
+ d ][Qd Q
+ d ]T ,
+(13)
+Y ← n[Pd P
+where Pd and Qd are the left and right singular vectors of
+ d are the left singular vectors
+the row-centered matrix D, P
+ d are the vectors
+corresponding to zero singular values, and Q
+obtained by Gram-Schimidt process based on [Qd 1] .
+
+4.2
+
+Algorithm 1: Discrete Collaborative Filtering
+
+3
+4
+5
+
+7
+
+end
+until converge;
+end
+
+11
+12
+13
+
+15
+
+for j=1 to n do
+repeat
+for k=1 to r do 
+
+
+dj k̄ bik + βyjk ;
+dˆjk ← i∈Vj Sij − bT
+i
+k̄
+
+
+djk ← sgn K(dˆjk , djk ) ;
+
+16
+17
+18
+
+end
+until converge;
+end
+
+19
+
+ b ← GramSchmidt ([Qb 1]);
+ b ], Qb ← SVD(B), Q
+[Pb P
+√
+T
+ b ][Qb Q
+ b] ;
+X ← m[Pb P
+
+14
+
+20
+
+5.1
+
+where b̂k =
+
+j∈N
+
+//
+Y-subproblem
+
+
+
+Convergence
+
+Theorem 1 (Convergence of Algorithm 1). The sequence {B(t) , D(t) , X(t) , Y (t) } generated by Algorithm 1 monotonically decreases the objective
+ function L of Eq. (5);
+ the
+
+objective function sequence {L B(t) , D(t) , X(t) , Y (t) } converges; the sequence {B(t) , D(t) , X(t) , Y (t) } converges.
+
+
+
+sj − dTjk̄ bk̄ djk .
+
+Similarly, for a new item, whose ratings are {si |i ∈ N }
+made by existing users, the update rule for the k-th bit dk
+of the new item codes d is:
+
+
+(16)
+dk ← sgn K(dˆk , dk ) ,
+
+In nutshell, we need to prove two key facts. First, we show
+that the updating steps in Step 7, 15, 20 and 22 monotonically decreases the objective function in Eq. (5), which is
+proved to be bounded below. Then, we use the fact that
+L(B, D) has ﬁnite values to show that {B(t) , D(t) } converges. See Appendix for detailed proof.
+
+
+where dˆk = i∈N si − bTik̄ dk̄ bik .
+
+5.
+
+//
+X-subproblem
+
+
+
+The convergence of the proposed DCF algorithm is guaranteed by the following theorem.
+
+It is easy to see that Eq. (14) is a special case of B-subproblem
+in Eq. (6). Therefore, we can quickly develop the DCD update rule for the k-th bit bk of b as:
+
+
+(15)
+bk ← sgn K(b̂k , bk ) ,
+
+
+// D-subproblem, parallel outer for loop
+
+ d ← GramSchmidt ([Qd 1]);
+ d ], Qd ← SVD(D), Q
+[Pd P
+√
+T
+ d ][Qd Q
+ d] ;
+22
+Y ← n[Pd P
+23 until converge;
+24 return B, D
+21
+
+b∈{±1}r j∈N
+
+
+
+for i=1 to m do
+repeat
+for k=1 to r do 
+
+
+bik̄ djk + αxik ;
+b̂ik ← j∈Vi Sij − dT
+j
+k̄
+
+
+bik ← sgn K(b̂ik , bik ) ;
+
+8
+9
+10
+
+Out-of-Sample Extension
+
+When new users, items and the corresponding ratings
+come in, it is impractical to retrain DCF for obtaining hashing codes of these out-of-sample data. Instead, an economical way is to learn ad-hoc codes for new data online and
+then update for the whole data oﬄine when possible [25, 8].
+Without loss of generality, we only discuss the case when
+a new user comes in. Denote {sj |j ∈ N } as the set of
+observed ratings for existing items by the new user, whose
+binary codes are b. For a single user, it is too expensive and
+unnecessary to impose the global balance and decorrelation
+constraints as batch DCF in Eq. (5). Therefore, we only
+focus on minimizing the rating prediction loss:
+
+(sj − bT dj )2
+(14)
+argmin
+
+// B-subproblem, parallel outer for loop
+
+5.2
+
+ALGORITHMIC ANALYSIS
+
+Initialization
+
+Since DCF deals with mixed-integer non-convex optimization, initialization is crucial for better convergence and local optimum. Here, we suggest an eﬃcient initialization
+heuristic, which essentially relaxed the binary constraints
+
+We summarize the solution for DCF in Algorithm 1. We
+will discuss the convergence, complexity and initialization
+issues in this section.
+
+329
+
+10 8
+
+7
+Init
+W/O Init
+
+6
+
+Loss Function Value
+
+Obj. Function Value
+
+7
+
+5
+4
+3
+2
+1
+
+10
+
+20
+
+cient since it scales linearly with the size of the data, e.g.,
+|V| and m + n.
+
+Init
+W/O Init
+
+6
+5
+
+6.
+
+4
+3
+
+10
+
+20
+
+30
+
+Iteration
+
+Iteration
+
+Figure 3: Convergence curve of the overall objective
+function value (left) and the squared loss value (right)
+using DCF with/without initializations on Yelp (α = β =
+0.001). We can see that the proposed initialization strategy helps to achieve faster convergence and lower objective/loss values.
+
+RQ1 How does DCF perform as compared to other state-ofthe-art hashing methods?
+RQ2 Does DCF generalize well to new users? If yes, how
+much training overhead is needed?
+RQ3 How do the discrete, balanced and uncorrelated constraints contribute to the overall eﬀectiveness of DCF?
+
+in Eq. (5) as:
+argmin
+
+
+
+U,V,X,Y i,j∈V
+
+EXPERIMENTS
+
+As the proposed DCF fundamentally tackles the problem
+of quantization loss caused by traditional hashing methods
+of CF, the goal of our experiments is to answer the following
+three research questions:
+
+2
+1
+
+30
+
+10 8
+
+Sij − uTi vj
+
+2
+
++ αU2F + βV2F
+
+− 2αtr(UT X) − 2βtr(VT Y)
+T
+
+Table 1: Statistics of datasets in evaluation.
+Dataset
+
+(17)
+
+Amazon
+
+T
+
+s.t., X1 = 0, XX = mI, Y1 = 0, YY = nI.
+
+Netﬂix
+
+In fact, we can consider the above initialization as traditional
+CF in Eq. (1) with balance and decorrelation constraints
+imposed on real-valued U and V. A possible explanation for
+why Eq. (17) may oﬀer better initialization is illustrated in
+Figure 2, where the two constraints can restrict real-valued
+results within a subspace with small quantization error.
+To solve Eq. (17), we can further initialize real-valued U
+and V randomly and ﬁnd feasible initializations for X and
+Y by solving X/Y-subproblems in Section 4. Then, the
+optimization can be done alternatively by solving U and V
+by traditional CF in Eq. (1), and solving X and Y by X/Ysubproblem. Suppose the solutions are (U∗ , V∗ , X∗ , Y ∗ ),
+we can initialize Algorithm 1 as:
+B ← sgn(U∗ ), D ← sgn(V∗ ), X ← X∗ , Y ← Y ∗ .
+
+6.1
+
+User#
+
+Item#
+
+Density
+
+696,865
+
+25,677
+
+25,815
+
+0.11%
+
+5,057,936
+
+146,469
+
+189,474
+
+0.02%
+
+100,480,507
+
+480,189
+
+17,770
+
+1.18%
+
+Datasets
+
+We used three publicly available datasets from various
+real-world online websites:
+Yelp: This is the latest Yelp Challenge dataset4 . It originally includes 366,715 users, 60,785 items (e.g., restaurants
+and shopping malls), and 1,569,264 ratings.
+Amazon: This is a collection of user ratings on Amazon
+products of Book category [21], which originally contains
+2,588,991 users, 929,264 items and 12,886,488 ratings.
+Netﬂix: This is the classic movie rating dataset used in
+the Netﬂix challenge5 . We use the full dataset that contains
+480,189 users, 17,770 items and 100,480,507 ratings.
+Due to the severe sparsity of Yelp and Amazon original
+datasets, we follow the convention in evaluating CF algorithms [24] by removing users and items that have less than
+10 ratings6 . When a user rates an item multiple times, we
+merge them into one rating by averaging the duplicate rating scores. Table 1 summarizes the ﬁltered, experimental
+datasets. For each user, we randomly sampled 50% ratings
+as training and the rest 50% as testing. We repeated for 5
+random splits and reported the averaged results.
+
+(18)
+
+It is easy to see that the initializations above are feasible to
+Eq. (5). The eﬀectiveness of the proposed initialization is
+illustrated in Figure 3.
+
+5.3
+
+Rating#
+
+Yelp
+
+Complexity
+
+For space complexity, Algorithm 1 requires O(|V|) for
+storing {Sij } and O(r · max(m, n)) for B, D, X and Y.
+As r is usually less than 256 bits, we can easily store the
+above variables at large-scale in memory.
+We ﬁrst analyze the time complexity for each of the subproblems. For B-subproblem, it takes O(r2 |Vi |Ts ) for completing the inner loop of updating bi , where Ts is the number
+of iterations needed for convergence (Step 4 to 8). Further,
+suppose we have p computing threads, then the overall complexity for B-subproblem is O(r2 Ts |V|/p). Similarly, the
+overall complexity for D-subproblem is also O(r2 Ts |V|/p).
+In practice, Ts is usually 2∼5. For X-subproblem, it requires O(r2 m) to perform the SVD and Gram-Schimdt orthogonalization in Step 19, and O(r2 m) matrix multiplication in Step 20. Similarly, it takes O(r2 n) for solving
+Y-subproblem. Suppose the entire algorithm requires T iterations for convergence,
+ complexity for Al the overall time
+
+2
+1
+gorithm 1 is O T r Ts |V| p + m + n , where we observe
+that T is usually 10∼20. In summary, training DCF is eﬃ-
+
+6.2
+6.2.1
+
+Setups
+Evaluation Metrics
+
+As practical recommender systems usually generate a ranked
+list of items for user, we diverge from the error-based measure (e.g., RMSE [15]), which is a suboptimal to recommendation task [3]. Instead, we treat it as a ranking problem, evaluating the ranking performance on test ratings with
+NDCG (Normalized Discounted Cumulative Gain), which is
+a widely used measure for evaluating recommendation algorithms [30, 3], owing to its comprehensive consideration of
+both ranking precisions and the positions of ratings.
+4
+5
+
+http://www.yelp.com/dataset challenge
+http://www.netﬂixprize.com
+
+6
+Note the similar ﬁltering was conducted to Netﬂix dataset
+[15], so we use the Netﬂix dataset as-it-is.
+
+330
+
+6.2.2
+
+Search Protocols
+
+CH: Collaborative Hashing [18] is also a two-stage approach,
+where the relaxation stage is based on full-matrix factorization, i.e., unobserved ratings are considered as zeros. Since
+the original CH is formulated for visual features, we implemented CH for collaborative ﬁltering as: arg minU,V S −
+UT V2F , s.t., UUT = mI, VVT = nI, where S is the
+scaled rating matrix where Sij = 0 if (i, j) is not observed,
+i.e., i, j ∈
+/ V. By several algebraic transformations, the
+above problem can be cast into alternating solving SVDs for
+US and VST , which is analogous to our X/Y-subproblem.
+Then, the binary quantization is simply sgn(U) and sgn(V).
+We also compared the following two settings of DCF to
+investigate its eﬀectiveness:
+MFB: This is the MF results with round-oﬀ binary quantization. We used this as a baseline to show how quantization
+loss degrades performance.
+DCFinit: This is the Initialization problem of DCF in
+Eq. (17), whose binary codes are given in Eq. (18). By comparing with MFB, we can investigate whether the balance
+and decorrelation constraints are useful for binary quantization. Moreover, DCFinit can be considered as a relaxed
+two-stage version of DCF. Compared with DCF, we can see
+whether discrete optimization is eﬀective.
+All the hyper-parameters (e.g., α and β) of DCF and the
+above methods were tuned within {1e−4 , 1e−3 , ..., 1e2 } by
+5-fold cross validation on the training split. We used MATLAB with mex C for algorithm implementations and we run
+them on a cluster of 9 machines, each of which has 6-core
+2.4GHz CPU and 48GB RAM.
+
+We adopted two search protocols which are widely used
+in search with binary codes. We used code length within
+{8, 16, 32, 64, 128, 256}.
+Hamming Ranking: Items are ranked according to their
+Hamming distance (or similarity) from the query user. Although the search complexity of Hamming ranking is still
+linear, it is very fast in practice since the Hamming distance
+(or similarity) calculation can be done by fast bit operations
+and the sorting is constant time due to integer distance.
+Hashtable Lookup: A lookup table is constructed using
+the item codes and all the items in the buckets that fall
+within a small Hamming radius (e.g., 2) of the query user
+are returned. Therefore, search is performed in constant
+time. However, a single table would be insuﬃcient when
+the code length is larger than 32 since it would require over
+O(232 ) space to store the table in memory. We adopted
+Multi-Index Hashing (MIH) table [22], which builds one table for each code subsegment. Items are aggregated by all
+the tables and then conducted Hamming ranking for the
+items. By doing this, the search time is signiﬁcantly reduced to sublinear—linear scan a short returned list. We
+empirically set the substring length as {1, 1, 2, 2, 4, 4} for bit
+size {8, 16, 32, 64, 128, 256} as suggested in [32].
+It is worth mentioning that the above two search protocols
+focus on diﬀerent characteristics of hashing codes. Hamming
+ranking provides a better measurement of the learned Hamming space, i.e., the accuracy upper bound that the codes
+can achieve since it linearly scans the whole data. Hashtable
+lookup, on the other hand, emphasizes the practical speed of
+large-scale search. However, a common issue in this protocol
+is that it may not return suﬃcient items for recommendation, as a query lookup may miss due to the sparse Hamming
+space. In our experiments, if a query user returns no items,
+we treated as a failed query with an NDCG of zero.
+
+6.2.3
+
+6.3
+6.3.1
+
+Result Analysis
+Comparison with State-of-The-Arts (RQ1)
+
+Figure 6 shows the performances (NDCG@K) of DCF and
+the three state-of-the-art hashing methods in terms of Hamming ranking and table lookup. We can have the following
+key observations:
+1). The proposed DCF considerably outperforms all the
+state-of-the-art methods. For example, as shown in Table 2,
+in most cases, DCF can even achieve signiﬁcantly better
+performance by using only 8 bits as compared to the most
+competitive CH using 128 bits. This suggests that DCF can
+reduce a huge amount of memory and time cost as compared to the state-of-the-art methods. One possible reason
+why CH outperforms BCCF and PPH is that it incorporates
+the uncorrelated codes constraints during joint optimization,
+which is beneﬁcial for the subsequent quantization. DCF, on
+the other hand, minimizing the quantization loss directly by
+joint discrete optimization with balanced and uncorrelated
+code constraints, resulting in better performance than CH.
+2). When using lookup tables, the performances of all the
+methods are not as stable as those by using ranking, specifically, at larger K positions on smaller datasets like Yelp
+and Amazon. This is due to that zero item is returned when
+lookup misses—Hamming ranking treats the entire items as
+candidates, while lookup table only indexes a small fraction of items as candidate. This is why NDCG at smaller
+K positions does not signiﬁcantly decrease as compared to
+Hamming ranking. Therefore, as we can observe that DCF
+considerably outperforms other methods, we can infer that
+the codes generated by DCF have less lookup misses.
+3). As the bit size increases, the performance gap between
+DCF and other methods becomes larger, especially when
+
+Compared Methods
+
+We benchmark the performance using the traditional realvalued CF method, comparing with several state-of-the-art
+hashing-based CF methods:
+MF: This is the classic Matrix Factorization based CF algorithm [16], which learns user and item latent vectors in
+Euclidean space. We used MF as a baseline to show the
+performance gap between real values and binary codes. We
+adopt the ALS algorithm suggested by [34]. Note that it is
+beyond the scope of this paper to further investigate other
+popular variants of MF [15, 19].
+BCCF: This is a two-stage Binary Code learning method
+for Collaborative Filtering [33]. At the relaxation stage, it
+imposes a balanced code regularization instead of the 2 norm regularization of MF; at quantization stage, it applies
+orthogonal rotation to user and item features, which is essentially an ITQ method [9].
+PPH: This is a two-stage Preference Preserving Hashing [32].
+At the relaxation stage, diﬀerent from MF, it encourages
+the latent feature norm to reach the maximum ratings and
+hence smaller discrepancy between inner product (preference preserving) and cosine similarity (hashing friendly) is
+expected. At quantization stage, PPH quantizes each feature vector into (r − 2)-bit phase codes and 2-bit magnitude
+codes. Therefore, in order to keep the code length consistent to other methods, we only learned (r − 2)-dim latent
+features at relaxation stage.
+
+331
+
+0.6
+BCCF
+PPH
+CH
+DCF
+
+0.55
+
+8
+
+16
+
+32
+
+64
+
+0.7
+
+0.8
+
+0.75
+
+128
+
+0.7
+
+256
+
+Netflix
+
+0.75
+
+BCCF
+PPH
+CH
+DCF
+
+0.85
+
+NDCG@10
+
+NDCG@10
+
+0.65
+
+0.5
+
+Amazon
+
+0.9
+
+NDCG@10
+
+Yelp
+
+0.7
+
+only needs to apply a matrix multiplication operation for
+hashing new users. Although the proposed DCF is about
+tens of times slower than CH, we believe this overhead is
+acceptable since DCF considerably generalizes better than
+CH. Comparing with BCCF and PPH, our DCF is about
+20 times faster. The reason is that both BCCF and PPH
+need to iteratively solve least square problems, which involve
+the expensive matrix inverse. In addition, BCCF requires
+two matrix multiplications after least square, i.e., PCA projection and ITQ rotation, and hence needs more time. In
+contrast, our DCF only requires T r matrix multiplications
+in total, where T is 2∼5 and r is the code length.
+
+BCCF
+PPH
+CH
+DCF
+
+0.65
+0.6
+0.55
+
+8
+
+16
+
+32
+
+bit
+
+64
+
+128
+
+0.5
+
+256
+
+8
+
+16
+
+32
+
+bit
+
+64
+
+128
+
+256
+
+bit
+
+Figure 4: Recommendation performance (NDCG@10)
+on 50% held-out “new” users (RQ 2).
+Yelp
+
+0.75
+
+Amazon
+
+1
+
+Netflix
+
+0.85
+0.8
+
+0.65
+
+8
+
+16
+
+32
+
+64
+
+128
+
+MF
+MFB
+DCFinit
+DCF
+
+0.9
+
+0.75
+MF
+MFB
+DCFinit
+DCF
+
+0.7
+
+Table 3:
+
+Time cost (s) of various methods hashing
+240,094 new users of Netﬂix using a single 6-core CPU.
+
+0.65
+
+0.85
+
+MF
+MFB
+DCFinit
+DCF
+
+0.6
+
+NDCG@10
+
+NDCG@10
+
+NDCG@10
+
+0.95
+0.7
+
+0.6
+
+256
+
+0.8
+
+8
+
+16
+
+bit
+
+32
+
+64
+
+128
+
+256
+
+0.55
+
+8
+
+16
+
+bit
+
+32
+
+64
+
+128
+
+256
+
+bit
+
+Method/#Bits
+
+8
+
+16
+
+32
+
+64
+
+128
+
+256
+
+BCCF
+
+51.3
+
+64.5
+
+78.0
+
+1.21e2
+
+4.81e2
+
+2.69e3
+
+Figure 5: Recommendation performance (NDCG@10)
+of CF and DCF variants (RQ 3).
+
+using lookup. This demonstrates that the two-stage approaches (BCCF, PPH and CH) increasingly suﬀer from
+quantization loss as code length increases.
+
+6.3.2
+
+In this study, we performed the strong generalization test.
+Following [27], we trained all models on 50% of randomly
+sampled users with full history; the remaining 50% of users
+are the new users for testing. In the testing phase, we fed
+50% ratings of the test users into the model for an out-ofsample update (cf. Section 4.2), obtaining the hashing codes
+for test users. The performance was then evaluated against
+the remaining 50% ratings for the test users. In this way,
+we simulated the online learning scenario, where a full retraining is prohibitive and the model needs to be instantly
+refreshed to better serve new users.
+Figure 4 shows the performance of the generalization test.
+We can see that DCF consistently outperforms other methods. The key reason is that the out-of-sample hashing by
+DCF preserves the original binary separations of the Hamming space by directly performing discrete optimization. On
+the other hand, since BCCF, PPH and CH are all two-stage
+approaches, the latent vectors of new users are ﬁrst approximated with ﬁxed item vectors. As a result, the subsequent
+quantization loss will be more severe. We can also see that
+the performances drop of DCF caused by less training data
+is acceptable, e.g., only 7% NDCG@10 drop as compared to
+the results obtained by original data.
+
+64.3
+
+77.5
+
+1.21e2
+
+4.81e2
+
+2.69e3
+
+2.12e−1
+
+4.11e−1
+
+8.37e−1
+
+1.66
+
+3.34
+
+6.71
+
+DCF
+
+2.25
+
+3.16
+
+5.18
+
+9.52
+
+29.6
+
+93.4
+
+7.
+
+Yelp
+
+Amazon
+
+Netﬂix
+
+Yelp
+
+Amazon
+
+Netﬂix
+
+BCCF(128)
+
+0.623
+
+0.827
+
+0.633
+
+0.268
+
+0.300
+
+0.262
+
+PPH(128)
+
+0.643
+
+0.841
+
+0.587
+
+0.626
+
+0.799
+
+0.566
+
+CH(128)
+
+0.655
+
+0.922∗
+
+0.693
+
+0.647
+
+0.815
+
+0.680
+
+DCF(8)
+
+0.684∗
+
+0.890
+
+0.730∗
+
+0.674∗
+
+0.825∗
+
+0.710∗
+
+CONCLUSIONS
+
+In this paper, a novel hashing approach dubbed Discrete
+Collaborative Filtering (DCF) was proposed to enable eﬃcient collaborative ﬁltering. In sharp contrast to existing collaborative ﬁltering hashing methods which are generally in a
+two-stage fashion, DCF directly learns binary codes for users
+and items according to the Hamming similarity induced rating loss. Through extensive experiments carried out on three
+benchmarks, we demonstrated that the main disadvantage of
+those two-stage hashing methods is the severe quantization
+loss caused by the inconsistency between input real-valued
+features and subsequent binary quantization. Beyond conventional two-stage methods that are not entirely optimized
+for hashing, our proposed DCF completes discrete optimization inherent to hashing and therefore achieves considerable
+performance gain over state-of-the-art collaborative ﬁltering
+hashing techniques.
+To the best of our knowledge, DCF is the ﬁrst principled
+learning-to-hash framework for accelerating CF, so we believe that it has a great potential to advance real-world recommendation systems since DCF can eﬀectively compress
+
+Table Lookup
+
+Dataset
+
+Impact of Discrete, Balanced and Uncorrelated
+Constraints (RQ3)
+
+As shown in Figure 5, it is not surprising that real-valued
+user/item features—MF outperforms other user/item binary
+codes. However, if we simply quantize MF features to MFB
+binary codes, signiﬁcant performance drop can be observed,
+especially as the bit size increases. As analyzed above, this
+is due to the quantization loss caused by the two-stage approaches. Interestingly, by adding the balanced and uncorrelated constraints, DCFinit generally outperforms MFB. An
+intuitive explanation is illustrated in Figure 2 that the two
+constraints can shift and rotate the real-valued features to a
+new user-item manifold that is beneﬁcial for the binary split
+of the original vector space into Hamming space, and thus
+less quantization loss is expected. Moreover, we can see that
+DCF signiﬁcantly outperforms DCFinit. This demonstrates
+the superiority of the proposed joint discrete optimization
+over the two-stage approaches.
+
+Table 2: Performance (NDCG@10) of various methods
+(#bit) using two search protocols on three datasets. *
+denotes the statistical signiﬁcance for p < 0.05.
+Hamming Ranking
+
+51.2
+
+CH
+
+6.3.3
+
+Generalization to New Users (RQ2)
+
+Protocol
+
+PPH
+
+To show the training overhead, we show the time cost for
+hashing new users of the largest dataset Netﬂix in Table 3.
+First, we see CH requires the least hashing time, followed
+by our DCF method. The eﬃciency of CH is owing to its
+simple design — which adopts the conventional SVD and
+
+332
+
+5
+
+k
+
+15
+
+k
+
+15
+
+0.8
+0.6
+0.4
+0.2
+5
+
+10
+
+k
+
+15
+
+NDCG@K
+
+0.8
+5
+
+0.4
+0.2
+0
+
+5
+
+15
+
+k
+
+15
+
+0.6
+0.4
+
+20
+
+5
+
+10
+
+k
+
+15
+
+0.4
+10
+
+k
+
+15
+
+0.8
+
+NDCG@K
+
+NDCG@K
+
+NDCG@K
+
+0.6
+
+0.6
+0.4
+
+20
+
+5
+
+10
+
+k
+
+15
+
+10
+
+k
+
+15
+
+0.6
+0.4
+0.2
+5
+
+10
+
+k
+
+15
+
+20
+
+10
+
+k
+
+15
+
+5
+
+10
+
+k
+
+15
+
+0.8
+0.6
+0.4
+5
+
+10
+
+k
+
+15
+
+5
+
+20
+
+10
+
+15
+
+k
+
+NDCG@K
+
+0.4
+0.2
+5
+
+10
+
+k
+
+15
+
+0.4
+0.2
+15
+
+k
+
+k
+
+5
+
+10
+
+k
+
+15
+
+0.6
+0.4
+10
+
+k
+
+15
+
+5
+
+10
+
+15
+
+20
+
+0.4
+0.2
+
+0.8
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+20
+
+k
+
+1
+
+5
+
+10
+
+k
+
+15
+
+0.5
+0
+
+20
+
+0.6
+5
+
+10
+
+k
+
+15
+
+0.6
+0.4
+10
+
+k
+
+15
+
+20
+
+0.8
+0.6
+0.4
+
+20
+
+0.8
+
+5
+
+k
+
+256 bits
+
+0.8
+
+0.2
+
+k
+
+0.9
+
+0.7
+
+20
+
+0.5
+
+0.4
+
+20
+
+0.8
+
+5
+
+20
+
+128 bits
+
+0.6
+15
+
+15
+
+k
+
+256 bits
+
+0.8
+
+0
+
+20
+
+0.8
+
+10
+
+10
+
+1
+
+64 bits
+
+5
+
+5
+
+0.6
+
+20
+
+0.9
+
+0.7
+
+20
+
+0.6
+
+10
+
+0.6
+0.5
+
+20
+
+1
+
+5
+
+0.7
+
+128 bits
+
+0.8
+
+0.2
+
+15
+
+1
+
+0.8
+
+0.4
+
+20
+
+k
+
+0.8
+
+0.8
+
+64 bits
+
+Netﬂix
+
+0.6
+
+10
+
+0.6
+
+20
+
+0.9
+
+0
+
+5
+
+NDCG@K
+
+0.2
+
+0.7
+
+20
+
+0.8
+
+0.2
+
+0.4
+
+5
+
+20
+
+0.8
+
+0.4
+
+20
+
+0.8
+
+5
+
+5
+
+32 bits
+
+0.8
+
+20
+
+0.8
+
+Amazon
+
+0.8
+
+0
+
+20
+
+NDCG@K
+
+NDCG@K
+
+0.6
+
+k
+
+10
+
+15
+
+0.6
+
+20
+
+0.9
+
+0.7
+
+20
+
+k
+
+1
+
+16 bits
+
+0.8
+
+10
+
+15
+
+k
+
+0.6
+
+8 bits
+
+5
+
+10
+
+0.8
+
+20
+
+k
+
+15
+
+1
+
+0.9
+
+0.7
+
+20
+
+10
+
+32 bits
+
+NDCG@K
+
+NDCG@K
+
+0.8
+10
+
+0.2
+5
+
+1
+
+5
+
+0.4
+
+20
+
+10
+
+0.8
+
+0.6
+
+16 bits
+
+NDCG@K
+
+NDCG@K
+NDCG@K
+
+10
+
+5
+
+NDCG@K
+
+0.2
+
+8 bits
+0.9
+
+20
+
+0.4
+
+NDCG@K
+
+0.4
+
+1
+
+15
+
+0.8
+
+0.6
+
+20
+
+k
+
+0.6
+
+NDCG@K
+
+k
+
+15
+
+10
+
+0.6
+
+0.8
+
+NDCG@K
+
+10
+
+5
+
+NDCG@K
+
+5
+
+NDCG@K
+
+20
+
+0.7
+
+NDCG@K
+
+0.2
+
+0.4
+
+15
+
+0.8
+
+0.5
+
+256 bits
+
+128 bits
+
+NDCG@K
+
+0.4
+
+0
+
+k
+
+64 bits
+
+NDCG@K
+
+0.6
+
+0.7
+
+10
+
+0.8
+
+NDCG@K
+
+NDCG@K
+
+0.8
+
+5
+
+DCF
+
+NDCG@K
+
+20
+
+0.5
+
+CH
+
+NDCG@K
+
+15
+
+0.6
+
+NDCG@K
+
+k
+
+0.5
+
+0.7
+
+NDCG@K
+
+10
+
+0.6
+
+0.8
+
+NDCG@K
+
+5
+
+0.7
+
+NDCG@K
+
+0.4
+
+0.8
+
+NDCG@K
+
+0.6
+
+32 bits
+
+NDCG@K
+
+NDCG@K
+
+NDCG@K
+
+0.8
+
+PPH
+
+Yelp
+NDCG@K
+
+16 bits
+
+8 bits
+
+BCCF
+
+NDCG@K
+
+MF
+
+5
+
+10
+
+15
+
+20
+
+5
+
+10
+
+15
+
+20
+
+k
+
+0.8
+0.6
+0.4
+
+k
+
+Figure 6: Item recommendation performance (NDCG@K) of all the CF hashing methods of various code lengths. For
+each dataset, the top row is the performance by Hamming ranking and the bottom row is by table lookup (RQ 1). As
+MF is continuous, we used cosine ranking and table lookup is not applied.
+gigantic users/items to compact binary codes. As moving
+forward, we are going to apply DCF to various CF applications [27, 13] as well as more generic feature-based factorization approaches [23].
+
+[2] D. Agarwal, B.-C. Chen, and P. Elango. Fast online learning
+through oﬄine initialization for time-sensitive recommendation.
+In KDD, 2010.
+[3] S. Balakrishnan and S. Chopra. Collaborative ranking. In
+WSDM, 2012.
+[4] J. Bennett and S. Lanning. The netﬂix prize. In KDD, 2007.
+[5] J. Bobadilla, F. Ortega, A. Hernando, and A. Gutiérrez.
+Recommender systems survey. Knowledge-Based Systems,
+2013.
+[6] A. S. Das, M. Datar, A. Garg, and S. Rajaram. Google news
+personalization: scalable online collaborative ﬁltering. In
+WWW, 2007.
+[7] A. Gionis, P. Indyk, R. Motwani, et al. Similarity search in
+high dimensions via hashing. In VLDB, 1999.
+
+Acknowledgements
+NExT research is supported by the National Research Foundation, Prime Minister’s Oﬃce, Singapore under its IRC@SG
+Funding Initiative.
+
+8.
+
+REFERENCES
+
+[1] G. Adomavicius and A. Tuzhilin. Toward the next generation of
+recommender systems: A survey of the state-of-the-art and
+possible extensions. TKDE, 2005.
+
+333
+
+and the rest two linear terms w.r.t. bik can be rewritten as:
+
+[8] K. Goldberg, T. Roeder, D. Gupta, and C. Perkins. Eigentaste:
+A constant time collaborative ﬁltering algorithm. Information
+Retrieval, 2001.
+[9] Y. Gong, S. Lazebnik, A. Gordo, and F. Perronnin. Iterative
+quantization: A procrustean approach to learning binary codes
+for large-scale image retrieval. TPAMI, 2013.
+[10] E. F. Harrington. Online ranking/collaborative ﬁltering using
+the perceptron algorithm. In ICML, 2003.
+[11] J. Håstad. Some optimal inapproximability results. JACM,
+2001.
+[12] X. He, T. Chen, M.-Y. Kan, and X. Chen. Trirank:
+Review-aware explainable recommendation by modeling
+aspects. In CIKM, 2015.
+[13] X. H. He, H. Zhang, M.-Y. Kan, and T.-S. Chua. Fast matrix
+factorization for online recommendation with implicit feedback.
+In SIGIR, 2016.
+[14] A. Karatzoglou, M. Weimer, and A. J. Smola. Collaborative
+ﬁltering on a budget. In AISTAT, 2010.
+[15] Y. Koren. Collaborative ﬁltering with temporal dynamics. In
+KDD, 2009.
+[16] Y. Koren, R. Bell, and C. Volinsky. Matrix factorization
+techniques for recommender systems. Computer, 2009.
+[17] W. Liu, C. Mu, S. Kumar, and S.-F. Chang. Discrete graph
+hashing. In NIPS, 2014.
+[18] X. Liu, J. He, C. Deng, and B. Lang. Collaborative hashing. In
+CVPR, 2014.
+[19] H. Ma, D. Zhou, C. Liu, M. R. Lyu, and I. King. Recommender
+systems with social regularization. In WSDM, 2011.
+[20] J. Mairal, F. Bach, J. Ponce, and G. Sapiro. Online learning for
+matrix factorization and sparse coding. JMLR, 2010.
+[21] J. McAuley and J. Leskovec. Hidden factors and hidden topics:
+Understanding rating dimensions with review text. In RecSys,
+2013.
+[22] M. Norouzi, A. Punjani, and D. J. Fleet. Fast search in
+hamming space with multi-index hashing. In CVPR, 2012.
+[23] S. Rendle. Scaling factorization machines to relational data.
+VLDB, 2013.
+[24] S. Rendle, C. Freudenthaler, Z. Gantner, and
+L. Schmidt-Thieme. Bpr: Bayesian personalized ranking from
+implicit feedback. In UAI, 2009.
+[25] B. Sarwar, G. Karypis, J. Konstan, and J. Riedl. Item-based
+collaborative ﬁltering recommendation algorithms. In WWW,
+2001.
+[26] F. Shen, C. Shen, W. Liu, and H. T. Shen. Supervised discrete
+hashing. In CVPR, 2015.
+[27] M. Volkovs and G. W. Yu. Eﬀective latent models for binary
+feedback in recommender systems. In SIGIR, 2015.
+[28] J. Wang, S. Kumar, and S.-F. Chang. Semi-supervised hashing
+for large-scale search. TPAMI, 2012.
+[29] J. Wang, W. Liu, S. Kumar, and S.-F. Chang. Learning to hash
+for indexing big data: A survey. Proceedings of the IEEE, 2016.
+[30] M. Weimer, A. Karatzoglou, Q. V. Le, and A. Smola.
+Maximum margin matrix factorization for collaborative
+ranking. NIPS, 2007.
+[31] Y. Weiss, A. Torralba, and R. Fergus. Spectral hashing. In
+NIPS, 2009.
+[32] Z. Zhang, Q. Wang, L. Ruan, and L. Si. Preference preserving
+hashing for eﬃcient recommendation. In SIGIR, 2014.
+[33] K. Zhou and H. Zha. Learning binary codes for collaborative
+ﬁltering. In KDD, 2012.
+[34] Y. Zhou, D. Wilkinson, R. Schreiber, and R. Pan. Large-scale
+parallel collaborative ﬁltering for the netﬂix prize. In AAIM,
+2008.
+
+j∈Vi
+
+−2bik
+
+
+
+j∈Vi
+
+Sij djk − 2αxik bik − 2
+
+
+argmin
+bik ∈{±1}
+
+where b̂ik =
+
+
+
+j∈Vi
+
+
+
+− b̂ik bik ,
+
+(21)
+
+
+
+
+j∈Vi
+
+
+Sij − dT
+djk + αxik . It is easy to see
+b
+i
+k̄
+j k̄
+
+that the optimized bik should be the sign of b̂ik . Therefore, the
+update rule for bik can be given in Eq. (7). Tthe update rule for
+djk in Eq. (9) can be derived in a similar way.
+Proof of Theorem 1. We prove the three parts of Theorem 1
+one by one.
+Part 1. It is easy to see that {B(t) , D(t) } generated by the DCD
+Step 7 and Step 15 monotonically decreases the objective functions of B-subproblem and D-subproblem in Eq. (6) and Eq. (8),
+respectively. Without loss of generality, we show that {X(t) }
+generated by Step 20 monotonically decreases the objective function of X-subproblem in Eq. (10). In particular, denote X as
+the updated X at each step, we show that X maximizes the
+X-subproblem.
+We ﬁrst show that X is feasible, i.e., X ∈ B. Note that
+T
+1
+B = BJ, where J = I − m
+11T . Since B and Qb has the
+T
+same row space, we have Qb 1 = 0 due to B1 = 0. As we con b = 0, we have 1T [Qb Q
+ b ] = 1, which
+ b such that 1T Q
+struct Q
+implies X 1 = 0. Moreover, it is easy to show that XXT =
+
+ b ][Qb Q
+ b ]T [Qb Q
+ b ][Pb P
+ T
+m[Pb P
+⎡ b ] ⎤= mI. Therefore, X is feasiΣb 0
+
+ b] ⎣
+ble. As SVD BJ = [Pb P
+√
+
+m
+
+r
+
+k=1
+
+0
+
+0
+
+ b ]T , we have tr(X BT ) =
+⎦ [Qb Q
+
+σk , where σk is diagonal eigenvalues of Σb . ∀X ∈ B,
+T
+
+by using
+ von Neumann’s trace inequality, we have tr(XB ) ≤
+√
+m rk=1 σk . Due to X1 = 0, we have XJ = X. So, X is a maxT
+
+T
+
+imizer. Thus far, we have tr(XBT ) = tr(XB ) ≤ tr(X B ) =
+tr(X BT ).
+Part 2. We show that the loss function L(B, D, X, Y) in Eq. (5)
+is lower bounded. By Cauchy-Schwartz inequality tr(B T X) ≤
+BF XF , we have
+L(B, D, X, Y) ≥ 0 − 2αBF XF − 2βDF YF
+√ √
+√ √
+≥ −2α mr mr − 2β nr nr = −2αmr − 2βnr.
+
+(22)
+
+Thus, together with the monotonic decrease proved in Part 1, we
+can conclude that {L(B(t) , D(t) , X(t) , Y (t) )} converges.
+Part 3. It is easy to see that L(X, Y, B, D) is Lipschitz continuous w.r.t. X and Y, thus, {X(t) , Y (t) } converges. Therefore, it
+is suﬃcient to prove {B(t) , D(t) } converges.
+Without loss of generality, we drop the subscript i and only
+(t+1)
+(t)
+show that ∃T such that ∀k, t > T , bk
+= bk . Suppose there
+(t)
+
+= bk , due to the update rule in Eq. (7),
+is a k such that bk
+b̂k = 0, which implies a strict decrease for the objective function
+L(b). Since b is binary valued, L(b) has ﬁnite values. If such
+k exists, it will lead to inﬁnite values, which contradicts the
+fact. Therefore, we conclude that {B(t) } converges. Moreover,
+since L(B, D) has ﬁnite values, there exists B(t+1) such that
+D(t+1) = D(t) . Therefore, {B(t) , D(t) } converges and so does
+{B(t) , D(t) , X(t) , Y (t) } .
+
+
+
+j∈Vi
+
+Sij dT
+b − 2αxT
+b .
+ik̄ ik̄
+j k̄ ik̄
+
+(20)
+
+(t+1)
+
+
+2
+dj dT
+(dT
+j )bi =
+j bi ) =
+j∈Vi 
+j∈V
+i
+
+
+
+
+
+dT
++
+(dT
+b d
+b )2 + (djk bik )2 ,
+2bik
+j k̄ ik̄
+j k̄ ik̄ jk
+
+
+
+Therefore, we can derive a set of bit-wise minimizations:
+
+Derivation of Eq. (7). Without loss of generality, suppose bi =
+b ]T and dj = [dT
+d ]T , the quadratic term in Eq. (6)
+[bT
+ik̄ ik
+j k̄ jk
+w.r.t bik can be rewritten as:
+
+j∈Vi
+
+T
+Sij dT
+j )bi − 2αxi bi =
+
+constant
+
+APPENDIX
+
+bT
+i (
+
+
+
+2(
+
+(19)
+
+
+constant
+
+334
+
+

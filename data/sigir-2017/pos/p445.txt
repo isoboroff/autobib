@@ -1,0 +1,2613 @@
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+E�icient Cost-Aware Cascade Ranking in Multi-Stage Retrieval
+Ruey-Cheng Chen
+
+Luke Gallagher
+
+RMIT University
+Melbourne, Australia
+
+RMIT University
+Melbourne, Australia
+
+Roi Blanco
+
+J. Shane Culpepper
+
+RMIT University
+Melbourne, Australia
+
+RMIT University
+Melbourne, Australia
+
+ABSTRACT
+
+models in a cascade can be deployed in an ascending order of
+model complexity, and only a fraction of documents in each stage
+will advance to the next stage. Generally, early-stage rankers are
+cheaper to run, and usually focus on executing an early-exit strategy,
+such as� ltering out non-relevant documents as quickly as possible.
+Ranking models in later stages are usually more accurate but require
+more resources.
+When discussing system performance, it is important to consider both ranking e�ectiveness and system throughput within
+the same framework. Wang et al. [36] used a modi�ed AdaRank
+algorithm to incorporate the costs of individual rankers, in terms
+of execution time for each single-feature weak learner used in the
+training procedure.� is cascade model, however, cannot be used
+with gradient-boosted tree models, which are now widely believed
+to be state-of-the art for web search ranking algorithms [25, 30].
+Conceptually, the making of a tree-based cascade model can be
+reasonably separated into two steps, which are cascade construction
+and model deployment. In the� rst step, a learning algorithm takes
+into account the e�ectiveness of features and the cost of feature
+extraction, makes the best tradeo�s by following the direction from
+cascade designer, and automatically trains a cascade of ranking
+models.� e learned cascade can then be deployed in the second
+step, focusing on optimizing low-level system performance. In this
+paper, we develop a new approach to constructing a cost-aware
+cascade. A considerable amount of recent research e�ort has been
+invested in the space of optimizing the run-time performance of
+gradient-boosted tree models [3, 14, 19, 20], which can be directly
+leveraged by our new cascading approach.
+
+Complex machine learning models are now an integral part of
+modern, large-scale retrieval systems. However, collection size
+growth continues to outpace advances in e�ciency improvements
+in the learning models which achieve the highest e�ectiveness. In
+this paper, we re-examine the importance of tightly integrating
+feature costs into multi-stage learning-to-rank (LTR) IR systems.
+We present a novel approach to optimizing cascaded ranking models
+which can directly leverage a variety of di�erent state-of-the-art
+LTR rankers such as LambdaMART and Gradient Boosted Decision
+Trees. Using our cascade model, we conclusively show that feature
+costs and the number of documents being re-ranked in each stage
+of the cascade can be balanced to maximize both e�ciency and
+e�ectiveness. Finally, we also demonstrate that our cascade model
+can easily be deployed on commonly used collections to achieve
+state-of-the-art e�ectiveness results while only using a subset of
+the features required by the full model.
+
+1
+
+INTRODUCTION
+
+Learning-to-Rank (LTR) systems are now commonly deployed by
+major search engine companies and they have been repeatedly
+shown to be highly e�ective for a variety of search related problems [6, 15, 26, 30].� ere has been a growing body of recent
+work which focuses on improving the e�ciency of multi-stage
+LTR systems using several di�erent techniques: improving tree
+traversal [19], cascaded ranking [36], tree pruning [18, 38, 39], and
+minimizing sample sizes in stages [11, 22].
+In this paper we revisit the idea of cascaded ranking in order
+to provide more control over e�ciency and e�ectiveness tradeo�s in large scale search systems. A cascade ranking model [36]
+is a sequence of learning-to-rank models (called stages) chained
+together to collectively rank a set of documents for a query.�e
+main assumption behind cascaded ranking is that full inspection of
+the content, which would presumably require generating expensive
+features is not required for every incoming document as only a
+small fraction of all documents will be relevant.� erefore, LTR
+
+Research Goals. In this work, we revisit the problem of integrating
+feature costs into learning-to-rank models. In particular, we focus
+on how best to balance feature importance and feature costs in
+multi-stage cascade ranking models. Our overarching goal is to
+devise a generic framework which can be used with any state-ofthe-art LTR algorithm, and allows more control over balancing
+e�ciency and e�ectiveness in the entire re-ranking process. In
+order to achieve these goals, we focus on two related research
+problems:
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for pro�t or commercial advantage and that copies bear this notice and the full citation
+on the� rst page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permi�ed. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior speci�c permission
+and/or a fee. Request permissions from permissions@acm.org.
+SIGIR ’17, August 07-11, 2017, Shinjuku, Tokyo, Japan
+© 2017 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+978-1-4503-5022-8/17/08. . . $15.00
+DOI: h�p://dx.doi.org/10.1145/3077136.3080819
+
+Research� estion (RQ1): When designing multi-stage retrieval
+systems, what approaches provide the best balance between extraction/runtime costs and feature importance when using cascaded LTR
+algorithms?
+Research� estion (RQ2): Can we build multi-stage ranking models that require substantially less costs than a full cost-insensitive
+model, and still achieve overall e�ectiveness close to the full model?
+
+445
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+into working search engines which must index internet-scale document collections – e�ciency. E�ciency concerns may be strictly
+algorithmic [3, 7, 14, 19, 20], they may explicitly focus on feature
+costs [1, 6, 23, 35–37, 39], or they may perform post-learning optimizations to reduce the size of the tree ensembles [18, 38, 39].
+Another related line of research is to focus on the importance
+of balancing e�ciency and e�ectiveness in LTR systems, which
+is directly aligned with our current work. Perhaps the most comprehensive study on this problem is the recent work of Capannini
+et al. [7]. A less obvious trade-o� concern is how to construct the
+“sample” of documents that are used for training and for scoring
+at runtime for new queries coming into the system [10, 22].�is
+issue can have an important impact on both training and runtime
+scoring in multi-stage systems, and a problem that we revisit in the
+context of cascaded ranking. Finally, the cost of model training can
+also be an important problem [2, 22], but is not explored further in
+this work.
+
+Inverted Index
+
+Dynamic Features
+
+d1
+
+(
+
+Reorder
+
+)
+
+d3
+d4
+
+relevance
+
+d2
+
+BOW Run
+create initial
+sample
+
+d5
+dk
+
+Learning to Rank
+
+Pre-Computed
+Features
+
+Cascade Ranking. Raykar et al. [28] described an approach to
+jointly train a cascade of classi�ers to support clinical decision
+making, with the expected cost of feature acquisition taken into
+account.� is approach does not a�empt to address the issues of
+cascade design, such as the number of cascade stages and the design
+of cuto�s.� e closest work to our own are the cascade models
+previously explored by Wang et al. [36] and Xu et al. [39]. Wang
+et al. proposed a cascade learning algorithm based on an additive
+ranking model AdaRank.� e algorithm produces a cascade by incrementally incorporating weaker rankers in the ascending order of
+cost e�ciency. In each stage only one weak ranker is incorporated.
+�e document scores are accumulative, so conceptually all the previously selected features are involved in the scoring. However, more
+recent improvements in GBRT-based LTR algorithms has made this
+approach less competitive than state-of-the-art learning models.
+Xu et al. [39] proposed an algorithm that takes a trained GBDT
+model and produces a cascade by reweighting the trees in the full
+model.� e e�ectiveness of the cascade is roughly the same as a full
+GBDT model.� ey use a monolithic cost function which accounts
+for several variables such as: model loss, tree evaluation costs,
+and feature cost. However, optimization of this loss function is
+quite complex, and their approach do not address the design issues
+pointed out in this paper, such as the e�ect of cascade structures
+on the� nal retrieval e�ectiveness of the cascade model.
+
+Figure 1: A typical learning-to-rank system con�guration is composed of an inverted index which is used to generate an initial
+candidate set (sample) of s documents.� is set of documents is
+then re-ordered using one or more rounds of machine learning
+algorithms.� e number of documents can be pruned in each round,
+or iteratively smaller subsets of the highest ranking documents in
+the initial sample s are re-ordered. A� nal top-k set of documents
+are then returned from the system in relevance order.
+
+2
+
+BACKGROUND AND RELATED WORK
+
+Learning to rank. A signi�cant body of prior work exists in the
+area of learning-to-rank (LTR) [15].� e majority of research advances in LTR have focused on ways to improve the e�ectiveness
+of the systems, with several document collections released to test
+their performance. A recent study by Tax et al. [30] compare 87
+learning to rank methods using 20 di�erent test collections.
+However, one common problem with these test collections is
+that the features used by the models are o�en not fully de�ned,
+making it very di�cult to implement them using commonly used
+IR test collections.� is in turn prevents easily transferring the advances made into working end-to-end search systems. While many
+di�erent publicly available search engines [32] are commonly used
+by researchers and practitioners, only Terrier 4.x [23] currently
+supports end-to-end multi-stage retrieval on commonly used IR
+document collections with li�le or no manual intervention. So the
+chasm between academic research and large search engine companies on provably good system architectures remains relatively
+wide. Figure 1 shows the architecture of a complete LTR system
+consisting of at least two stages. Every aspect of this architecture
+should be considered when building e�ective and e�cient search
+systems. Macdonald et al. [22] were among the� rst to consider
+all of the di�erent angles when building an LTR system for adhoc
+search.
+
+3
+
+APPROACH
+
+Stage-wise cascades are� exible models that allow for a number
+of architectural decisions, such as: the number of stages used, the
+number of documents forwarded to the next stage, and so on.�e
+choice of features involved in each stage is a critical factor in balancing e�ciency and e�ectiveness in the end-to-end system.�is
+trade-o� is further elucidated by the following observations:
+• A cascade may choose to defer the use of expensive features to
+later cascade stages as feature extraction on fewer documents
+is necessary, and will be more cost e�cient.
+• A cascade may choose to include useful features early on,
+since features extracted in earlier stages can be re-used in
+all remaining stages without incurring additional costs.�e
+reusability of key features can make the cascade more e�ective.
+
+Improving E�ciency in LTR Algorithms. A critical aspect of
+LTR must be considered when translating these powerful models
+
+446
+
+Session 4B: Retrieval Models and Ranking 2
+
+d1
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+expression:
+
+C,K=3
+
+d2
+C,K=1
+
+h ⇤ = argmin
+
+d3
+dN
+
+h 2H
+
+3
+
+d5
+
+2
+
+d9
+
+C,K=2
+
+d10
+d11
+d12
+1
+
+Figure 2: A three level cascade which initially takes ds documents
+as the sample input. In Round 1, C, K = 1 reorders all d N1 documents. In Round 2, a subset of the d N2 documents are reordered by
+C, K = 2. In the� nal round, d N3 documents are reordered. Up to
+d N documents total can be returned from the� nal level.
+
+Our general approach to cascade construction is to� rst assign
+feature sets to di�erent stages using a set of prede�ned heuristics
+(c.f. Sec. 4), and then perform automatic feature selection for every
+stage of the cascade, while jointly optimizing ranking e�ectiveness
+and e�ciency. Ideally, the procedure should maintain performance
+comparable to a complete feature set model while at the same time
+accounting for feature costs. We now describe a theoretical framework for model regularization that reuses well-known solutions
+in the machine learning� eld in order to achieve both objectives.
+Even though the goal of regularization is to minimize the e�ect
+of over��ing, in this paper we show how it can also be used to
+produce compact models that are feature extraction cost aware.
+
+Cost-Aware Feature Selection
+
+Regularization. Supervised machine learning algorithms are exposed to a training set of pairs {(xi , i )}n with the goal of�nding
+an approximation to the function h, mapping to x that minimizes
+the expected value of a prede�ned loss function L( , h(x)) over
+the joint distribution of all (x, ) values:
+h ⇤ = argmin E ,x [L( , h(x))] = argmin E x [E [L( , h(x))]|x].
+h 2H
+
+L( , h w (x)) + kwk22 ,
+
+(2)
+
+Cost-Aware L 1 regularization. One problem with Equation 2 is
+that the learning algorithm is agnostic to feature costs. In order to
+minimize costs, one would like to reduce the number of features
+(covariates) that are used by the model, weighted by their cost,
+and at the same time maximize the performance.� is problem
+is closely related to feature selection, and has a close connection
+with regularization. In fact, Equation 2 tries to bring down the
+contribution (weight) of each feature as much as possible while
+also minimizing the loss. In our case, however, having a non-zero
+weight for a particular feature implies that we have to pay the whole
+cost of extracting it, no ma�er how small it is.
+Let c 2 Rd be the feature-cost vector, in which each entry represents the normalized cost for extracting the feature. In the case
+of a linear model, we want to minimize cT I>0 (w), where I>0 is
+the component-wise indicator function, which is 1 if the weight is
+over zero, and 0 otherwise.� is penalty factor would be included
+in the formulation of Equation 2. In practice, this means we need
+a procedure for controlling the amount of covariates included in
+the� nal model automatically. To do this, we allow the learner to
+perform automatic feature selection by adding a L 1 penalty to the
+loss function (Eq. 2).� is penalty is the L 1 norm of the weight
+vector weighted by the feature costs c.
+Conventionally, L 1 regularized regression models with a least
+square loss function are also known as LASSO (least absolute shrinkage and selection operator) and were originally designed to perform
+covariate selection, and help to make the model more interpretable.
+Lasso is able to achieve this by forcing the sum of the absolute value
+of the regression coe�cients to be less than a� xed value, which in
+practice forces certain coe�cients to be set to zero, e�ectively choosing a simpler model that does not include those coe�cients [31].
+In our case, we will exploit this property to generate less expensive
+models in terms of feature extraction time.
+To sum up, the ranker would minimize the expression:
+
+d8
+
+3.1
+
+i=1
+
+where in this case h functionally depends on w. For instance h(x) =
+wT (x), where is a kernel feature mapping.
+
+d6
+dN
+
+dN
+
+n
+X
+
+h 2H
+
+h ⇤ = argmin
+h 2H
+
+(1)
+
+n
+X
+i=1
+
+L( , h w (x)) + kwk22 + kc wk ,
+
+(3)
+
+where and are parameters that control the trade-o� between the
+loss and regularization penalty, and is the component-wise product.� erefore, the main idea is to learn a model using Equation 3,
+and then select the features that have a wi > 0, either directly in a
+linear model (we would use h w for ranking), or as an input to other
+LTR methods (which would learn a model using only the subset of
+parameters selected).
+�ere are several options for learning the parameters w of such
+a model. An e�ective method is to use stochastic gradient descent
+and update w one example at a time; in this case the training update
+for a sample (xj , j ) is as follows:
+
+�e choice of loss function depends on the type of problems
+being learned (classi�cation, regression, pairwise, listwise). It is
+common practice to incorporate a regularization term R(h) in the
+loss function to prevent over��ing. Regularization usually leads
+to improved e�ectiveness because sparsity is enforced in model
+training and, as a result, the learned model is less likely to over�t
+the training set.� e most common type of regularizers apply a
+penalty on the complexity, shrinking the value of the parameters in
+order to reduce over��ing. For instance, if h(x) = wT x is a linear
+model with its parameters represented by a weight vector w 2 Rd , a
+widely-used regularizer is the L 2 norm of the weight vector. Given a
+training set of n instances, the model would minimize the following
+
+wt +1 = wt
+
+447
+
+t
+
+X
+@ *
+ci |wi | + ,
+L( , h w (x)) +
+@w ,
+n i
+-
+
+(4)
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+where t is the learning rate, which may depend on t, the number
+of iterations so far. Note that the L 2 regularizer in Eq (3) is omi�ed
+here for clarity.
+Strictly speaking, the L 1 norm is not di�erentiable (at w = 0).
+However, methods that rely on subgradients can be used to solve
+minimization problems that involve L 1 regularized objective functions, which in this particular case, boils down to replacing the
+partial derivative of the regularizer with its sign, which for each
+feature i results in:
+t @L( , h w (x))
+t
+(5)
+sign(wki )
+wit +1 = wit
+@w i
+n
+One drawback of this formulation is that it may not produce a
+compact model, because the weight of a feature does not become
+zero unless it happens to be exactly zero, which is rare in practice. To overcome this limitation, we use a variant of a proximal
+method proposed by Tsuruoka et al. [33] which works well with
+the Stochastic Gradient Descent (SGD) optimization procedure, and
+has been shown empirically to produce very compact models.�e
+main motivation is to smooth out the� uctuation of the gradients
+through multiple iterations, which can be high when using SGD as
+it approximates the true gradient, and is computed using the whole
+sample, one example at a time.� e original method, named SGDcumulative, approximates the loss gradient using the following
+update rules:
+ŵi t +1
+
+=
+
+ut
+
+=
+
+qit
+
+=
+
+and�nally
+wi t +1 =
+
+(
+
+wi t
+t
+X
+
+t
+
+@L( , h w (x))
+,
+@wi
+w=wt
+
+j
+,
+n j=1
+t ⇣
+X
+wi j+1
+j=1
+
+splits the data using one feature. With each split, the tree outputs
+are modi�ed, and the training squared loss varies.� en, once an
+ensemble is learned, the non-terminal nodes of the trees can be
+iterated through to compute the reduction of squared loss for every
+feature, and the results aggregated for di�erent feature splits. Lastly,
+the� nal importance is computed as the average over all of the trees.
+
+3.2
+
+Randomized Search. To tackle this problem, randomized search
+[4] is performed in this study to select the cascade con�guration.
+�is is done by randomly sampling a large number of cascade
+con�gurations from this space, followed by a seletion step that
+maximizes the cascade e�ectiveness on validation data. Ideally, this
+approach can explore any search space fairly e�ciently within a
+relatively small number of rounds, but when feature allocation is
+involved many feature combinations it explores will not be e�ective.
+Randomized search does not work well when good con�gurations
+are di�cult to reach.
+�e cost-aware L 1 regularization algorithm, as described in
+Sec. 3.1, was developed to mitigate this issue and simplify the search.
+It turns the search problem in a combinatorial space (that covers
+all possible ways of feature allocation) into a simple line search,
+making it possible to “si� through” the feature allocation space
+e�ciently by tweaking . In our formulation, the coe�cient controls the desired level of e�ectiveness-e�ciency tradeo�, so when a
+di�erent tradeo� is given a di�erent subset of features that re�ects
+this change will be selected. Practically speaking, a small leads to
+a gently reduced feature set with slightly decreased e�ectiveness
+compared to the full model; a large , on the other hand, will prune
+the feature set fairly aggressively and result in a compact model
+that uses only couples of features, which is ideal as an early stage
+model. Using this algorithm, a cascade can then be constructed by
+feeding in a sequence of decreasing values (from early to late) to
+generate cascade stages.
+More details about the use of randomized search will be described
+in later sections. In the� rst two experiments, we use a set of
+prede�ned cascade con�gurations to simplify the experimental
+setup and serve as the experimental control. Further investigations
+on� ne-tuning cascade con�gurations is carried out using GOV2
+with the best-performing cascade methods discussed in Sec. 4.3.
+
+(6)
+(7)
+
+⌘
+ŵi j+1 ,
+
+max(0, ŵi t +1 (u t + q t 1 )),
+min(0, ŵi t +1 + (u t q t 1 )),
+
+(8)
+
+ŵi t +1 > 0
+ŵi t +1  0
+
+(9)
+
+In order to introduce the per-feature cost ci , we create one uit
+P
+variable per feature as uit = ci n tj=1 j which is then used to
+update wi t +1 . It is important to note that the method is able to select
+a subset of features that can be used to further retrain any arbitrary
+model, and thus it can be used in combination with state of the art
+non-linear rankers such as the ones commonly used in production
+systems (GBRT or LambdaMART for example). Henceforth, we will
+use a least squares loss function, and simple linear regression for h:
+⌘2
+1⇣
+L( , h w (x)) =
+(10)
+wT x
+2
+�is proved to be empirically e�ective in our setup, while also
+converging quickly in fewer epochs.
+�ere are several alternative feature selection methods, that in
+general are based on an optimality criteria metrics such as Bayesian
+information criterion, or Minimum Description Length. In this
+work, we also make further use of GBRT’s feature importance [12],1
+as it intrinsically captures interdependencies between covariates.
+In short, the process learns a set of decision trees, where each node
+1 An
+
+Cascade Construction
+
+Constructing a cascade model involves se�ing a number of parameters, including the number of cascade stages K, the cuto� thresholds
+hc 1 , c 2 , . . . , c K i, and the features sets used in each stage hF 1 , . . . F K i.
+As one might expect, the design space of a cascade model is humongous.� e complexity of exploring the entire space of all possible
+parameter combinations and feature allocations is prohibitively
+large, and interdependencies between features can a�ect both the
+e�ectiveness and computational costs signi�cantly.
+
+Feature Availability. We also experimented with a number of
+feature availability se�ings, and assume that the availability of a
+feature may change across cascade stages. In a production search
+system, some features might arrive much later than the others for
+various reasons, such as that they are expensive to run or their
+generation being deferred due to the design of the feature extraction procedure. To simulate this e�ect, our approach is to have
+
+equivalent process exists for the case of multi-class classi�cation.
+
+448
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+certain models subdivide the full feature set into K equal-sized
+partitions and assign feature partitions to the respective cascade
+stages.� e rationale behind this approach is that, by presenting
+a limited choice of features, which is 1/K of the full set, a feature
+extraction pipeline can be simulated to work in parallel with the
+ranking models, serving features in an order based on a pre-de�ned
+criteria. Each cascade stage has access to all features extracted in
+the previous stages without incurring additional costs. In this paper,
+we explored three di�erent feature availability se�ings:
+
+Table 1: Summary of the key properties of the two benchmark
+collections used in this study.
+
+(1) Cost-biased allocation (C): Features are� rst sorted in ascending order of unit cost and partitioned into K stages.�is
+se�ing is a close approximation to the scenario where cheap
+features are available to the ranking model earlier than expensive ones.
+(2) Cost-e�ciency-biased allocation (E):� e features are�rst
+sorted in descending order of cost e�ciency and partitioned
+into K stages.� e cost e�ciency of a feature is de�ned as the
+importance score divided by its unit cost, where importance
+is computed from a ground-truth tree model as described in
+Sec. 3.1.� is se�ing simulates having a dedicated extraction
+pipeline for more cost-e�cient features.
+(3) Full allocation (F): All features are accessible from individual
+cascade stages.� is se�ing represents the scenario where the
+choice of extracted feature is unrestricted, providing the greatest� exibility to the underlying cost-aware feature selection
+algorithm.
+
+contains 519 features (out of 700 in total) with an associated feature
+cost, and has 19,944 training queries, 1,266 validation queries, and
+3,798 test queries.� e original cost estimates included with the data
+were used without modi�cation in our experiments. All features
+used in Set 1 have extraction costs between 1 and 200. Our second
+collection is the TREC GOV2 test collection (GOV2) using queries
+701–850 in a 5-fold cross validated con�guration. We created 425
+features for this collection as described next in Section 4.2. For
+all queries, we created the initial sample by running BM25 with
+k 1 = 0.9 and b = 0.4 to an initial depth of 5,000. A summary of the
+two benchmark collections are shown in Table 1.
+
+A�er applying one of these se�ings, cost-aware L 1 regularization
+is performed to each cascade stage separately with a sequence of
+decreasing values.� e algorithm (Sec. 3.1) will reach the desired
+level of feature size in 10–20 epochs. Running this procedure for
+more iterations does not change the results. We also set a constant
+decaying learning rate = 0.1 across the board.
+
+(1) Ground Truth Models: We compare with ranking models
+executed in a non-cascade se�ing, where the full set of features is used in training and prediction.� ree ranking models
+are employed: Gradient-Boosted Decision Trees (GBDT) [12],
+Gradient-Boosted Regression Trees (GBRT) [12], and LambdaMART [5]. Our implementations of these ranking models
+are based on xgboost.
+(2) Baselines: We use several baseline methods, such as QL [40],
+BM25 [29], and SDM [24], on GOV2 to verify the gain in e�ectiveness relative to a standard retrieval se�ing.� ese baseline
+methods are however not available for Y!S1.
+(3) Cascade Baselines: We implemented the cascade ranking
+algorithm described in Wang et al. [36], using the suggested
+se�ing = 0.1. Note that se�ing a smaller does not improve its e�ectiveness. We also implemented early stopping
+on training e�ectiveness to avoid explicitly se�ing the number
+of cascade iterations.
+
+4
+
+Y!S1
+GOV2
+
+# Total Docs
+
+# Features
+
+6,983
+150
+
+165,660
+1,500,000
+
+519
+425
+
+Learning Algorithms. Table 2 summarizes all of the baselines, as
+well as all of the new cascade model con�gurations tested on the two
+collections. We used a broad range of di�erent learning algorithms
+in our experiments.� ese ranking models can be divided into the
+following three categories:
+
+EXPERIMENTS
+
+We now evaluate the impact of our approaches on reducing costs
+in cascade learners in two di�erent se�ings, one large but shallow
+LTR dataset, and a standard TREC benchmark with 150 queries but
+a large number of documents to be ranked per query.
+Experimental Setup. All experiments were executed on a 24core Intel Xeon E5-2630 with 256 GB of RAM hosting RedHat
+RHEL v7.2, and baselines generated using Indri2 , Krovetz stemming,
+and dependency models generated using Metzler’s MRF con�guration3 . All LTR algorithms were implemented in Python using
+scikit-learn4 0.18.1 and xgboost 5 0.6a2. Source code, con�guration� les, and detailed explanations for all experiments can
+be found in the GitHub repository for this paper6 .
+Two di�erent test collections were used for the experiments.�e
+�rst collection is the C14 Webscope Yahoo Learning To Rank dataset
+7 [9]. �e dataset contains two subsets designed for di�erent purposes and used di�erent feature sets. We use only Set 1 (Y!S1) which
+
+Model hyperparameters (number of trees, depth, learning rate)
+were trained with the provided independent validation set for Y!S1,
+and using 5-fold cross-validation on GOV2. For ease of experimentation, some cascade parameters, such as the number of stages K,
+and cuto� thresholds hc 1 , c 2 , . . . , c K i, were� xed in the� rst two
+experiments. Other parameters, such as , were tuned on the validation data using randomized search. Tree cascade parameters
+were tuned di�erently on the two datasets, as previous parameters
+for the ground truth models did not always generalize well on the
+learned cascades. We also empirically found that the linear cascades work be�er with the L 2 regularization turned o� (i.e., = 0),
+making the SGD optimizations more stable. Further experimental
+details are described in Sections 4.1 and 4.2.
+
+2 h�p://www.lemurproject.org/indri.php
+
+3 h�p://ciir.cs.umass.edu/⇠metzler/dm.pl
+4 h�p://scikit-learn.org/stable/
+5 h�ps://github.com/dmlc/xgboost
+6 h�ps://github.com/rmit-ir/LTR
+
+#� eries
+
+Cascade
+
+7 h�ps://webscope.sandbox.yahoo.com/catalog.php?datatype=c
+
+449
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 2: Summary of the baselines and new cascading methods used.
+Method Name
+
+Parameters
+
+Description
+
+GBDT-BL
+GBRT-BL
+LambdaMART-BL
+QL-BL, BM25-BL, SDM-BL
+
+Y!S1/GOV2: 1,000/525 trees, 16/16 nodes
+Y!S1/GOV2: 1,000/525 trees, 16/16 nodes
+Y!S1/GOV2: 1,000/525 trees, 16/32 nodes
+Default Indri se�ings
+
+GBDT [12] (xgboost), = 0.05, subsample rate 0.8.
+GBRT[12] (xgboost), = 0.05, subsample rate 0.8.
+LambdaMART [5] (xgboost), = 0.05, subsample rate 0.8.
+Commonly used single-pass retrieval runs to depth 1,000 using� ery likelihood with Dirichlet priors smoothing, BM25, and a Sequential Dependency
+Model (SDM). Note that while SDM is a strong e�ectiveness baseline, it has
+well-known e�ciency limitations when used on large document collection [17].
+
+WLM-BL
+
+Y!S1:
+
+= 0.1, GOV2:
+
+= 0.1
+
+LM-C3-X
+
+GBDT-C3-X
+GBRT-C3-X
+LambdaMART-C3-X
+
+Y!S1: 1,000 trees, 16 nodes
+GOV2: adaptive (Sec. 4.2)
+Y!S1: 1,000 trees, 16 nodes
+GOV2: adaptive (Sec. 4.2)
+Y!S1: 1,000 trees, 16 nodes
+GOV2: adaptive (Sec. 4.2)
+
+Reimplementation of the linear cascade model by Wang et al. [36], with early
+stopping on training NDCG.
+�ree level cascade using linear model under the elected feature availability
+se�ing X, trained using Stochastic Gradient Descent (SGD) with batch size set
+to 50 and = 0.1.� e se�ing X could be C/E/F.
+�ree level cascade using GBDT under the elected feature availability se�ing
+X, using the same SGD con�guration as LM-C3-X.
+�ree level cascade using GBRT under the elected feature availability se�ing
+X, using the same SGD con�guration as LM-C3-X.
+�ree level cascade using LambdaMART under the elected feature availability
+se�ing X, using the same SGD con�guration as LM-C3-X.
+
+Evaluation Metrics. For retrieval e�ectiveness, we used standard
+early precision evaluation metrics: Expected Reciprocal Rank (ERR),
+Normalized Discounted Cumulative Gain (NDCG), and Precision (P),
+with three cuto�s (5, 10, and 20). We use gdeval8 to compute ERR
+and NDCG, and trec eval9 to compute the precision to ensure
+that reported numbers are easily reproducible.
+In this work, we focus on early precision improvements only,
+but if deeper metrics are desirable, our cascade approach can be
+tuned to support it.� e cost of a cascade is given by the following
+formula:
+K
+1 XX
+Ni C ( f ),
+N i=1
+
+cascades can further improve the performance, and this approach
+is explored further in Sec. 4.2.
+Main Results.� e main results for the Y!S1 experiments are presented in Table 3. In the table, the results are divided into three
+sections. From top to bo�om they are: ground truth models, the cascade baseline, and the proposed cascade ranking models. Ground
+truth models, such as GBDT-BL or GBRT-BL, provide the best effectiveness in general, but the feature extraction costs are also
+signi�cantly higher. Interestingly, these models already perform
+their own kind of feature selection as some of the input features
+are never used in the� nal trees, and therefore incur di�erent costs.
+When comparing cascading models, the cascade baseline WLMBL spends far less (0.62% of the cost incurred by GBDT-BL) on feature
+extraction than full models, at the cost of degraded e�ectiveness.
+Cascade models LM-C3-C, LM-C3-E, and LM-C3-F performed relatively poorly in terms of ERR@k and NDCG@k with respect to
+ground truth models, but in general their e�ectiveness is be�er
+than the WLM-BL baseline.� e tree-based cascade models are more
+competitive than their linear model counterparts. Among all cascading models, LambdaMART-based cascades appear to provide
+the best tradeo�.� e best-performing cascade LambdaMART-C3-F
+signi�cantly outperformed WLM-BL on all 9 tested metrics, but
+is still less e�cient that all three ground truth models, leaving a
+noticeable gap of 0.01–0.02 in ERR@k, 0.04–0.05 in NDCG@k, and
+0.01–0.03 in P@k.
+
+f 2F i
+
+where C ( f ) denotes the unit cost of feature f , Ni denotes the
+number of documents that enter cascade level i, and N denotes the
+total number of documents that enter the cascade.
+
+4.1
+
+Experiments on the Y!S1 Collection
+
+In the� rst experiment, we tested the e�ectiveness of the proposed
+cascade ranking algorithm on the Y!S1 collection. As a signi�cant
+number of queries in this data have less than 40 retrieved documents,
+there is relatively li�le� exibility in the design of cascade stages
+and cuto�s. In our initial investigation, we chose to utilize a� xed
+con�guration to simplify the experimental design.� e cascade
+is con�gured to contain only 3 stages, with� xed cuto�s h20, 10i
+between stages.
+�e values for the linear cascade models were derived using
+randomized search and NDCG on the validation data (cf. Table 3).
+For simplicity, all of the tree cascades in this experiment were
+trained with the same parameter se�ing as their ground truth counterparts. Note that tuning the number of trees/nodes in the tree
+
+4.2
+
+8 h�p://trec.nist.gov/data/web/10/gdeval.pl
+9 h�p://trec.nist.gov/trec
+
+Experiments on the GOV2 Collection
+
+In the second experiment, we investigate the use of the cascade
+ranking models on a commonly used web test collection, GOV2,
+where documents and features are to be processed and extracted by
+ourselves. To prepare the data for the cascade ranking experiment,
+for each query we retrieved 5,000 documents using BM25, and for
+each retrieved document 425 query or non-query features were
+
+eval/
+
+450
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 3: Main results on Yahoo! Learning-to-Rank Challenge data. For the proposed cascade models, signi�cant improvements over WLM-BL
+are indicated by * for p < 0.05 and ** for p < 0.01 in a paired t-test.
+ERR@k
+System
+
+NDCG@k
+
+P@k
+
+@5
+
+@10
+
+@20
+
+@5
+
+@10
+
+@20
+
+@5
+
+@10
+
+@20
+
+0.4605
+0.4598
+0.4526
+
+0.4751
+0.4744
+0.4674
+
+0.4789
+0.4782
+0.4712
+
+0.7448
+0.7420
+0.7314
+
+0.7872
+0.7852
+0.7768
+
+0.8279
+0.8264
+0.8203
+
+0.8323
+0.8322
+0.8330
+
+0.7577
+0.7562
+0.7564
+
+0.5967
+0.5962
+0.5964
+
+Cost
+
+Ground Truth Models
+GBDT-BL
+GBRT-BL
+LambdaMART-BL
+
+15988
+15876
+15856
+
+Cascade Models (including Baseline) a
+WLM-BL
+
+0.3679
+
+0.3876
+
+0.3933
+
+0.5886
+
+0.6506
+
+0.7088
+
+0.7832
+
+0.7171
+
+0.5673
+
+LM-C3-C
+LM-C3-E
+LM-C3-F
+GBDT-C3-C
+GBDT-C3-E
+GBDT-C3-F
+GBRT-C3-C
+GBRT-C3-E
+GBRT-C3-F
+LambdaMART-C3-C
+LambdaMART-C3-E
+LambdaMART-C3-F
+
+0.3950
+0.3871
+0.3876
+0.4191
+0.4264
+0.4178
+0.4025
+0.4100
+0.4158
+0.4163
+0.4183
+0.4353
+
+0.4127
+0.4039
+0.4047
+0.4357
+0.4419
+0.4350
+0.4203
+0.4260
+0.4332
+0.4332
+0.4346
+0.4513
+
+0.4175
+0.4089
+0.4093
+0.4405
+0.4466
+0.4395
+0.4254
+0.4313
+0.4378
+0.4379
+0.4394
+0.4557
+
+0.6461
+0.6503
+0.6541
+0.6535
+0.6721
+0.6554
+0.6304
+0.6380
+0.6479
+0.6577
+0.6629
+0.6847
+
+0.7067
+0.7033
+0.7113
+0.7100
+0.7180
+0.7163
+0.6931
+0.6867
+0.7094
+0.7145
+0.7133
+0.7354
+
+0.7638
+0.7618
+0.7666
+0.7631
+0.7703
+0.7672
+0.7488
+0.7431
+0.7612
+0.7673
+0.7671
+0.7851
+
+0.8086⇤⇤
+0.8192⇤⇤
+0.8226⇤⇤
+0.7878⇤
+0.7942⇤⇤
+0.7866
+0.7743
+0.7697
+0.7862
+0.7994⇤⇤
+0.7968⇤⇤
+0.8060⇤⇤
+
+0.7364⇤⇤
+0.7413⇤⇤
+0.7483⇤⇤
+0.7245⇤⇤
+0.7241⇤⇤
+0.7310⇤⇤
+0.7168
+0.7009
+0.7294⇤⇤
+0.7328⇤⇤
+0.7268⇤⇤
+0.7379⇤⇤
+
+0.5856⇤⇤
+0.5885⇤⇤
+0.5915⇤⇤
+0.5781⇤⇤
+0.5778⇤⇤
+0.5819⇤⇤
+0.5737⇤⇤
+0.5637⇤⇤
+0.5802⇤⇤
+0.5820⇤⇤
+0.5786⇤⇤
+0.5847⇤⇤
+
+a All
+
+-C models set
+
+99
+1871
+1580
+5278
+1760
+1535
+4953
+1760
+1535
+4949
+1760
+1535
+4929
+
+values h100000, 30000, 500i, -E models use h8000, 8000, 3000i, and -F models use h5000, 800, 300i.
+
+extracted. All 425 of the features implemented depend on either:
+the query; the query and term statistics from the indexed postings;
+the query, document and bigram statistics from ephemeral postings;
+the query and the document; or, the document. Table 5 shows a
+summary of these features.� e majority of these features were
+derived from prior work within the LTR literature [15, 22, 23].
+
+�e second set of features are per document costs. While the cost
+of a single Document Prior lookup is very fast in practice, it must
+be done for every document in the current stage, and therefore
+more expensive than the one-o� cost of the aggregate pre-retrieval
+feature scores. Likewise, all models incorporating bigrams are
+more expensive than their unigram counterparts.� e bigram costs
+include a one-o� cost to generate an ephemeral posting for the
+bigram [16], that can be reused to compute all of the bigram preretrieval features, and also used on the� y for per document bigram
+scoring.� is amortized cost is re�ected in the� nal unit costs used
+for our experiments. Alternative indexing approaches [13, 27] have
+been proposed to improve the e�ciency of n-gram scoring in recent
+years, but feature-speci�c performance enhancements are beyond
+the scope of this work.
+Due to space constraints, we cannot describe all of the features
+or costs. A detailed description for all of the features as well as
+how costs (both estimated and real) can be found in the GitHub
+repository for the paper.� e main point we want to make is that
+Table 5 provides realistic relative costs for both one-o� and perdocument features, and takes into account the relative complexity
+of each.
+
+LTR Features. For all experiments, with GOV2, a total of 425 features were used. For each feature, several timing experiments were
+ran to compute the relative feature costs. We then normalized the
+costs based on the cheapest and most expensive features used in
+the experiments. Table 5 shows the complete feature breakdown
+based on the two main categories of features used.
+�e� rst set of features are a large collection of pre-retrieval
+features commonly used for predicting query di�culty [8], and
+more recently within LTR [21, 34] were gathered.� ese features
+draw on statistical information contained within the query alone
+or on simple scoring methods that require postings list access. As
+such they are reasonably e�cient to compute on-the-�y at query
+time.� e most important point about these features is that they are
+query speci�c, but must only be computed once using pre-computed
+unigram scores.� is makes it relatively di�cult to properly account
+for their true costs as LTR systems use SVM forma�ed input�les,
+which implicitly have a per document feature cost in the model.
+�erefore, we divide these one-o� pre-retrieval feature costs by
+the number of documents produced in the initial retrieval stage,
+resulting in an amortized unit cost of 1. All other costs are computed
+relative to this cost.
+
+Main Results. In our initial investigation, the cascade is con�gured to 3 stages with cuto�s h1000, 100i. In this basic con�guration,
+the cuto� thresholds are selected from widely used cuto�values
+in adhoc retrieval experiments.� e experiment is conducted in a
+5-fold cross-validated se�ing, so� xing the cascade con�guration
+can considerably speed up the search, with the caveat of achieving
+
+451
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 4: Main results on the GOV2 collection using 5-fold cross validation. For the proposed cascade models, signi�cant improvements over
+QL-BL/WLM-BL are indicated by */† for p < 0.05 (**/‡ for p < 0.01) in a paired t-test.
+ERR@k
+System
+
+@5
+
+@10
+
+NDCG@k
+@20
+
+P@k
+
+@5
+
+@10
+
+@20
+
+@5
+
+@10
+
+@20
+
+Cost
+
+Baseline Bag-of-Words and Term Dependency Models
+0.3937
+0.3781
+0.4453
+
+QL-BL
+BM25-BL
+SDM-BL
+
+0.4131
+0.3980
+0.4632
+
+0.4218
+0.4062
+0.4702
+
+0.3839
+0.3796
+0.4396
+
+0.3826
+0.3806
+0.4346
+
+0.3950
+0.3814
+0.4345
+
+0.5275
+0.5114
+0.6013
+
+0.5007
+0.4893
+0.5711
+
+0.5000
+0.4705
+0.5443
+
+–
+–
+(High)
+
+0.4590
+0.4678
+0.4802
+
+0.4652
+0.4745
+0.4849
+
+0.4441
+0.4546
+0.4684
+
+0.4473
+0.4446
+0.4692
+
+0.4411
+0.4345
+0.4593
+
+0.6255
+0.6161
+0.6470
+
+0.6027
+0.5805
+0.6215
+
+0.5487
+0.5305
+0.5641
+
+213683
+211640
+213482
+
+Ground Truth LTR Models
+GBDT-BL
+GBRT-BL
+LambdaMART-BL
+
+0.4361
+0.4501
+0.4590
+
+Cascade Models (cost  5000)
+WLM-BL
+
+0.4221
+
+0.4422
+
+0.4485
+
+0.4204
+
+0.4177
+
+0.4132
+
+0.5919⇤
+
+0.5664⇤⇤
+
+0.5242
+
+1249
+
+LM-C3-C
+LM-C3-E
+LM-C3-F
+
+0.4297⇤
+
+0.4454⇤
+
+0.4537⇤
+
+0.4453⇤⇤
+
+0.4328⇤⇤
+0.4315⇤⇤
+0.4440⇤⇤
+
+0.4314
+0.4294⇤⇤
+0.4509⇤⇤‡
+
+0.5933⇤
+
+0.5946⇤⇤
+0.6161⇤⇤
+
+0.5624
+0.5624⇤⇤
+0.5779⇤⇤
+
+0.5312
+0.5285⇤
+0.5601⇤⇤‡
+
+4013
+11
+4717
+
+0.4298⇤⇤
+0.4366⇤
+
+0.4465⇤⇤
+0.4537⇤
+
+Cascade Models (cost ⇠ 1/2 full model cost)
+
+0.4545⇤⇤
+0.4608⇤
+
+0.4418⇤⇤
+0.4435⇤⇤
+
+LM-C3-F
+LambdaMART-C3-F a
+
+0.4332⇤
+0.4396⇤
+
+0.4508⇤
+0.4578⇤
+
+0.4566⇤
+0.4647⇤
+
+0.4419⇤⇤
+0.4373⇤
+
+0.4452⇤⇤
+0.4333⇤⇤
+
+0.4442⇤⇤‡
+0.4208
+
+0.6174⇤⇤
+0.6094⇤⇤
+
+0.5872⇤⇤
+0.5732⇤⇤
+
+0.5517⇤⇤†
+0.5181
+
+145693
+129529
+
+LM-C3-F, adaptive b
+
+0.4295⇤
+
+0.4469⇤
+
+0.4530⇤
+
+0.4435⇤⇤
+
+0.4492⇤⇤†
+
+0.4501⇤⇤‡
+
+0.6242⇤⇤
+
+0.5926⇤⇤
+
+0.5611⇤⇤‡
+
+110473
+
+a
+
+With 650 trees and 32 nodes
+
+b
+
+With
+
+values h800, 0.1, 0.05i and cuto�s h2500, 700i
+
+Table 5: Summary of all features used in this work.
+Description
+
+Unit Cost
+
+cascade stage. Similarly behaved recall-oriented metrics (such as
+Mean Average Precision) could also be used.
+�e main results for GOV2 are presented in Table 4. In contrast to
+the Y!S1 collection in the previous experiment, more than 72% of the
+features used on GOV2 are query dependent pre-retrieval features.
+�e presence of query speci�c features poses a serious challenge to
+all cascade models.� ery features are usually cheaper to compute,
+and more likely to be selected (by cost-biased strategy, for example)
+in early cascade stages. GBDT and LambdaMART can e�ectively
+use these query features, but for other ranking models the query
+features are not as useful. As a result, cascading models that do not
+e�ectively utilize query features o�en see reduced e�ectiveness in
+the early cascade stages.
+Ground truth models, as expected, give the best e�ectiveness
+among all baselines but also incurred the most feature extraction
+cost, around 210, 000–220, 000 unit cost. When compared with
+GBDT-BL and GBRT-BL, LambdaMART-BL achieves the best e�ectiveness.� e cascade baseline WLM-BL spends far less on feature
+extraction, requiring only 0.58% of the full model cost, but at the
+cost of e�ectiveness.
+A range of cascade models that spend less than 1/20 of the full
+model cost are� rst selected using the LM-C3-C, LM-C3-E, and LMC3-F approaches. All three linear cascades outperform the WLM-BL
+baseline in nearly all metrics with the exception of P@10. Compared to WLM-BL, LM-C3-F signi�cantly improves NDCG@20 by
+0.037, and P@20 by 0.035, spending three times more on feature
+extraction. All three selected models behave di�erently than in the
+
+# Features
+
+Pre-Retrieval Features
+�ery Dependent (Unigram)
+�ery Dependent (Bigram)
+
+1
+100
+
+159
+147
+
+Document Dependent Features
+Stage 0 Score
+Static Document Priors
+Score (Unigram)
+Score (Bigram)
+Total
+
+1
+500
+2,000
+8,000
+
+1
+9
+107
+2
+425
+
+limited improvement on retrieval e�ectiveness.� is issue is brie�y
+investigated in this experiment by including a run that also optimizes the cuto� thresholds. In Sec 4.3, we explore various cascade
+con�gurations and investigate the e�ect of cascade parameters on
+retrieval e�ectiveness.
+Using a randomized search-based approach, the cascade models
+LM-C3-C, LM-C3-E, and LM-C3-F are selected by maximizing the
+unbounded NDCG score on the validation folds. In a 5-fold cross
+validated se�ing, this metric is averaged across 5 folds on the respective validation sets.� e unbounded NDCG is not speci�c to
+any cuto� threshold, so essentially it can be used to optimize any
+
+452
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+0.46
+
+0.43
+
+NDCG@20
+
+ERR@20
+
+●
+
+●
+●
+●
+●●
+●●
+●
+● ●
+●
+● ●
+●
+●●
+●● ● ●
+●
+●
+●
+● ●
+●●● ●●●●
+● ●●●
+●
+● ●
+●
+●●
+●
+●● ●●●●
+●● ●
+●●●
+●
+●●
+●
+●●
+●
+● ●
+●
+●
+●
+●
+● ●●● ●
+●
+●
+●●●
+●●● ●
+●
+●●
+●
+●
+●● ●
+●●●
+●
+●
+●
+●●
+●
+●●●
+●
+● ●●●●●●
+●●
+●●●
+●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+● ●●●
+●●
+●
+●
+●
+●●
+●●
+●
+●
+●●
+●
+●
+● ●
+●
+●
+●●●
+●
+●
+●
+●
+●
+●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+● ●●
+●
+●●●●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●
+●
+●●
+●
+●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●●
+●●●●●
+● ●●●●●●●
+●
+● ●●
+●●
+●
+●
+●
+●●
+●
+●● ●
+●
+●
+●
+●
+●
+●●●
+●● ●
+●● ●
+●
+●
+●
+●
+●● ●
+●
+● ●●
+●
+●
+●
+●
+●
+●● ●
+●●
+●
+●● ●●●●●
+●
+●
+●
+●●
+●●
+●
+●
+●
+●●
+●●
+●●
+●●
+●●
+●
+●●●
+●●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●● ●
+● ●●
+●
+●
+●
+●
+●● ●●●●●●●●
+●● ●●● ●●●
+●
+●
+●
+●
+●
+● ●
+●●●
+●
+●● ● ●
+● ●●
+●● ● ●●
+●●
+●
+●
+● ● ● ●● ●● ●● ● ●●
+●
+●●
+● ●
+● ●
+●
+●
+●●
+●
+●
+●● ●
+● ●
+●
+● ●● ● ●
+●
+●
+●
+● ● ●
+
+●●
+●
+●
+●●
+●● ●
+●
+●
+●
+●
+
+0.43
+●
+
+0.40
+
+●
+
+BM25
+
+●
+
+2 stage
+3 stage
+4 stage
+5 stage
+100K
+●
+
+0.39
+1K
+
+10K
+
+●
+●
+●● ●
+● ● ●
+●
+●
+●●
+●
+●
+● ●●
+●
+●●●●
+●
+●
+●
+●
+●
+●
+● ●●●●●●
+●●
+●
+●
+●
+●●
+●
+●●●
+●
+●
+●
+●
+●● ● ●
+●
+●
+●
+●
+●
+●
+●
+●
+●● ●● ●
+●●
+●
+●
+●
+●
+●●●
+●
+●
+●●●●●●
+●●
+●●●
+●●
+●●
+●
+●
+●
+●● ●
+●
+●●
+●
+●●
+●
+●
+●●
+●
+●
+●● ●
+●●
+●
+●●
+●●●
+●●
+●
+●●● ●
+●●●●
+●
+●● ●
+●
+●
+●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+● ● ● ●●
+● ●
+●
+●
+●
+●
+● ●
+●
+●●●
+●
+●●● ●
+● ● ● ●● ●●
+●
+●
+●
+●
+●
+SDM
+● ●●
+●●
+●
+● ● ●
+●
+●●● ●
+●●
+●
+● ●●● ● ●●● ●●●
+●
+●
+●●
+●● ●●
+●
+●
+●
+●●
+●
+●●
+●●
+●
+●●
+●
+●
+●
+● ●
+●
+● ●
+●●
+●
+●
+●
+●●
+●
+●
+●
+● ●
+●●
+●● ● ● ● ●
+● ● ●●
+●
+●
+●
+●
+●
+●
+●●
+●
+●●
+●
+●●●
+● ●
+●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●●
+●●
+●
+● ●
+● ●● ●
+●
+●
+●●
+●●●●●
+●●●
+● ●
+●●●●
+●●●●
+● ●
+●●
+●●● ● ● ●●●●
+●
+●
+● ●●●
+●●
+●● ● ●●●
+●● ●
+● ●
+●●●● ●
+●
+● ●
+●
+●
+●
+●
+● ● ●
+●
+●● ●
+●
+●
+●
+●●●
+● ●
+●
+●
+●●● ● ●
+● ●
+●●
+● ●●●● ●
+●●
+●
+●
+●
+●●
+●● ●
+●●
+●
+●
+●● ● ●
+BM25
+●
+●●
+●
+
+0.37
+1K
+
+Unit Cost
+
+(a) ERR@20
+
+10K
+
+2 stage
+3 stage
+4 stage
+5 stage
+100K
+
+●
+●
+●
+●●●●
+●
+●
+●
+● ●● ● ●●● ●●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●
+●
+●
+●●
+●●●●
+●
+●
+●●
+●
+●
+●
+●
+●
+●
+● ●●
+● ●
+●
+● ●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●
+●
+●
+●●
+●●●
+●
+●
+●
+●● ●●
+●●
+●
+●
+●●
+●
+●
+●●●● ●
+●
+●●
+●●
+●
+●
+●
+●
+●
+●
+●●
+● ●●●●●●
+●●
+●
+●
+●
+●●
+●
+●
+●●
+●●
+●
+●●
+●
+●●
+●
+●
+●●
+●● ●●●●●
+●● ●
+●
+●
+●●
+●●●
+●
+●
+●●●●
+●
+●●● ●
+●
+●
+●
+●
+●
+●
+●
+● ● ●●
+● ●●
+●
+●
+●
+●●
+● ●
+●
+●
+●
+● ●●●
+● ●
+● ●●●●
+● ●
+●
+●
+● ●● ●
+●
+●● ●●
+● ● ●●
+●
+● ●● ●● ●●
+●
+●
+●●
+●
+●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●
+●
+●
+●● ●
+● ●
+●
+● ●
+●●
+●●●
+●● ● ● ●
+●
+●
+●
+●●
+●
+●●
+●
+●● ●●
+●
+●●●
+●●
+●
+●●
+●
+● ●
+●
+● ● ●●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●
+●●
+●
+●●
+●●
+●● ● ●
+● ● ●●●●
+●
+●
+●
+●
+●
+●● ●● ●●●●● ●
+●
+●
+● ● ●●● ●● ●●● ●●
+●
+●
+● ●
+●
+●●
+● ●
+●
+● ● ●
+● ● ●● ● ●●
+●
+●
+● ●
+●
+●
+●
+● ● ●●● ● ● ●
+●● ●
+● ●
+●●
+●
+●
+●
+●
+● ● ● ●
+●● ●
+●●
+●
+●● ● ● ●
+BM25
+●●
+●● ● ●
+●
+●● ●
+● ●●
+●●
+● ●
+●
+●● ●
+●●
+●
+
+●
+
+0.55
+
+SDM
+
+●
+
+P@20
+
+●
+SDM
+
+0.47
+
+0.50
+
+0.45
+
+Unit Cost
+
+1K
+
+10K
+
+2 stage
+3 stage
+4 stage
+5 stage
+100K
+
+Unit Cost
+
+(b) NDCG@20
+
+(c) P@20
+
+Figure 3: E�ectiveness versus Cascade Cost in the GOV2 collection using the LM-C*-F models.� e solid line at the bo�om represents the
+e�ectiveness of a BM25 BOW run, the do�ed line is a Sequential Dependency Model run which represents a competitive baseline on the
+collection, and the dots represent di�erent LTR con�gurations and their respective trade-o�s. Based on the validation data, the highlighted
+dots in black signify the most e�ective runs overall, while the highlighted dots in blue are the best cost-e�ective runs.
+previous experiment. Both LM-C3-F and LM-C3-C are of comparable
+costs roughly in the range of 4, 000–4, 800. LM-C3-E tends to select
+extremely compact feature sets and results in a greatly reduced
+cascade model that uses only the cheapest features. In general,
+the order of the three models in terms of e�ectiveness (in descending order) is LM-C3-F, LM-C3-E, and LM-C3-C, despite the fact that
+LM-C3-E actually costs much less than LM-C3-C. Other cascading
+models which require 1/2 of the full model cost are also shown in
+the table. None of the con�gurations from LM-C3-C and LM-C3E fall into this range.� e best-scoring LM-C3-F model (in terms
+of validation set NDCG) achieves comparable performance to the
+same model selected in the previous group, but requires much more
+feature extraction resources. A LambdaMART-C3-F model trained
+by�� ing the selected feature sets in LM-C3-F does slightly better on ERR@k but sees degraded performance on NDCG@k and
+P@k. Note that, unlike the Y!S1 experiment, the parameters used
+in training LambdaMART-BL do not generalize over LambdaMARTC3-F. Another round of randomized search is needed to� nd the
+con�guration that maximizes the tradeo�.
+Finally, a LM-C3-F run that simultaneously optimizes the values
+and cuto� thresholds is also presented.� is model is generally the
+most e�ective cascade model in terms of NDCG@k and P@k. It
+signi�cantly outperforms the WLM-BL model on P@10 by 0.03, on
+P@20 by 0.035, and on NDCG@20 by 0.035.� is result suggests
+that jointly optimizing feature allocation and cascade con�guration
+can lead to further improvements.� is issue is investigated further
+in the next experiment.
+
+4.3
+
+was carried out using the GOV2 collection. Our exploration starts
+by executing a full-range randomized search over the entire cascade
+design space.
+We used prede�ned grids of each variable to ensure that the
+explored data points were not too densely packed 10 . We then
+iterated from K = 2 to 5, which indicates the number of cascade
+stages, and for each se�ing of K, sampled a set of feasible cuto�s
+and values from the aforementioned se�ings. In the experiment,
+each se�ing of K produced more than 200 con�gurations.
+�e e�ectiveness versus cascade cost for each explored combination were then plo�ed and shown in Figure 3, in which points
+from di�erent se�ings of K are plo�ed in di�erent colors and
+shapes. For each K se�ing, the best con�guration (with cost <
+1/2 full model cost) found by using NDCG validation is plo�ed as
+a black dot.� ese “best” con�gurations are summarized in Table 6.
+Figure 3 shows that a wide range of low cost but e�ective models
+can be found regardless of the choice of K. For ERR@20, two
+stage cascades are o�en quite e�ective, but can also be among the
+most expensive. For NDCG@20 and P@20, three stage cascades
+consistently provided the most e�ective con�gurations. Among
+all se�ings of K, three level cascades consistently provided the
+best trade-o� between e�ectiveness and e�ciency. We intend to
+investigate these trade-o�s further in future work.
+
+5
+
+CONCLUSION
+
+In this work, we have presented a new approach to cascaded ranking
+which can be used with any commonly used LTR algorithms. We
+make direct comparisons to several state-of-the-art approaches,
+and conclusively show that our approach can consistently achieve
+be�er trade-o�s than other cascade ranking systems such as WLMBL. In the experiments, we have presented several e�ective feature
+allocation strategies that have not previously been explored, and are
+the� rst to directly explore the relationship between the number
+
+E�ect of Cascade Con�guration
+
+In the third experiment, we investigate the e�ect of cascade con�gurations on retrieval e�ectiveness and cascade cost. We relax two
+variables that were held� xed in the previous experiments – the
+number of cascade stages, K, and the cuto�s hc 1 , c 2 , . . . , c K i – and
+jointly optimize these parameters together with values in a combined random search-based framework. As these con�gurations
+are more expensive to tune, the exploration was deferred until the
+in�uence of other variables was be�er understood.� is experiment
+
+10 �e
+
+range of searched was {0.01, 0.03, 0.05, 0.08, 0.1, 0.3, 0.5, 0.8, 1, 3, 5, 8, 10,
+30, 50, 80, 100, 300, 500, 800 }; the range of the cuto� threshold is the union of the
+three sets: {20, 30, . . . , 100 }, {100, 200, . . . , 1000 }, and {2000, 2500, 3000, . . . , 5000 }.
+
+453
+
+Session 4B: Retrieval Models and Ranking 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 6: �e best con�guration for the K-stage LM-C3-F cascade (for K = 2, 3, 4, 5) found by maximizing the unbounded NDCG on the
+validation data. Signi�cant improvements over WLM-BL are indicated by */** for p < 0.05/p < 0.01 in a paired t-test.
+System ( values; cuto�s)
+WLM-BL
+
+h800, 0.01i; h400i
+h800, 0.1, 0.05i; h2500, 700i
+h500, 10, 0.03, 0.01i; h3000, 2000, 700i
+h800, 0.5, 0.1, 0.08, 0.05i; h2000, 800, 500, 80i
+
+NDCG@k
+
+P@k
+
+Cost
+
+@5
+
+@10
+
+@20
+
+@5
+
+@10
+
+@20
+
+0.4204
+
+0.4177
+
+0.4132
+
+0.5919
+
+0.5664
+
+0.5242
+
+1249
+
+0.4529
+0.4435
+0.4446
+0.4343
+
+0.4511⇤
+
+0.4476⇤⇤
+
+0.5866
+0.5926
+0.5913
+0.5691
+
+0.5517⇤
+
+18297
+110472
+106465
+80612
+
+0.4492⇤
+0.4446
+0.4340
+
+of cascades stages and document sample sizes on performance
+trade-o�s.
+In future work we wish to more closely explore the relationship
+between feature costs and feature importance weighting at di�erent
+levels of the cascade. Our current approach to parameter selection
+is largely empirical, and is quite costly when using hundreds of
+features and large scale document collections, resulting in several
+strong Linear Models, which are currently needed before generalizing to gradient boosted tree models.� erefore, an appealing
+next step in this work is to� nd more principled approaches to
+dynamically select the best cascade con�guration on a per-query
+basis, and to further explore the best con�gurations for a wider
+variety of LTR ranking algorithms
+
+0.4501⇤⇤
+0.4435⇤⇤
+0.4408⇤
+
+0.6094
+0.6242
+0.6161
+0.6040
+
+0.5611⇤
+0.5530⇤
+0.5466
+
+[16] X. Lu, A. Mo�at, and J. S. Culpepper. 2015. On the Cost of Extracting Proximity
+Features for Term-Dependency Models. In Proc. CIKM. 293–302.
+[17] X. Lu, A. Mo�at, and J. S. Culpepper. 2016. E�cient and E�ective Higher Order
+Proximity Modeling. In Proc. ICTIR. 21–30.
+[18] C. Lucchese, F. M. Nardini, S. Orlando, R. Perego, F. Silvestri, and S. Trani. 2016.
+Post-learning optimization of tree ensembles for e�cient ranking. In Proc. SIGIR.
+949–952.
+[19] C. Lucchese, F. M. Nardini, S. Orlando, R. Perego, N. Tonello�o, and R. Venturini. 2015.� ickScorer: A Fast Algorithm to Rank Documents with Additive
+Ensembles of Regression Trees. In Proc. SIGIR. 73–82.
+[20] C. Lucchese, F. M. Nardini, S. Orlando, R. Perego, N. Tonello�o, and R. Venturini.
+2016. Exploiting CPU SIMD extensions to speed-up document scoring with tree
+ensembles. In Proc. SIGIR. 833–836.
+[21] C. Macdonald, R. L. T. Santos, and I. Ounis. 2012. On the Usefulness of� ery
+Features for Learning to Rank. In Proc. CIKM. 2559–2562.
+[22] C. Macdonald, R. L. T. Santos, and I. Ounis. 2013.� e whens and hows of learning
+to rank for web search. Inf. Retr. 16, 5 (2013), 584–628.
+[23] C. Macdonald, R. L. T. Santos, I. Ounis, and B. He. 2013. About learning models
+with multiple query-dependent features. ACM Trans. Information Systems 31, 3
+(2013), 11:1–11:39.
+[24] D. Metzler and W. B. Cro�. 2005. A Markov random� eld model for term
+dependencies.. In Proc. SIGIR. 472–479.
+[25] A. Mohan, Z. Chen, and K. Q. Weinberger. 2011. Web-Search Ranking with
+Initialized Gradient Boosted Regression Trees. Journal of Machine Learning
+Research 14 (2011), 77–89.
+[26] J. Pedersen. 2010.� ery understanding at Bing. Invited talk, SIGIR (2010).
+[27] M. Petri, A. Mo�at, and J. S. Culpepper. 2014. Score-safe term dependency
+processing with hybrid indexes. In Proc. SIGIR. 899–902.
+[28] V. C. Raykar, B. Krishnapuram, and S. Yu. 2010. Designing e�cient cascaded
+classi�ers: tradeo� between accuracy and cost. In Proc. KDD. 853–860.
+[29] S. E. Robertson, S. Walker, S. Jones, M. Hancock-Beaulieu, and M. Gatford. 1994.
+Okapi at TREC-3.. In Proc. TREC-3.
+[30] N. Tax, S. Bockting, and D. Hiemstra. 2015. A cross-benchmark comparison of
+87 learning to rank methods. Inf. Proc. & Man. 51, 6 (2015), 757–772.
+[31] R. Tibshirani. 1994. Regression Shrinkage and Selection Via the Lasso. Journal
+of the Royal Statistical Society, Series B 58 (1994), 267–288.
+[32] A. Trotman, C. L. A. Clarke, I. Ounis, J. S. Culpepper, M.-A. Cartright, and S. Geva.
+2012. Open source information retrieval: a report on the SIGIR 2012 workshop.
+SIGIR Forum 46, 2 (2012), 95–101.
+[33] Y. Tsuruoka, J. Tsujii, and S. Ananiadou. 2009. Stochastic Gradient Descent
+Training for L1-regularized Log-linear Models with Cumulative Penalty. In Proc.
+ACL. 477–485.
+[34] S. Tyree, K. Q. Weinberger, K. Agrawal, and J. Paykin. 2011. Parallel Boosted
+Regression Trees for Web Search Ranking. In Proc. WWW. 387–396.
+[35] L. Wang, J. Lin, and D. Metzler. 2010. Learning to e�ciently rank. In Proc. SIGIR.
+138–145.
+[36] L. Wang, J. Lin, and D. Metzler. 2011. A Cascade Ranking Model for E�cient
+Ranked Retrieval. In Proc. SIGIR. 105–114.
+[37] L. Wang, J. Lin, D. Metzler, and J. Han. 2014. Learning to e�ciently rank on big
+data. In Proc. WWW (Companion Volume). 209–210.
+[38] Z. Xu, M. J. Kusner, K. Q. Weinberger, and M. Chen. 2013. Cost-Sensitive Tree of
+Classi�ers.. In Proc. ICML. 133–141.
+[39] Z. Xu, M. J. Kusner, K. Q. Weinberger, M. Chen, and O. Chapelle. 2014. Classi�er
+Cascades and Trees for Minimizing Feature Evaluation Cost. Journal of Machine
+Learning Research 15 (2014), 2113–2144.
+[40] C. Zhai and J. La�erty. 2004. A Study of Smoothing Methods for Language
+Models Applied to Information Retrieval. ACM Trans. Information Systems 22, 2
+(April 2004), 179–214.
+
+Funding Statement.� is work was supported by the Australian
+Research Council’s Discovery Projects Scheme (DP140103256 and
+DP170102231).
+
+REFERENCES
+
+[1] N. Asadi and J. Lin. 2013. Document Vector Representations for Feature Extraction in Multi-Stage Document Ranking. Inf. Retr. 16, 6 (2013), 747–768.
+[2] N. Asadi and J. Lin. 2013. Training e�cient tree-based models for document
+ranking. In Proc. ECIR. 146–157.
+[3] N. Asadi, J. Lin, and A. P. De Vries. 2014. Runtime optimizations for tree-based
+machine learning models. Trans. on Know. and Data Eng. 26, 9 (2014), 2281–2292.
+[4] James Bergstra and Yoshua Bengio. 2012. Random search for hyper-parameter
+optimization. Journal of Machine Learning Research 13, Feb (2012), 281–305.
+[5] C. Burges. 2010. From ranknet to lambdarank to lambdamart: An overview.
+Learning 11, 23-581 (2010), 81.
+[6] B. B. Cambazoglu, H. Zaragoza, O. Chapelle, J. Chen, C. Liao, Z. Zheng, and
+J. Degenhardt. 2010. Early Exit Optimizations for Additive Machine Learned
+Ranking Systems.. In Proc. WSDM. 411–420.
+[7] G. Capannini, C. Lucchese, F. M. Nardini, S. Orlando, R. Perego, and N. Tonello�o.
+2016.� ality versus e�ciency in document scoring with learning-to-rank
+models. Inf. Proc. & Man. 52, 6 (2016), 1161–1177.
+[8] D. Carmel and E. Yom-Tov. 2010. Estimating the� ery Di�culty for Information
+Retrieval. Morgan & Claypool.
+[9] O. Chapelle and Y. Chang. 2011. Yahoo! Learning to Rank Challenge Overview.
+14 (2011), 1–24.
+[10] C. L. A. Clarke, J. S. Culpepper, and A. Mo�at. 2016. Assessing e�ciency–
+e�ectiveness tradeo�s in multi-stage retrieval systems without using relevance
+judgments. Inf. Retr. 19, 4 (2016), 351–377.
+[11] J. S. Culpepper, C. L. A. Clarke, and J. Lin. 2016. Dynamic Cuto� Prediction in
+Multi-Stage Retrieval Systems. In Proc. ADCS. 17–24.
+[12] J. Friedman. 2001. Greedy function approximation: a gradient boosting machine.
+Annals of statistics (2001), 1189–1232.
+[13] S. Huston, J. S. Culpepper, and W. B. Cro�. 2014. Indexing Word-Sequences for
+Ranked Retrieval. ACM Trans. Information Systems 32, 1 (2014), 3.1–3.26.
+[14] X. Jin, T. Yang, and X. Tang. 2016. A Comparison of Cache Blocking Methods for
+Fast Execution of Ensemble-based Score Computation. In Proc. SIGIR. 629–638.
+[15] T.-Y. Liu. 2009. Learning to Rank for Information Retrieval. Foundations and
+Trends in Information Retrieval 3, 3 (2009), 225–331.
+
+454
+
+

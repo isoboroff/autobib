@@ -1,0 +1,1423 @@
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Deep Character-Level Click-Through Rate Prediction for
+Sponsored Search
+Bora Edizel∗
+
+Pompeu Fabra University & Eurecat
+Barcelona, Spain
+bora.edizel@upf.edu
+
+Amin Mantrach†
+
+Criteo Labs
+Palo Alto, California, U.S.A
+a.mantrach@criteo.com
+
+Xiao Bai
+
+Yahoo Labs
+Sunnyvale, California, U.S.A
+xbai@yahoo-inc.com
+
+ABSTRACT
+
+KEYWORDS
+
+Predicting the click-through rate of an advertisement is a critical
+component of online advertising platforms. In sponsored search, the
+click-through rate estimates the probability that a displayed advertisement is clicked by a user after she submits a query to the search
+engine. Commercial search engines typically rely on machine learning models trained with a large number of features to make such
+predictions. This inevitably requires a lot of engineering efforts
+to define, compute, and select the appropriate features. In this paper, we propose two novel approaches (one working at character
+level and the other working at word level) that use deep convolutional neural networks to predict the click-through rate of a queryadvertisement pair. Specifically, the proposed architectures only
+consider the textual content appearing in a query-advertisement
+pair as input, and produce as output a click-through rate prediction.
+By comparing the character-level model with the word-level model,
+we show that language representation can be learnt from scratch at
+character level when trained on enough data. Through extensive experiments using billions of query-advertisement pairs of a popular
+commercial search engine, we demonstrate that both approaches
+significantly outperform a baseline model built on well-selected
+text features and a state-of-the-art word2vec-based approach. Finally, by combining the predictions of the deep models introduced
+in this study with the prediction of the model in production of
+the same commercial search engine, we significantly improve the
+accuracy and the calibration of the click-through rate prediction of
+the production system.
+
+Deep Learning; NLP; Online Advertising; Sponsored Search; CTR
+Prediction
+ACM Reference format:
+Bora Edizel, Amin Mantrach, and Xiao Bai. 2017. Deep Character-Level
+Click-Through Rate Prediction for Sponsored Search. In Proceedings of SIGIR
+’17, August 07-11, 2017, Shinjuku, Tokyo, Japan, , 10 pages.
+DOI: http://dx.doi.org/10.1145/3077136.3080811
+
+1
+
+CCS CONCEPTS
+•Computing methodologies →Machine learning; Natural language processing; •Computer systems organization →Neural
+networks;
+
+∗ This
+
+† This
+
+work was done when the author interned at Yahoo.
+work was done when the author was at Yahoo.
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+SIGIR ’17, August 07-11, 2017, Shinjuku, Tokyo, Japan
+© 2017 ACM. 978-1-4503-5022-8/17/08. . . $15.00.
+DOI: http://dx.doi.org/10.1145/3077136.3080811
+
+1 In
+
+305
+
+INTRODUCTION
+
+Click-through rate (CTR) prediction is a critical component of any
+online advertising platform. For an advertisement, the value of the
+click-through rate can be estimated by the number of times it is
+clicked divided by the number of times it is shown, quantifying the
+extent to which an ad1 is likely to be clicked in a specific context.
+In sponsored search, ad impressions are typically monetized on a
+pay-per-click basis through the generalized second price auction
+[9]. Given a query issued by a user, in order to foresee the potential
+revenue, a commercial search engine has to predict the probability
+that an ad is clicked by the user for this query (i.e., CTR) as accurately as possible. Over predicting the click-through rate tends to
+give an ad a higher ranking position in the search result page. If it
+is not clicked, the search engine does not only lose the expected
+revenue from this ad but also lose the opportunity of getting more
+revenue from ads ranked at lower positions due to the position bias
+affecting ad clicks [4]. On the other hand, under predicting the
+click-through rate may result in an ad being placed at a lower position or even not showing up in the search result page, decreasing
+the revenue that may be made from the ad.
+The problem of click-through rate prediction has led to many
+research efforts in the past few years [14, 20], including those from
+leading search engine companies [5, 11, 24]. So far the most successful models across the industry rely on a large number of well
+designed features to predict the click-through rate. Despite of the
+prediction accuracy of such models, it has been noted that it is
+very challenging to select the right features [14], and to deal with
+feature sparsity and management at scale, etc. [24] in a complex
+dynamic system. Moreover, when facing a new context, e.g., new
+query, new ad, or new query-ad pair, such models may not be able
+to make accurate predictions [28]. For instance, the most predictive
+features of click prediction models are those capturing historical
+click information [14] as frequent clicks imply user preference for
+an ad in a specific context. However, new queries and ads may not
+the remainder, ad(s) will be used to refer to advertisement(s)
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+have enough history to compute reliable features for accurate prediction. To alleviate this kind of cold-start problems, one may rely
+on hybrid approaches to learn patterns or latent representations
+from the observed data that generalize well to unobserved contexts,
+or may rely solely on content-based features that are independent
+of the click history (see [30] for a description of various cold-start
+solutions). For instance, the BM25 score of an ad relatively to a
+query [2] is an effective content-feature of this kind.
+Most recently, following the advancements in deep learning,
+especially in natural language processing, new architectures have
+been proposed to learn word embeddings and text similarity between a query and a web page [17, 32], or between a query and an ad
+[34]. This alleviates the need of designing and implementing large
+amounts of features, even though maintaining and refreshing the
+learnt word embeddings still requires huge engineering efforts. Interestingly, the last aforementioned advancements in deep learning
+have not yet been applied to the click prediction problem. Indeed,
+state-of-the-art CTR prediction models are hybrid models relying
+on well designed historical, context and content-based features
+[14, 24].
+In this work, we directly predict the click-through rate of a
+query-ad pair by solely relying on its textual content. Specifically,
+we present two novel deep convolutional neural networks that
+process the text appearing in a query-ad pair as input without
+any additional information, and output a CTR prediction. The
+first model learns directly from a binary encoding of the textual
+input in a bag-of-character space, and does not require any external
+dictionary. The second model exhibits a similar structure but takes
+as input pre-trained word vectors, and hence assumes a pre-existing
+word dictionary.
+To the best of our knowledge, we are the first: (1) to learn meaningful textual similarity between two pieces of text (i.e., query and
+ad) from scratch, i.e., at character level, and (2) to directly predict
+the click-through rate in the context of sponsored search without
+any feature engineering. By directly learning and predicting CTR
+at character level and at word level, we naturally broaden the use
+of the click prediction model to cold-start (i.e., new) and long-tail
+(i.e., rare) queries and ads as the character-level model can be applied on any query-ad pair as far as their characters are part of
+the considered input alphabet (e.g., the 26 English letters plus a
+few punctuations). In fact, although the coverage of the word-level
+model may be slightly limited by the pre-computed word dictionary, as shown in our experiments, using word-level representation
+helps to bring external knowledge about the words to boost the
+prediction accuracy on tail queries and ads.
+In this work, we aim at delivering an additional and generalizable
+signal to improve CTR prediction for sponsored search. We conduct
+a thorough experimental evaluation, using billions of query-ad pairs
+from a major commercial search engine, to address the following
+research questions:
+
+(Section 4.2). As the three models optimize for the same
+loss function on the same training data, this clearly shows
+that the proposed deep models can automatically learn
+more meaningful representations for predicting CTR of
+query-ad pairs than the feature-engineered model with
+well-selected features.
+(2) How does the performance of the character-level deep learning model differ from that of the word-level model for CTR
+prediction? In Section 4.2, we show that learning query-ad
+similarity at character level reaches slightly better performance with an AUC of 0.862, than its word-level alternative that reaches an AUC of 0.859. This slight difference is
+statistically significative on 27M test points. Interestingly,
+character-level model outperforms word-level model when
+the models are trained with enough data (i.e., more than 1
+billion query-ad pairs, Figure 5). This highlights one of the
+main findings of this work: language representation can
+be learnt from scratch, at character level, without the need
+of any precomputed dictionary. In addition, we observe
+that the word-level model outperforms the character-level
+model on tails (i.e., queries, ads, and query-ad pairs with
+low frequency) because it can benefit from the external
+knowledge provided by the pre-trained word vectors. On
+the other hand, the character-level model outperforms the
+word-level model on heads since it can benefit from the
+better representations of the domain learnt from scratch.
+(3) How do the introduced character-level and word-level deep
+learning models compare to the baseline models? What is the
+improvement of prediction accuracy on head, torso, and tail
+queries, ads, and query-ad pairs? We show in Section 4.2
+that the two proposed models improve the AUC of a baseline model built on well-selected content-based features by
+up to 0.090, and the AUC of a word2vec-based approach
+[12] by up to 0.082 (Table 1). Specially, the proposed models improve the AUC of the two baselines on head, torso,
+and tail by up to 0.088, 0.086, and 0.059 respectively (Table
+2).
+(4) Can the proposed character-level and word-level deep learning models be leveraged to improve the CTR prediction model
+running in the production system of a popular commercial
+search engine? In Section 4.2, we show that by combining
+the prediction of one of the deep models proposed in this
+work (i.e., character-level or word-level model) with the
+prediction of the production model, we can increase the
+AUC of the production system by up to 0.86%. Interestingly, when considering mobile devices, the improvement
+on AUC reaches 3.95% (Table 4).
+
+(1) Can we automatically learn representations from the queryad content without any feature engineering in order to predict
+the CTR in sponsored search? We show that the proposed
+character-level and word-level deep learning models can
+improve the AUC of a feature-engineered logistic regression model with 185 content-based features by up to 0.09
+
+2
+
+RELATED WORK
+
+In this work, we propose to use deep convolutional neural network
+to directly learn click-through rate from the characters and the
+words of query-ad pairs. We present in this section the state-of-theart of the various domains covered by this research, and discuss how
+
+306
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+problem as a significant fraction of search queries are new and
+advertisers are actively updating their ads. To solve this problem,
+Zhai et al. [34] propose to use an attention network on top of
+recurrent neural networks to map both queries and ads to real
+valued vectors, and then rely on cosine similarity between the
+query and ad vectors to measure their similarity. Unlike [12], they
+are directly working at word level and therefore are less sensitive to
+the out-of-vocabulary problem. In this work we actually propose to
+go down to character level and therefore inherently deal with any
+input of the considered alphabet. At the difference of [34], and [12]
+we are not learning (in a weakly supervised way) query vectors,
+and ad vectors to be used in a cosine similarity function but instead
+are learning (in a supervised way) a complex similarity function
+embedded in a neural network predicting directly the CTR of a
+query-ad pair.
+In the context of web search, Huang et al. [17] introduce the
+letter n-gram based word hashing encoding. Compared with the
+one-hot vector encoding, word hashing allows to represent a query
+or a document using a vector with much lower dimensionality.
+However, when compared to character-level one-hot encodings,
+the dimension are much higher. Indeed, the character-level encoding dimensionality corresponds to the number of characters of
+the input times the size of the alphabet, which is much less than
+the dimensionality of vectors using letter trigrams. Furthermore,
+this encoding looses the sequence information at the opposite of
+the character-level one-hot encodings. Similarly, Shen et al. [32]
+use word-n-gram representations of queries and web pages in convolutional neural networks to learn query-document similarity.
+Different from [17], they project each raw word-n-gram in a lowdimensional feature vector and perform a max pooling operation
+to select the highest neuron activation value across all word-ngram features at each dimension. This is similar to the word-level
+representation used in our deep model. However, our model does
+not rely on cosine similarity as [17] and [32] but uses the crossconvolutional operator [16] to capture query-ad similarity. Another
+difference between our work and the model proposed in [32] is
+that the latter uses negative sampling on search click logs while we
+directly use the not-clicked ads as negative samples.
+Hu et al. [16] also propose to directly capture the similarity between two sentences without explicitly relying on semantic vector
+representations. As DeepWordMatch, this model works at word
+level, but is targeting matching task as: sentence completion, matching a response to a tweet, and paraphrase identification.
+
+our contributions differ from the existing works. We first review
+the related work in CTR prediction. Then, we look at previous
+research on sentence similarity learning and matching using deep
+neural networks. Finally, we discuss previous deep models working
+at character level used for tasks different from ours.
+
+2.1
+
+CTR prediction
+
+Computational advertisement, and more particularly sponsored
+search, has been a subject of study particularly active since the
+beginning of the century [25]. A large body of work discussing
+computational advertising is devoted to finding models and techniques that enable the most accurate prediction of the probability
+for an ad to be clicked when returned to a user for her query (i.e.,
+CTR) [11, 15, 24, 28, 31, 33, 36]. Graepel et al. [11] describe the
+Bayesian online learning algorithm used in Bing’s production system to predict CTR. This model relies on query features, ad features,
+context features, as well as the Cartesian product of these base
+features. McMahan et al. [24] discuss the CTR prediction algorithm
+used at Google, along with many practical insights to build a largescale online learning system. This work particularly confirms the
+challenges in building CTR prediction model that requires computing, maintaining and serving a large number of sparse contextual
+and semantic features. In fact, even in the related domain of display
+advertising, machine learning models trained with a large number of features have so far been the mostly adopted. For instance,
+He et al. [14] present the CTR prediction model at Facebook and
+clearly point out that the most important challenge to reach accurate predictions is selecting good features, which however may not
+be trivial. There have been different efforts on building features,
+including text features [31], click features [28], psychology features
+[33], query segment features [15], to improve CTR prediction models for sponsored search. Most recently, deep neural networks have
+also been used for CTR prediction. Jiang et al. [19] proposed to use
+recurrent neural networks to learn features from queries, ads and
+clicks for a logistic regression model. Zhang et al. [36] relies on
+features extracted from user’s sequential ad browsing behavior to
+train a recurrent neural network. Different from all these works,
+our model does not need any heavy feature engineering but only
+the textual content appearing in a query-ad pair suffice.
+
+2.2
+
+Deep Similarity Learning and Matching
+
+Matching a search query to a number of ads that are likely to attract
+user clicks is central to any commercial search engine. With the
+pervasive success of deep learning, recent works start modeling
+the similarity between texts using deep network models [16] and
+exploring their use in web search [17, 32] and sponsored search
+[12, 34].
+Grbovic. et al. [12] mine search sessions that include queries,
+clicks on ad and search links, dwell times and skipped ads to learn
+semantic embeddings for queries and ads, and use cosine similarity
+between the learnt embeddings to measure the similarity between
+a query and an ad. The main drawback of the approach is that the
+learning is done at full query level, and ad identifier level. This
+means that the approach can not exploit two queries with similar
+content except if they occur often in the same context in search
+sessions. The algorithm also suffers from the out-of-vocabulary
+
+2.3
+
+Deep Character-level Models
+
+There are a number of works learning at character level for different
+natural language processing (NLP) tasks in recent years. Nogueira
+dos Santos et al. [7] are among the first to use character-level
+information for part-of-speech tagging. They propose to jointly
+use character-level representation and the more traditional word
+embedding in a deep neural network for this task. Later on, they
+propose to use a similar deep neural network with character-level
+and work-level representations to perform name entity recognition
+[29]. Unlike these early efforts, our character-level model does not
+use any word embedding as input.
+
+307
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Score
+
+Several following works [3, 6, 21, 35] demonstrate the power of
+character-level information alone in NLP tasks. Ballesteros et al.
+[3] discuss the benefits of replacing word-level representation by
+character-level representation in long short-term memory (LSTM)
+recurrent neural networks to improve transition-based parsing. Kim
+et al. [21] show in their work that character inputs are sufficient for
+modeling most of the languages, and their LSTM recurrent neural
+network language model processing character inputs is as good as
+the state-of-the-art models using word-level or morpheme-level
+inputs for English. Zhang et al. [35] explore the use of characterlevel convolutional networks for text classification and show that
+character-level convolutional networks achieve competitive results
+against traditional models and deep models such as word-based
+ConvNets [23]. Conneau et al. [6] further show that when using
+very deep networks of up to 29 convolutional layers, a model that
+operates directly at character level achieves significant improvements over the state-of-the-art on several public text classification
+tasks. Interestingly, in case of big datasets, they report good results
+using shallower neural networks.
+Although character-level models have been successfully applied
+in so many different tasks, none of them is learning similarity
+between two pieces of text. This clearly motivates us to design our
+deep character-level model for click-through rate prediction.
+
+3
+
+in:
+
+q a:c q a =1
+
+X
+
+log(1 − pq a )
+
+∗ 128
+
+[\
+
+Z
+]
+
+∗ 64
+
+Final Bloc
+
+Conv Block, 128
+
+Conv Block, 128
+
+Max-pool / 4
+in: O ∗ 128,
+O: = PR ∗ (PQ /2)
+
+Temp Conv, 64, ReLU
+
+Cross-convolutional
+Operator
+in: PR ∗ 64
+
+in: (PQ /2) ∗ 64
+
+Query and Ad Blocs
+
+Max-pool / 2
+Conv Block, 64
+
+in: PQ ∗ 64
+
+Conv Block, 64
+
+in: PR ∗ 64
+
+Conv Block, 64
+
+in: PQ ∗ 64
+
+Conv Block, 64
+
+in: PR ∗ 64
+
+Temp Conv, 64,
+Linear
+
+in: PQ ∗ |^|
+
+Temp Conv, 64,
+Linear
+
+in: PR ∗ |^|
+
+Ad
+
+Query
+
+Figure 1: DeepCharMatch Model Architecture.
+
+3.2
+
+Key Components
+
+Temporal Modules. In order to exploit the sequential nature of
+query and ad at character level, we build on the work of Zhang et al.
+[35] that introduces the key components to process character-level
+sequential input in convolutional neural networks. Since we are
+dealing with textual data which is one-dimensional and temporal,
+we make use of temporal convolution, temporal max-pooling and
+temporal batch normalization. These temporal modules work in the
+same way as their corresponding spatial modules used in images
+and the only difference is their input dimension.
+The temporal convolutional module consists of a set of filters
+whose weights are learnt during the training. The module applies a
+convolution operation between its input and filters. Since the filter
+weights are shared across the input width, patterns can be learnt
+regardless of locality. For the module parameters, we use a fixed
+filter size of 3, a stride of 1 and we do not use zero paddings. In
+Figures 1 and 2, we represent convolutions by “T emp Conv, X , Y ”
+where X corresponds to the number of filters and Y corresponds to
+the activation function.
+Temporal max-pooling applies non-linear downsampling to its
+input in order to reduce dimensionality. The downsampling is
+done by applying a max filter to the non-overlapping partitioned
+sequences of the initial one-dimensional input. Throughout the
+paper, we refer to temporal max-pooling modules by “Max −pool/X ”
+where X is the size of filter.
+
+To model the CTR distribution of query-ad pairs, we have at our
+disposal a query-ad search log sampled from QA ⊆ Q × A, where
+Q is the set of all possible queries that users can submit on their
+devices (e.g., desktop and mobile), A is the set of all possible ads that
+advertisers can register into the advertising platform, and QA in
+the subset of all query-ad pairs that received at least one impression
+during a time period τ . Each query-ad pair, q a ∈ QA is associated
+to a binary click feedback variable cq a ∈ {0, 1}, 1 meaning clicked
+and 0 meaning not clicked.
+In order to obtain a well-calibrated CTR prediction, we build on
+the cross-entropy loss function [8]:
+log pq a +
+
+FC, 256, ReLU
+
+Z
+
+in:
+
+CTR Modeling
+
+X
+
+in: O∗ 2
+
+Max-pool / 4
+
+DEEP CTR MODELING
+
+L=
+
+FC, 1, Sigmoid
+FC, 256, ReLU
+
+Max-pool / 4
+
+In this section, we design two novel deep convolutional neural networks, namely DeepCharMatch and DeepWordMatch, to directly
+model the CTR of query-ad pairs based on their content at character
+level and at word level. We start by formalizing the general CTR
+prediction problem in the context of sponsored search. We then
+present the key components of our models. We finally provide
+details on the input representation and model architecture of the
+character-level model DeepCharMatch, and the word-level model
+DeepWordMatch respectively.
+
+3.1
+
+in: 256
+in: 256
+
+(1)
+
+q a:c q a =0
+
+where pq a = p(cq a = 1|q a; θ ) is the probability for a queryad pair to be clicked (i.e., the CTR), and θ represents the model
+parameters. In the remainder, we decompose θ as parameters of a
+deep convolutional neural network with the aim of modeling pq a
+directly from the sequence of characters that compose the query
+and the ad.
+
+308
+
+Output
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+ReLU
+
+Temp Batch
+Normalization
+Temp Conv,
+X, Linear
+Input
+ReLU
+
+Temp Batch
+Normalization
+
+Temp
+Conv,
+X, Linear
+
+Temp
+Batch
+Norm
+
+ReLU
+
+Temp
+Conv,
+X, Linear
+
+Temp
+Batch
+Norm
+
+ReLU
+
+Cross-convolutional Operator. Cross-convolutional operator
+(as introduced in [16]) takes as input higher-level representations of
+the query and of the ad (outputs of query and ad blocs) and operates
+a convolution on the cross-product of the query and the ad. More
+precisely, let HQ be the higher-level query matrix representation
+with dimensions k × l and H A be the higher-level ad matrix representation with dimensions m × r and H AQ be the cross product of
+HQ and H A with dimensions (k ∗ m) × (l + r ). Formally, each row
+of H AQ is set to
+
+Output
+
+Figure 2: Convolutional Block.
+
+Temp Conv,
+X, Linear
+Input
+
+Lastly, temporal batch normalization module normalizes its input.
+This accelerates the training obtaining an additional regularization
+effect [18].
+Convolutional Block. For the ease of the notation, following
+[6], we make use of convolutional blocks (Conv Block). As presented in Figure 2, a convolutional block is composed of two consecutive sub-blocks where each sub-block is a sequence of a temporal
+convolution, a temporal batch normalization, and a ReLU activation
+function [10]. ReLU is a non-saturating activation function such
+that for an input x, it outputs max (0, x ).
+Other functions. Additionally, we use fully connected layers.
+We refer to them by “FC, X , Y ” where X is the number of neurons
+and Y is the activation function.
+
+3.3
+
+HQ A [i, ·] := HQ [di/me, ·]_ H A [i − m ∗ (di/me − 1), ·],
+where i ∈ N, 1 ≤ i ≤ k ∗ m and _ represents concatenation. With
+this operation, we aim to capture possible intra-word and intrasentence relationships between the query and the ad. A temporal
+max-pooling is applied at the end of this operation.
+Final Bloc. The final operations start with a sequence of two
+blocks, where each block is a convolutional block followed by a
+temporal max-pooling. Finally, the architecture is ended with three
+fully connected layers. The Final Bloc models the relationship
+between the ad and the query. The output of the final bloc is pq a
+which is the CTR prediction of DeepCharMatch for the query-ad
+pair q a.
+
+DeepCharMatch Model
+
+The architecture of the character-level CTR prediction model is
+presented in Figure 1. We refer to this model by DeepCharMatch.
+Before exploring its architecture, we first explain how the input is
+represented at character level.
+
+3.4
+
+DeepWordMatch Model
+
+We also propose a deep convolutional neural network using wordlevel input. We refer to this model as DeepWordMatch. DeepWordMatch is also trained to maximize the conditional log-likelihood of
+the clicked and non-clicked sponsored impressions, i.e., ads (Equation 1), and hence outputs the CTR prediction of the considered
+query-ad pair q a.
+
+3.3.1 Input Representation. Considering an alphabet V , and
+fixed query length lq , queries are represented with a matrix of
+one-hot-encodings (i.e., binary) of size lq × |V |. More precisely,
+each character of the query sequence corresponds to a row of size
+1 × |V | in the input matrix. Each row contains only one unique
+entry that is set to 1 at the position corresponding to the dimension
+indicated by the considered character of the query while all the
+other entries of the same row are set to 0. Hence, the full query matrix has a number of 1 that corresponds to the length of the query,
+i.e., lq (and thus to number of rows of the matrix). By so doing,
+the i th row of the matrix encodes the i t h character of the query.
+When the query length is smaller than lq we use zero-paddings, i.e.,
+the remaining rows are fully padded with zeros entries. When the
+query length is larger than lq , we simply ignore all the characters
+appearing after the lqt h character of the query.
+The same approach is used for representing ads. The three components of a textual ad, i.e., ad title, ad description and ad display URL,
+are first concatenated in the aforementioned order in one unique
+sequence, and then encoded with a matrix of of one-hot-encodings
+of size la × |V |.
+
+3.4.1 Input Representation. Different from DeepCharMatch, DeepWordMatch processes pre-trained, word vectors instead of one-hot
+character encodings as input. The word vectors can be learnt using
+either search logs or external sources like Wikipedia [26]. Devising the best way of training word vectors is an interesting open
+problem but is independent of the model we propose. Considering
+given word dictionary W , dimension of word vectors dw , fixed
+query length dq and fixed ad length da , queries are represented
+with a query matrix with dimension dq × dw . Similarly, ads are
+represented with an ad matrix with dimension da × dw .
+3.4.2 Model Architecture. The structure of the neural network
+is inspired from the matching algorithm for natural languages sentences introduced in [16]. It consists of a cross-convolution operator
+ended by a final block capturing the commonalities between the
+query and the ad. Ad and query matrixes consist of pre-trained
+word vectors directly feed into cross-convolution operator. In order
+to control dimensionality, kernel sizes of the temporal max-pooling
+operations are set to 2. Except those points, the architecture of
+DeepWordMatch is equivalent to the architecture of DeepCharMatch.
+
+3.3.2 Model Architecture. DeepCharMatch consists of two parallel deep architectures that are joined by a cross-convolutional operator followed by a final bloc that models the relationship between
+a query and an ad. We detail this architecture in the following.
+Query and Ad Blocs. Query and ad blocs are two parallel structures that take as input a character-level one-hot encodings of the
+query and the ad respectively. Each bloc is a sequence of a temporal convolution, followed by 2 convolutional blocks whose output
+is a vector representation of the considered input (i.e., the query
+or the ad). Learnt representations can be seen as a higher-level
+representation of the query and of the ad.
+
+4
+
+EXPERIMENTS
+
+We evaluate the performance of the proposed CTR prediction models in this section. We first present how we collect the data set to
+conduct the experiments, the different baselines that are important
+to this study, and the metrics that are relevant to evaluate CTR
+
+309
+
+Number of impressions
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+10 7
+
+10 7
+
+10 7
+
+10 6
+
+10 6
+
+10 6
+
+10 5
+
+10 5
+
+10 5
+
+10104 -10
+
+10 -8
+
+10 -6 10 -4
+Query Frequency
+
+10 -2
+
+4
+10 0 1010 -10
+
+10 -8
+
+10 -6 10 -4 10 -2
+Ad Frequency
+
+4
+10 0 1010 -10
+
+10 -8
+
+10 -6 10 -4 10 -2
+Query-Ad Frequency
+
+10 0
+
+Figure 3: Distribution of impressions in the test set with respect to query, ad, and query-ad frequencies computed on six
+months (The frequencies are normalized by the maximum value in each subplot).
+Table 1:
+AUC of DeepCharMatch,
+Search2Vec and FELR.
+
+prediction models. We also describe the platform to run our experiments and the choice of parameters. We then dive into each
+research question raised in the introduction and discuss the results
+we obtain from the related experiments.
+
+4.1
+
+DeepCharMatch
+DeepWordMatch
+Search2Vec
+FELR
+
+Experimental Setup
+
+4.1.1 Dataset. In order to test our research hypotheses (Section
+1) we randomly sample query-ad pairs served by a popular commercial search engine. More precisely, we randomly sample from the
+log the training set that consists of about 1.5 billion query-ad pairs
+served during the period going from August 6 to September 5, 2016.
+We only consider the sponsored ads that are shown in the north of
+the search result pages (i.e. above the algorithmic search results).
+Each sampled query-ad consists of the query, the ad title, the ad
+description and the displayed URL of the ad’s landing page, in their
+canonical form, and a binary variable indicating if the ad is clicked
+or not. In the following 15 days from September 6 to September
+20, 2016, We randomly sample the test set that consists of about
+27 millions query-ad pairs without any page position restriction
+(i.e., we also test for the ads displayed on the east and the south of
+search result pages).
+In order to study the performance of our models on queries and
+ads with different popularity, we compute query frequency distribution, ad frequency distribution and query-ad frequency distribution
+of the queries and ads in our test set over a long period (i.e., some
+consecutive months of 2016). Figure 3 reports the distributions of
+the total number of ad impressions related to the queries, ads or
+query-ad pairs following into each frequency bin. Notice that this
+period fully covers the periods in which our training and test sets
+are generated. Therefore, low frequency measures the coldness
+relative to the entire period.
+
+All
+0.862
+0.859
+0.780
+0.772
+
+Desktop
+0.870
+0.867
+0.796
+0.784
+
+DeepWordMatch,
+
+Mobile
+0.828
+0.827
+0.705
+0.710
+
+The logistic regression model optimizes the same cross-entropy
+loss function as DeepCharMatch and DeepWordMatch (Equation
+1). In this case, θ is simply a parameter vector representing the
+weights to be learned for each feature along with the bias. We use
+the 185 state-of-the-art features designed to capture the pairwise
+relationship between a query and the three different components
+in a textual ad, i.e., its title, description, and display URL. The full
+set of features consists of 12 common counts features, 12 Jaccard
+features, 10 length features, 4 cosine similarity features, 4 BM25
+features, 8 Brand features, 4 LSI features, 3 semantic coherence
+features, and 128 hash embedding features. These features are
+explained in details in [1] and are achieving state-of-the-art
+results in relevance prediction for sponsored search. Most of these
+features are the state-of-the-art features in traditional search tasks
+as supervised ranking, semi-supervised ranking, and ranking
+aggregation [27].
+Search2Vec. Our second baseline is a state-of-the-art word2vecbased approach, namely Search2Vec [12], which learns semantic
+embeddings for queries and ads from search sessions, and uses
+the cosine similarity between the learnt vectors to measure the
+textual similarity between a query and an ad. This approach leads
+to high-quality query-ad matching in sponsored search. Different
+from DeepCharMatch and DeepWordMatch, Search2Vec does not
+learn CTR directly. Instead, clicks are used indirectly in the session
+data as context of the surrounding queries and ads. Therefore,
+this approach is considered to be weakly-supervised. Another
+important difference is that Search2Vec works at query level and
+ad level, implying that it is more sensitive to the out-of-vocabulary
+problem.
+
+4.1.2 Baselines. Feature-engineered logistic regression
+(FELR). Logistic regression is a state-of-the-art algorithm to predict
+CTR at massive scale [24]. Therefore, we implement a logistic
+regression model with content-based features as a baseline. Our
+objective is to test the hypotheses that DeepCharMatch and DeepWordMatch can learn directly from the textual input meaningful
+representations that are better than feature-engineered models.
+
+310
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+DeepCharMatch
+
+0.9
+
+DeepWordMatch
+
+Search2Vec
+
+FELR
+
+AUC
+
+0.8
+0.7
+0.6
+0.5
+10 -10
+
+10 -8
+
+10 -6 10 -4
+Query Frequency
+
+10 -2
+
+10 0
+
+10 -10
+
+10 -8
+
+10 -6 10 -4 10 -2
+Ad Frequency
+
+10 0
+
+10 -8
+
+10 -4
+10 -6
+10 -2
+Query-Ad Frequency
+
+10 0
+
+Figure 4: Cumulative AUC by query, ad, and query-ad frequency for DeepCharMatch, DeepWordMatch, Search2Vec and FELR.
+Frequencies are normalized by the maximum value in each subplot. For each bin, the number of impressions used to compute
+AUC is reported in Figure 3. Cumulative means that at x the plot reports AUC of points whose frequency is lower than x.
+Table 2: AUC of DeepCharMatch, DeepWordMatch, Search2Vec and FELR, on tail, torso, and head of the query, ad, and queryad frequency distributions. Tail stands for normalized frequency n f < 10−6 , torso for 10−6 ≤ n f < 10−2 , and head for n f ≥ 10−2 .
+
+DeepCharMatch
+DeepWordMatch
+Search2Vec
+FELR
+
+tail
+0.661
+0.670
+0.521
+0.606
+
+Query
+torso head
+0.814 0.909
+0.812 0.907
+0.739 0.817
+0.733 0.821
+
+tail
+0.659
+0.668
+0.516
+0.618
+
+Production model. As a very strong baseline, we are considering the CTR prediction model in the production system of a popular
+commercial search engine. This model is a machine learning model
+trained with a rich set of features, including click features, query
+features, ad features, query-ad pair features, vertical features, contextual features such as geolocation or time of the day, and user
+features. The learning algorithm is optimizing Equation 1 as well.
+This model involves great engineering efforts to design relevant
+features, especially those content-based features extracting the relationship between queries and ads. Our objective is to study what
+are the relative improvements one can expect in production when
+adding a deep learning content-based dimension (i.e., DeepCharMatch or DeepWordMatch prediction) into this model. Therefore,
+we use a simple approach that averages the deep model CTR with
+the production model CTR. In the remainder we refer to these algorithms as DCP and DWP, for the combination of character-level
+model, and word-level model respectively with production. While
+these approaches are very simple, it suffices to demonstrate that a
+content-based deep learning approach can be leveraged to improve
+the model in production of a commercial search engine that is not
+learning automatically content-based query-ads representations.
+
+Ad
+torso
+0.836
+0.835
+0.753
+0.751
+
+head
+0.926
+0.922
+0.844
+0.830
+
+tail
+0.665
+0.674
+0.532
+0.615
+
+Query-Ad
+torso head
+0.828 0.943
+0.826 0.943
+0.740 0.854
+0.742 0.879
+
+impressions are going to be clicked. On ad impressions held out
+during learning, AUC measures whether the clicked ad impressions
+are ranked higher than the non-clicked ones. The perfect ranking
+has an AUC of 1.0, while the average AUC for random rankings is
+0.5.
+Calibration. The calibration is the ratio of the number of expected clicks to the number of actually observed clicks. Having
+a well calibrated prediction of CTR insures that advertisers are
+paying a fair price, and is thus critical for online adverting auction.
+The closer the calibration measure is to 1.0, the better the CTR
+prediction is [14].
+4.1.4 Experimental Platform. We train DeepCharMatch, DeepWordMatch, and FELR using the same environment. We use the
+distributed Tensorflow platform2 in an asynchronous fashion on
+multiple GPUs. Adam Optimizer [22] is used in order to optimize
+the cross-entropy loss function. To initialize the parameters, we
+use the initialization strategy described in [13]. The mini-batch size
+is set to 64. For DeepCharMatch, we fix the query length lq to 35
+characters, and ad length la to 140 characters. For DeepWordMatch,
+we fix the query word-length dq to 7 and the ad word-length da
+to 40. The word vectors feeding the input of DeepWordMatch are
+publicly available3 and consists of 50 dimension vectors obtained
+by running GloVe algorithm on Wikipedia and Gigaword54 [26].
+
+4.1.3 Evaluation Metrics. We measure two standards metrics:
+(1) the area under the ROC curve (AUC), and (2) the calibration of
+the CTR [2].
+AUC. For comparing the different baselines we use the AUC to
+evaluate the ability of the different methods to predict which ad
+
+2 https://www.tensorflow.org/
+
+3 http://nlp.stanford.edu/data/glove.6B.zip
+
+4 https://catalog.ldc.upenn.edu/LDC2011T07
+
+311
+
+Session 3A: Search Interaction 2
+
+4.2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+0.865
+
+Experimental Results
+
+We report in this section the performance of the proposed characterlevel and word-level CTR prediction models by answering the following research questions.
+
+0.860
+AUC
+
+Research Question 1. Can we automatically learn representations
+from the query-ad content without any feature engineering in order
+to predict the CTR in sponsored search?
+Our objective is to test the extent to which the representations
+learnt by the introduced deep models are more effective than the
+185 engineered-features injected in a state-of-the-art algorithm
+for CTR prediction, i.e., FELR. We show that DeepCharMatch and
+DeepWordMatch outperform FELR on Desktop and Mobile in terms
+of AUC by up to 0.086 and 0.118 respectively (Table 1). This confirms
+that both models can automatically learn more effective query-ad
+representations for predicting the CTR than the 185 engineeredfeatures used by FELR. Notice that the improvements are larger on
+the head of the distributions where the frequency are the highest
+(Figure 4 and Table 2). This highlights that the automatically learnt
+representations generalize better than engineered features when
+queries, ads, and query-ads are more frequent.
+
+0.850
+0.8450
+
+500M
+1000M
+Training Set Size
+
+1500M
+
+Inversely, DeepWordMatch outperforms DeepCharMatch on the
+tails (Table 2). Indeed, DeepWordMatch has an advantage on the
+tails as it benefits from pre-trained vectors that provide at cold-start
+an initial knowledge that the character-level model is ignorant of.
+On the other hand, when shifting towards the heads, DeepCharMatch benefits from its representations learnt from scratch to build
+a better understanding of the domain.
+Research Question 3. How do the introduced character-level and
+word-level deep learning models compare to the baseline models?
+What is the improvement of prediction accuracy on head, torso, and
+tail queries, ads, and query-ad pairs?
+Here we are interested to study how the proposed deep models compare to both baselines FELR and Search2Vec especially in
+different areas of the query, ad, and query-ad distributions. While
+globally Search2Vec outperforms FELR (Table 1), it appears to be a
+very poor baseline when it comes to tail queries, ads, and query-ads
+(Table 2). This emphasizes the fact that Search2Vec is working at
+query, and ad-identifier level. In other words, the approach cannot
+relate similar ads or queries based on their content, but only based
+on their occurrences in the same context. Both DeepCharMatch and
+DeepWordMatch consistently outperform the baselines from a minimum 0.041 of AUC on the tail of the ad distribution, to a maximum
+of 0.088 of AUC on the head of the queries distribution. Interestingly, the improvements over the baselines are more important for
+mobile devices (Table 1), which could indicate that the introduced
+deep models are less sensitive to the sampling bias (as our training
+data is by nature more populated with desktop impressions). We
+leave as further work a deeper analysis of the importance of the
+sampling on performance obtained by each device.
+
+Table 3: Number of parameters per model
+DeepWordMatch
+1,438,786
+
+DeepCharMatch
+DeepWordMatch
+
+Figure 5: AUC of DeepCharMatch and DeepWordMatch by
+number of training points.
+
+Research Question 2. How does the performance of the characterlevel deep learning model differ from that of the word-level model for
+CTR prediction?
+Here, we are interested to study the learning curve performance
+of the two proposed models. In other words, as we increase the
+number of training samples, what AUC can we expect on the same
+independent randomly sampled test set. We hypothesize that by
+learning at character level instead of word level, the model can fit
+the CTR distribution better. This hypothesis is based on the fact
+that the character-level model has a higher degree of freedom as
+it needs to learn 1,672,002 parameters, i.e., 16.21% more than the
+word-level model (Table 3).
+
+DeepCharMatch
+1,672,002
+
+0.855
+
+FELR
+186
+
+To answer this question, we conduct a parallel experiment between DeepCharMatch and DeepWordMatch. Both models are
+studied under exactly the same conditions, i.e., learnt on the same
+training points and assessed on the same test points.
+We show that as the number of training points goes over one billion, DeepCharMatch offers more flexibility than DeepWordMatch
+to learn the underlying query-ad matching. At 1.5 billion points
+the difference becomes significant: on the 27 millions test points,
+DeepCharMatch and DeepWordMatch reaches an AUC of 0.862
+and 0.859 respectively (Figure 5 and Table 1). This confirms that,
+when provided with enough training points, DeepCharMatch learns
+the underlying representations from scratch without the need of
+a pre-computed dictionary (like the Wikipedia word vectors used
+by DeepWordMatch in this particular study). Interestingly, when
+looking at the differences in terms of heads and tails of the query, ad,
+and query-ad distributions, DeepCharMatch outperforms or equals
+to DeepWordMatch on the heads where the volume is the highest.
+
+Research Question 4. Can the proposed character-level and wordlevel deep learning models be leveraged to improve the CTR prediction
+model running in the production system of a popular commercial
+search engine?
+The current system in production is relying on engineeringefforts to design relevant content features extracting the relationship between queries and ads. Our objective is to study how much
+relative improvements one can expect in production in terms of
+
+312
+
+Relative Improvement - %AUC
+
+Session 3A: Search Interaction 2
+
+4.0
+3.5
+3.0
+2.5
+2.0
+1.5
+1.0
+0.5
+0.0
+0.5 -10
+10
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+DCP
+
+10 -8
+
+10 -6 10 -4
+Query Frequency
+
+10 -2
+
+10 0
+
+10 -10
+
+10 -8
+
+DWP
+
+10 -6 10 -4 10 -2
+Ad Frequency
+
+10 0
+
+10 -8
+
+10 -4
+10 -6
+10 -2
+Query-Ad Frequency
+
+10 0
+
+Figure 6: Cumulative relative improvements of DCP and DWP over Production model in terms of %AUC. Frequencies are
+normalized by the maximum value of each subplot. For each bin, the number of impressions used to compute AUC is reported
+in Figure 3. Cumulative means that at x the plot reports relative improvements of points whose frequency is lower than x.
+Table 4: Relative AUC Improvement in % of DCP over Production model.
+
+DCP
+DWP
+
+All
+0.86
+0.82
+
+Desktop
+0.29
+0.23
+
+This gain measures the relative decrease of the calibration error in
+production (i.e. —1-Calibration(Production)—) when using model
+M. We observe an important relative calibration gain in production
+with DCP model and DWP model with up to 34.95% on Desktop and
+40.40% on Mobile (Table 5). Finally, we observe that the calibration
+is better on the heads than on the tails especially with the characterlevel model (Table 7).
+
+Mobile
+3.76
+3.95
+
+Table 5: Relative Calibration Improvement in % of DCP over
+Production Model.
+
+DCP
+DWP
+
+All
+35.76
+32.21
+
+Desktop
+34.95
+30.85
+
+5
+
+CONCLUSIONS
+
+We present in this paper two new content-based click-though-rate
+prediction models for sponsored search. Both models are built
+on convolutional neural network architectures and learnt in a supervised way from clicked and non-clicked query-ad impressions
+sampled from the log of popular a commercial search engine. We
+demonstrate through large-scale experiments (with 1.5 billions
+query-ad training samples) that query-ad representations can be
+learnt from scratch, at character level, to predict the CTR, and the
+prediction is particularly accurate for frequent queries, ads and
+query-ad pairs. We also show that when using pre-trained word
+vectors, the proposed word-level model can make more accurate
+prediction on the tail of the query, ad and query-ad frequency distributions than the character-level model. One important contribution
+of this work is to show that predicting CTR of query-ad pairs directly at character level can outperform the traditional machine
+learning models trained with well-designed features. Particularly,
+when combining the CTR prediction of the proposed deep learning
+models with that of the machine learning model trained with a
+rich set of content-based and click-based features in the production
+system of a popular commercial search engine, we can significantly
+improve the accuracy and the calibration of the model in production.
+
+Mobile
+40.40
+38.50
+
+AUC and calibration when adding a deep learning content-based
+dimension into the production model. We proceed this test using
+two simple approaches, DCP and DWP, which average respectively
+the character-level and word-level predicted CTR to the production
+predicted CTR (as explained in Section 4.2). We observe relative
+improvements of 0.86% of the production AUC when considering
+the complete test set, with very significant improvements of 3.75%
+of the production AUC when restricting to mobile devices (Table
+4). Major gains are observed on the head of the distribution with
+improvements of up to 1.18% of the production AUC (Table 6). Interestingly, as observed previously, we observe higher improvements
+with the character-level model at the heads of the distributions,
+while the word-level model is more beneficial on the tails. This highlights that DeepWordMatch benefits more of its pre-trained vectors
+on tails, while on the heads the DeepCharMatch reaches a better understanding of the domain by learning directly its representations
+at character level.
+For calibration analysis, let us consider the relative gain in calibration of model M over the Production model:
+
+REFERENCES
+[1] Luca Maria Aiello, Ioannis Arapakis, Ricardo A. Baeza-Yates, Xiao Bai, Nicola
+Barbieri, Amin Mantrach, and Fabrizio Silvestri. 2016. The Role of Relevance in
+Sponsored Search. In Proceedings of the 25th ACM CIKM. 185–194.
+[2] Ricardo A. Baeza-Yates and Berthier Ribeiro-Neto. 1999. Modern Information
+Retrieval. Addison-Wesley Longman Publishing Co., Inc., Boston, MA, USA.
+
+|1 − Calibration(Production)| − |1 − Calibration(M)|
+|1 − Calibration(Production)|
+
+313
+
+Session 3A: Search Interaction 2
+
+SIGIR’17, August 7-11, 2017, Shinjuku, Tokyo, Japan
+
+Table 6: Relative AUC Improvements in % of DCP and DWP over Production on tail, torso, and head of the query, ad, and
+query-ad frequency distributions. Tail stands for normalized frequency n f < 10−6 , torso for 10−6 ≤ n f < 10−2 , and head for
+n f ≥ 10−2 .
+
+DCP
+DWP
+
+tail
+0.593
+0.906
+
+Query
+torso head
+0.205 1.176
+0.218 1.096
+
+tail
+0.127
+0.324
+
+Ad
+torso
+0.793
+0.818
+
+head
+0.817
+0.723
+
+tail
+0.322
+0.604
+
+Query-Ad
+torso head
+0.584 1.010
+0.571 1.090
+
+Table 7: Relative Calibration Improvements in % of DCP and DWP over Production on tail, torso, and head of the query, ad,
+and query-ad frequency distributions.
+
+DCP
+DWP
+
+tail
+31.44
+30.73
+
+Query
+torso head
+33.62 38.02
+31.02 32.96
+
+tail
+32.82
+29.89
+
+Ad
+torso
+35.01
+32.27
+
+[3] Miguel Ballesteros, Chris Dyer, and Noah A Smith. 2015. Improved TransitionBased Parsing by Modeling Characters instead of Words with LSTMs. In Proceedings of EMNLP. 349–359.
+[4] Ye Chen and Tak W Yan. 2012. Position-normalized click prediction in search
+advertising. In Proceedings of the 18th ACM SIGKDD. 795–803.
+[5] Haibin Cheng and Erick Cantú-Paz. 2010. Personalized click prediction in sponsored search. In Proceedings of the 3rd ACM WSDM. ACM, 351–360.
+[6] I Conneau, Holger Schwenk, Loı̈c Barrault, and Yann LeCun. 2016. Very Deep
+Convolutional Networks for Natural Language Processing. CoRR abs/1606.01781
+(2016).
+[7] Cicero Nogueira dos Santos and Bianca Zadrozny. 2014. Learning Characterlevel Representations for Part-of-Speech Tagging. In Proceedings of the 31st ICML.
+1818–1826.
+[8] Stephan Dreiseitl and Lucila Ohno-Machado. 2002. Logistic regression and
+artificial neural network classification models: a methodology review. Journal of
+biomedical informatics 35, 5 (2002), 352–359.
+[9] Benjamin Edelman, Michael Ostrovsky, and Michael Schwarz. 2005. Internet
+Advertising and the Generalized Second Price Auction: Selling Billions of Dollars
+Worth of Keywords. Technical Report 11765. National Bureau of Economic
+Research.
+[10] Xavier Glorot, Antoine Bordes, and Yoshua Bengio. 2011. Deep Sparse Rectifier
+Neural Networks. In Proceedings of the 14th AISTAT, Vol. 15. 315–323.
+[11] Thore Graepel, Joaquin Q Candela, Thomas Borchert, and Ralf Herbrich. 2010.
+Web-scale bayesian click-through rate prediction for sponsored search advertising in Microsoft’s Bing search engine. In Proceedings of the 27th ICML. 13–20.
+[12] Mihajlo Grbovic, Nemanja Djuric, Vladan Radosavljevic, Fabrizio Silvestri, Ricardo Baeza-Yates, Andrew Feng, Erik Ordentlich, Lee Yang, and Gavin Owens.
+2016. Scalable semantic matching of queries to ads in sponsored search advertising. In Proceedings of the 39th ACM SIGIR. 375–384.
+[13] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. 2015. Delving deep
+into rectifiers: Surpassing human-level performance on imagenet classification.
+In Proceedings of IEEE ICCV.
+[14] Xinran He, Junfeng Pan, Ou Jin, Tianbing Xu, Bo Liu, Tao Xu, Yanxin Shi,
+Antoine Atallah, Ralf Herbrich, Stuart Bowers, and others. 2014. Practical lessons
+from predicting clicks on ads at facebook. In Proceedings of the 8th International
+Workshop on Data Mining for Online Advertising. 1–9.
+[15] Dustin Hillard, Eren Manavoglu, Hema Raghavan, Chris Leggetter, Erick CantúPaz, and Rukmini Iyer. 2011. The Sum of Its Parts: Reducing Sparsity in Click
+Estimation with Query Segments. Information Retrieval 14, 3 (June 2011), 315–
+336.
+[16] Baotian Hu, Zhengdong Lu, Hang Li, and Qingcai Chen. 2014. Convolutional
+Neural Network Architectures for Matching Natural Language Sentences. In
+Proceedings of the 27th NIPS. 2042–2050.
+[17] Po-Sen Huang, Xiaodong He, Jianfeng Gao, Li Deng, Alex Acero, and Larry
+Heck. 2013. Learning Deep Structured Semantic Models for Web Search Using
+Clickthrough Data. In Proceedings of the 22nd ACM CIKM. 2333–2338.
+[18] Sergey Ioffe and Christian Szegedy. 2015. Batch Normalization: Accelerating
+Deep Network Training by Reducing Internal Covariate Shift. In Proceedings of
+the 32nd ICML. 448–456.
+
+head
+38.38
+32.31
+
+tail
+30.28
+29.33
+
+Query-Ad
+torso head
+34.30 42.64
+31.51 37.68
+
+[19] Zilong Jiang, Shu Gao, and Wei Dai. 2016. Research on CTR Prediction for
+Contextual Advertising Based on Deep Architecture Model. Journal of Control
+Engineering and Applied Informatics 18, 1 (2016), 11–19.
+[20] Yuchin Juan, Yong Zhuang, Wei-Sheng Chin, and Chih-Jen Lin. 2016. Field-aware
+factorization machines for CTR prediction. In Proceedings of the 10th ACM RecSys.
+43–50.
+[21] Yoon Kim, Yacine Jernite, David Sontag, and Alexander M Rush. 2016. CharacterAware Neural Language Models. In Proceedings of the 13th AAAI. 2741–2749.
+[22] Diederik P. Kingma and Jimmy Ba. 2014. Adam: A Method for Stochastic
+Optimization. In Proceedings of the 3rd ICLR.
+[23] Y. Lecun, L. Bottou, Y. Bengio, and P. Haffner. 1998. Gradient-based learning
+applied to document recognition. Proc. IEEE 86, 11 (1998), 2278–2324.
+[24] H Brendan McMahan, Gary Holt, David Sculley, Michael Young, Dietmar Ebner,
+Julian Grady, Lan Nie, Todd Phillips, Eugene Davydov, Daniel Golovin, and
+others. 2013. Ad click prediction: a view from the trenches. In Proceedings of the
+19th ACM SIGKDD. 1222–1230.
+[25] Aranyak Mehta, Amin Saberi, Umesh Vazirani, and Vijay Vazirani. 2005. AdWords and Generalized On-line Matching. In Proceedings of the 46th IEEE FOCS.
+264–273.
+[26] Jeffrey Pennington, Richard Socher, and Christopher D. Manning. 2014. GloVe:
+Global Vectors for Word Representation. In Proceedings of EMNLP. 1532–1543.
+[27] Tao Qin and Tie-Yan Liu. 2013. Introducing LETOR 4.0 Datasets. CoRR
+abs/1306.2597 (2013).
+[28] Matthew Richardson, Ewa Dominowska, and Robert Ragno. 2007. Predicting
+clicks: estimating the click-through rate for new ads. In Proceedings of the 16th
+WWW. 521–530.
+[29] Cicero Nogueira dos Santos and Victor Guimaraes. 2015. Boosting named entity
+recognition with neural character embeddings. CoRR abs/1505.05008 (2015).
+[30] Martin Saveski and Amin Mantrach. 2014. Item cold-start recommendations:
+learning local collective embeddings. In Proceedings of the 8th ACM RecSys. 89–96.
+[31] Benyah Shaparenko, Özgür Çetin, and Rukmini Iyer. 2009. Data-driven Text
+Features for Sponsored Search Click Prediction. In Proceedings of the 3rd International Workshop on Data Mining and Audience Intelligence for Advertising.
+46–54.
+[32] Yelong Shen, Xiaodong He, Jianfeng Gao, Li Deng, and Grégoire Mesnil. 2014.
+A latent semantic model with convolutional-pooling structure for information
+retrieval. In Proceedings of the 23rd ACM CIKM. 101–110.
+[33] Taifeng Wang, Jiang Bian, Shusen Liu, Yuyu Zhang, and Tie-Yan Liu. 2013.
+Psychological Advertising: Exploring User Psychology for Click Prediction in
+Sponsored Search. In Proceedings of the 19th ACM SIGKDD. 563–571.
+[34] Shuangfei Zhai, Keng-hao Chang, Ruofei Zhang, and Zhongfei (Mark) Zhang.
+2016. DeepIntent: Learning Attentions for Online Advertising with Recurrent
+Neural Networks. In Proceedings of the 22nd ACM SIGKDD. 1295–1304.
+[35] Xiang Zhang, Junbo Zhao, and Yann LeCun. 2015. Character-level Convolutional
+Networks for Text Classification. In Proceedings of the 28th NIPS. 649–657.
+[36] Yuyu Zhang, Hanjun Dai, Chang Xu, Jun Feng, Taifeng Wang, Jiang Bian, Bin
+Wang, and Tie-Yan Liu. 2016. Sequential Click Prediction for Sponsored Search
+with Recurrent Neural Networks.. In Proceedings of the 11th AAAI Conference.
+1369–1375.
+
+314
+
+

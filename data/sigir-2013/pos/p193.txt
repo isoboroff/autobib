@@ -1,0 +1,1551 @@
+Faster and Smaller Inverted Indices with Treaps ∗
+Roberto Konow
+
+Gonzalo Navarro
+
+Dept. of Computer Science
+Univ. of Chile, Chile
+EIT, Univ. Diego Portales
+
+Dept. of Computer Science
+Univ. of Chile, Chile
+
+ABSTRACT
+
+Charles L. A. Clarke
+Alejandro López-Ortíz
+School of Computer Science
+Univ. of Waterloo, Canada
+
+16]. In the first stage, a fast and simple filtration procedure extracts a subset of a few hundreds or thousands of
+candidates from the possibly billions of documents forming
+the collection. In the second stage, more complex learned
+ranking algorithms are applied to the reduced candidate set
+in order to obtain a handful of high-quality results. In this
+paper, we focus on improving the efficiency of the first stage,
+freeing more resources for the second stage and increasing
+the overall performance. In contexts where traditional ranking methods are sufficient, the goal of the first stage is to
+directly convey a few top-quality results to the final user.
+The first stage aims to return either a set of the highest
+ranked documents containing all the query terms (a ranked
+intersection) or some of the most important query terms (a
+ranked union). In most cases, ranked intersections are solved
+Categories and Subject Descriptors
+via a Boolean intersection, followed by the computation of
+H.3.3 [INFORMATION STORAGE AND RETRIEVAL]: scores for the resulting documents. Ranked unions are generally solved only in approximate form, avoiding a costly
+Information Search and Retrieval
+Boolean union. However, Ding and Suel [21] showed that
+ranked intersections can be processed faster than Boolean inGeneral Terms
+tersections. They also obtained the best known performance
+for ranked unions, giving exact, rather than approximate reAlgorithms, Performance
+sults, and demonstrating the feasibility of their approach.
+In this paper, we introduce a new compressed representaKeywords
+tion for posting lists that performs ranked intersections and
+Treap, Inverted Index, Top-k, Query Processing
+(exact) unions directly. This representation is based on the
+treap data structure [34], a binary tree that simultaneously
+represents a left-to-right and a top-to-bottom ordering. We
+1. INTRODUCTION
+use the left-to-right ordering for document identifiers (which
+Modern Web search engines, and other information resupports fast Boolean operations) and the top-to-bottom ortrieval systems, face two competing challenges. On the one
+dering for term weights (which supports the thresholding of
+hand, they have to manage huge amounts of data. On the
+results simultaneously with the intersection process). Using
+other hand, they have to provide very precise results in rethis data structure, we can obtain the top-k results for a
+sponse to user queries, often identifying a few relevant docuranked intersection/union without having to first produce
+ments among increasingly larger collections. These requirethe full Boolean result.
+ments can be addressed via a two-stage ranking process [37,
+Additionally, the treap representation allows us to differentially encode both document identifiers and weights,
+∗Partially funded by Fondecyt grant 1-110066 , by the Conwhich is crucial for the space-efficient representation of inicyt PhD Scholarship Program, Chile and by the Emerging
+verted indexes. Posting lists have been compressed for deLeaders in the Americas Program, Government of Canada.
+cades [38] to handle very large collections within minimal
+space. Using other representations we must choose either
+Permission to make digital or hard copies of all or part of this work for personal or
+identifiers or weights for differential encoding, but not both.
+classroom use is granted without fee provided that copies are not made or distributed
+Our experiments show that the space usage of our treapfor profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+based inverted index representation is less than the state-ofauthor(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+the-art compressed representations: around 22% less space
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+than Block-Max [21] and 18% less space than Dual-Sorted
+and/or a fee. Request permissions from permissions@acm.org.
+[25]. As for the time, treaps outperform previous techniques
+SIGIR’13, July 28–August 1, 2013, Dublin, Ireland.
+for k up to 30 on intersections, and up to 130 on unions,
+Copyright is held by the owner/author(s). Publication rights licensed to ACM.
+We introduce a new representation of the inverted index
+that performs faster ranked unions and intersections while
+using less space. Our index is based on the treap data structure, which allows us to intersect/merge the document identifiers while simultaneously thresholding by frequency, instead of the costlier two-step classical processing methods.
+To achieve compression we represent the treap topology using compact data structures. Further, the treap invariants
+allow us to elegantly encode differentially both document
+identifiers and frequencies. Results show that our index uses
+about 20% less space, and performs queries up to three times
+faster, than state-of-the-art compact representations.
+
+Copyright 2013 ACM 978-1-4503-2034-4/13/07 ...$15.00.
+
+193
+
+being up to three times faster than the alternatives in some
+cases. Those ranges of k values make this result of particular
+interest both in applications where a limited result set is of
+interest, and in large-scale distributed systems in which each
+node contributes a limited set to the global result.
+
+2.
+
+Ranked unions, instead, cannot be efficiently solved through
+a Boolean union, as this returns too many results. In this
+case, most research has aimed at returning an approximate
+answer within good time bounds [30, 2]. Most of these techniques order the posting lists by decreasing weight values,
+not by docids. Recently, it has been shown that ranked
+unions can be solved in exact form within reasonable time
+[15, 35, 21] by using increasing docid order for the posting
+lists in the best solution [21].
+Traditionally, the posting lists were stored on disk. With
+the availability of large amounts of main memory, this trend
+has changed to use the main memory of a cluster of machines, and many intersection algorithms have been designed
+for random access [20, 6, 32, 19, 33, 35, 8, 25]. In distributed
+main-memory systems, usually documents are distributed
+across independent inverted indexes, and each index contributes with a few results to the final top-k list. Therefore,
+it is most interesting that an individual inverted index solves
+top-k queries efficiently for k values in the range 10–100 [16].
+Both when stored on disk and in main memory, reducing
+the size of the inverted index representation is crucial. On
+disk, it reduces transfer time. In main memory, it increases
+the size of the collections that can be managed within a given
+RAM budget, or alternatively reduces the amount of servers
+that must be allocated in a cluster to hold the index, the
+energy they consume, and the amount of communication.
+Compression of inverted indexes is possibly the oldest and
+most successful application of compressed data structures
+(e.g., see [38]). The main idea to achieve compression is to
+differentially encode either the document identifers or the
+weights (depending on how the lists are sorted), whereas the
+other value (weight or docid, respectively) becomes harder
+to compress. The problem of this duality in the sorting, and
+how it affects compression and query algorithms, has been
+discussed in past work [38, 4, 25].
+In this context, our contribution is a new in-memory posting list representation that, on the one hand, achieves improved compression because it allows differential encoding
+of both docids and frequencies, and on the other hand, performs exact ranked intersections and unions directly and natively without having to first intersect/merge and then rank.
+
+BASIC CONCEPTS
+
+The inverted index plays a central role in the efficient processing of ranked and Boolean queries [38, 41, 18, 16, 5].
+It can be seen as an array of lists or postings, where each
+entry of the array corresponds to a different term or word in
+the collection, and the lists contain one element per distinct
+document where the term appears. For each document, the
+index stores the document identifier (docid) and the weight
+of the term in the document. The set of terms is called the
+vocabulary of the collection, which is comparatively small in
+most cases [24].
+In the first stage of query processing, a simple metric is
+used to assign a score to a document with respect to a query.
+In the classical bag-of-words model, the query Q is seen as
+a set of q terms t ∈ Q, andP
+the score of a document d is
+computed as score(Q, d) =
+t∈Q w(t, d), where w(t, d) is
+the weight of term t in document d. For example, in the
+well-known tf-idf scoring scheme, this weight is computed
+as w(t, d) = tf t,d · idft . Here, tf t,d is the term frequency of t
+in d, that is, the number of times t occurs in d. The second
+D
+, where dft is the document frequency,
+term is idft = log df
+t
+that is, the number of documents where the term t appears,
+and D is the total number of documents. Since idft (or
+dft ) depends only on t, an efficient way to store w(t, d) in
+an inverted index is to store idft or dft together with each
+distinct vocabulary term, and store the values tf t,d in the
+posting list of term t, together with each docid d. In this
+paper we will assume that term frequencies are stored in the
+posting lists, but any other integer measure, such as impacts
+[2] could be used.
+In the bag-of-words model we are given Q and k, and asked
+to retrieve k documents d with the highest score(Q, d) values. In the two-stage model, typical values of k are hundreds
+to thousands, as discussed earlier. In simpler one-stage systems, typical values of k are below 20. Note that it is not
+necessary for all the terms of Q to appear in a returned document d; a missing term t simply implies that w(t, d) = 0.
+This problem is frequently called ranked union. A variant
+of the problem, popularized by Web search engines to favor
+precision over recall, is the ranked intersection, where only
+documents containing all the terms are returned. Nowadays,
+ranked intersections are more common than unions.
+The Boolean intersection problem, without ranking, aims
+at retrieving all the documents d where all the terms of
+Q appear. A typical way to solve a ranked intersection is
+to first compute a Boolean intersection, then compute the
+scores of all the resulting documents, and finally keep the
+documents with the k highest scores. This approach has
+triggered much research on the Boolean intersection problem
+[20, 6, 32, 8, 25]. This approach is, of course, suboptimal,
+since in principle one could use weight information to filter
+out documents that belong to the intersection but one can
+ensure will not make it to the top-k list. Only recently some
+schemes specifically aimed at solving ranked intersections
+have appeared [21]. All these schemes store the posting lists
+in increasing docid order, which is convenient for skipping
+documents during intersections.
+
+3.
+3.1
+
+RELATED WORK
+Query Processing Strategies
+
+Two kinds of approaches are used for unions and intersections (ranked or Boolean): Term-at-a-time (TAAT) and
+Document-at-a-time (DAAT) [16].
+TAAT processes one posting list after the other. The lists
+are considered from shortest to longest, starting with the
+first one as a candidate answer set, and refining it as we
+consider the next lists. TAAT is especially popular for processing ranked unions [30, 2, 35], as the successive lists have
+decreasing idft value and thus a decreasing impact on the
+result, not only for the tf-idf model, but also for BM25 and
+other models. The documents in each list are sorted by decreasing weight. Thus heuristic thresholds can be used to
+obtain an approximate ranked union efficiently, by pruning
+the processing of lists earlier, or avoiding lists completely,
+as we reach less relevant documents and our candidate set
+becomes stronger [30, 2]. A more sophisticated approach
+based on similar ideas can be used to guarantee that the
+answer is exact [35].
+
+194
+
+DAAT processing is more popular for Boolean intersections and unions. Here the q lists are processed in parallel,
+looking for the same document in all of them. Posting lists
+must be sorted by increasing docid, and we keep a pointer to
+the current position in each of the q lists. Once a document
+is processed, the pointers move forward. Much research has
+been carried out on Boolean intersections [20, 6, 32, 19, 8].
+While a DAAT processing is always used to intersect two
+lists, experimental results suggest that the most efficient
+way to handle more lists is to intersect the two shortest
+ones, then the result with the third, and so on. This can be
+seen as a TAAT strategy.
+Many ranked intersection strategies employ a full Boolean
+intersection followed by a postprocessing step for ranking.
+However, recent work has shown that it is possible to do
+better [21]. The advantage of DAAT processing is that, once
+we have processed a document, we have complete information about its score, and thus we can maintain a current set
+of top-k candidates whose final scores are known. This set
+can be used to establish a threshold on the scores other documents need to surpass to become relevant for the current
+query. Thus the emphasis on ranked DAAT is not on terminating early but on skipping documents. This same idea
+has been successfully used to solve exact (not approximate)
+ranked unions [15, 21].
+The strategies we use to solve ranked union and intersection queries in this paper are best classified as DAAT. We
+use sophisticated mechanisms to skip documents using the
+current threshold given by the current top-k candidate set.
+
+3.2
+
+3.3.1
+
+3.3.2
+
+Dual-sorted inverted lists
+
+Dual-Sorted inverted lists [29, 25] represent the posting
+lists sorted by decreasing frequency, using a wavelet tree
+data structure [23, 28]. The wavelet tree efficiently simulates
+ordering by increasing docids. TAAT processing is used for
+approximate ranked unions and DAAT-like processing for
+(exact) ranked intersections. The latter, although building
+on Boolean intersections, is implemented in native form on
+wavelet trees, which makes it particularly fast, even faster
+than Block-Max. Basically, the wavelet tree can recursively
+subdivide the universe of docids and efficiently determine
+that some list has no documents in the current interval.
+Our technique shares with Dual-Sorted the ability to maintain the lists sorted by both docids and weights simultaneously, and is able to perform a similar kind of native intersection, that is, determine that in an interval of documents
+there is a list with no elements. In contrast, Dual-Sorted
+does not know the frequencies until reaching the individual
+documents, whereas our treaps give an upper bound to the
+frequencies in the current interval. This allows us to perform
+ranked intersections faster than the Boolean intersections of
+Dual-Sorted. In addition, the treap uses less space, since
+Dual-Sorted cannot use differential encoding on docids.
+
+Compressed Posting List Representations
+
+A list hp1 , p2 , p3 , . . . p` i is usually represented as a sequence
+of d-gaps hp1 , p2 − p1 , p3 − p2 , . . . , p` − p`−1 i, and uses a
+variable-length encoding for these differences, for example
+δ-codes, γ-codes or Rice/Golomb codes [38], the latter usually giving the best compression. Recent proposals make
+use of byte-aligned [33, 19] or word-aligned [39, 1] codes,
+which are faster at decoding at a small loss in compression.
+Extracting a single list or merging lists is done optimally
+by traversing the lists from the beginning, but intersections
+can be done much faster if random access to the sequences
+is possible. A typical solution to provide random access is
+to perform a sampling of the sequences, cutting them into
+blocks that are differentially encoded, while storing in a separate sequence the absolute values of the block headers and
+pointers to the encoded blocks. Different sampling strategies have been used [19, 32] and the intersection algorithms
+have been tailored to them.
+When lists are sorted by decreasing weight (for approximate ranked unions), the differential compression of docids
+is not possible, in principle. Instead, term weights can be
+stored differentially. When storing tf values, one can take
+advantage of the fact that long runs of equal tf values (typically low ones) are frequent, and thus not only run-length
+encode them, but also sort the corresponding docids increasingly, so as to encode them differentially [4, 41].
+
+3.3
+
+Block-Max
+
+Block-Max [21] is a special-purpose structure for ranked
+intersections and unions. It sorts the lists by increasing
+docid, cuts the lists into blocks, and stores the maximum
+weight for each block. This enables them to skip whole
+blocks whose maximum possible contribution is very low,
+by comparing its maximum weight with a threshold given
+by the current candidate set. Block-Max obtains considerable performance gains over the previous techniques for exact ranked unions [15, 35], and also over the techniques that
+perform ranked intersections via a Boolean preprocessing.
+The basic concept is as follows: Suppose the next document of interest, d, belongs to blocks b1 , . . . , bq in the q
+lists. Compute an upper bound to score(Q, d) using the
+block maxima instead of the weights w(t, d). If even this
+upper bound does not surpass the kth best score known up
+to now, no document inside the current blocks can make it
+to the top-k list. So we can safely skip some blocks.
+Our technique can be seen as a generalization of the BlockMax idea, in which we use the treap concept to naturally
+define a hierarchical blocking scheme. The generalization
+is algorithmically nontrivial, but it is practical and beats
+the flat Block-Max. In addition, the treap structure allows
+us to differentially encode both docids and weights, which
+translates into space savings with respect to Block-Max.
+
+4.
+
+DIFFERENTIALLY ENCODED TREAPS
+
+We describe our data structure in this section. First, we
+survey the treap data structure and show it can be used to
+represent a posting list. Then we describe how we represent
+the resulting data structure using little space. In addition,
+we describe some practical improvements on the basic idea.
+At the end, we describe how query processing is carried out
+on the final representation.
+
+State of the Art for Exact Ranked Queries
+
+4.1
+
+The following two approaches have recently displayed the
+best performance for exact ranked intersections and unions.
+
+The Treap Data Structure
+
+A treap [34] is a binary tree where nodes have two attributes: a key and a priority. The treap satisfies the invariants of a binary search tree with respect to the keys: the
+root key is larger than those of its left subtree and smaller
+
+195
+
+docids
+
+4
+
+9
+
+13
+
+14
+
+15
+
+22
+
+27
+
+30
+
+35
+
+37
+
+39
+
+44
+
+freqs
+
+6
+
+2
+
+14
+
+1
+
+1
+
+2
+
+1
+
+24
+
+6
+
+1
+
+2
+
+3
+
+30
+
+24
+
+4.3.1
+
+13
+
+35
+
+6
+
+3
+
+2
+4
+
+22
+2
+
+44
+
+1
+
+2
+
+1
+27
+
+14
+1
+15
+
+39
+1
+37
+
+Figure 1: An example posting list (with docids and
+frequencies) and the corresponding treap representation in our scheme. Note that docids (inside the
+nodes) are sorted inorder and frequencies (outside
+the nodes) are sorted top to bottom.
+
+than those of its right subtree. Furthermore, the treap satisfies the invariants of a binary heap with respect to the
+priorities: the priority of the parent is larger than those of
+its descendants.
+Given its invariants, a treap can be searched for a key just
+as a binary search tree, and it can be simultaneously used
+as a binary heap. While in the literature it has mostly been
+used with randomly assigned priorities [34, 26, 13] to ensure
+logarithmic expected height independently of the order of
+insertions, a treap can also be seen as the Cartesian tree
+[36] of the sequence of priorities once the values are sorted
+by keys. Such Cartesian tree can be built in O(n) time
+from a sequence of n elements already sorted by key, even
+in compressed form [10, 9, 22].
+Treaps are a particular case of priority search trees [27],
+which can guarantee balancedness but are unlikely to be as
+compressible as Cartesian trees. There has been some work
+on using priority search trees for returning top-k elements
+from suffix trees and geometric range searches [12, 11] but,
+as far as we know, our use of treaps for ranked queries on
+inverted indexes, plus their differential compression, is novel.
+
+4.2
+
+4.3.2
+
+Differentially encoded trees
+
+In addition to the tree topology, we must represent docids
+and term frequencies. Our plan is not to access the posting
+lists in sequential form as in classical schemes, thus a differential encoding each docid with respect to the previous
+one is not directly applicable. Instead, we make use of the
+invariants of the treap data structure.
+Let id(v) be the docid of a treap node v, and f (v) its
+frequency. We represent id(v) and f (v) for the root in plain
+form, and then represent those of its left and right children
+recursively. For each node v that is the left child of its
+parent u, we represent id(u) − id(v) instead of id(v). If,
+on the other hand, v is the right child of its parent u, we
+represent id(v) − id(u) [17]. In both cases, we represent
+f (u) − f (v) instead of f (v). Those numbers get smaller as
+we move downwards in the treap.
+The sequence of differentially encoded id(v) and f (v) values is represented according to an inorder traversal of the
+treap. As we move down the treap, we can easily maintain
+the correct id(v) and f (v) values for any node arrived at, and
+use it to compute the values of the children as we descend.
+For this sake we need to randomly access a differential
+value in the sequence, given a node. We store those values in an array indexed by node preorders (in the general
+tree), which we can easily compute in our topology representation. Furthermore, we need a storage mechanism for
+the differences that: i) can access any value in the sequence
+directly, while ii) uses fewer bits to represent smaller numbers. We use Direct Addressable Codes (DACs) [14], which
+are designed precisely with this aim.
+DACs encode a sequence of numbers x1 , . . . , xn as follows. The dlog2 (max{xi } + 1)e bits needed to represent any
+xi are divided into chunks of varying size. Then the first
+chunk of lowest bits of all the numbers are represented in
+
+Inverted Index Representation
+
+We consider the posting list of each term as a sequence
+sorted by docids (which act as keys), each with its own term
+frequency (which act as priorities). Term impacts, or any
+other term weights, may also be used as priorities. We then
+use a treap to represent this sequence. Therefore the treap
+will be binary searchable by docid, whereas it will satisfy a
+heap ordering on the frequencies. This means, in particular,
+that if a given treap node has a frequency below a desired
+threshold, then all the docids below it in the treap can be
+discarded as well.
+Figure 1 illustrates a treap representation of a posting list.
+This treap will be used as a running example.
+
+4.3
+
+Compact topology representation
+
+Given a posting list of n documents, the treap will be a
+binary tree of n nodes. We represent it as a general tree
+using a well-known isomorphism: First, a fake root node
+vr is created. The children of vr become the nodes in the
+rightmost path of the treap, from the root to the leaf. Then
+each of those nodes are converted recursively.
+With this transformation, the treap root is the first child
+of vr . The left child of a treap node v is its first child in the
+general tree. The right child of v is its next sibling in the
+general tree. An inorder traversal of the treap corresponds
+to a postorder traversal of the general tree.
+There are Θ(4n /n3/2 ) general trees of n nodes, and thus
+one needs log2 (4n /n3/2 ) = 2n − Θ(log n) bits to represent
+any such tree. There exist various compact tree representations using 2n+o(n) bits that can in addition carry out many
+tree operations efficiently, including taking the first child,
+next sibling, computing postorder of a node, and so on. We
+will use a recent representation that has proven to be efficient in practice [31, 3]. It is based on a balanced parentheses
+representation of the tree, obtained by a preorder traversal
+where we append an opening parenthesis when reaching a
+node and a closing parenthesis when leaving it.
+
+6
+
+14
+
+9
+
+docids, and frequencies) in compact form. The key issue is
+that we choose a representation where all the treap operations can be carried out efficiently, so as to exploit the treap
+properties at query time.
+
+Compressing the Treap
+
+In order to compete with existing compressed representations of posting lists, we represent the treap data (topology,
+
+196
+
+30
+
+30
+
+24
+
+13
+
+13
+
+22
+
+4
+
+1
+
+2
+
+2
+
+27
+1
+
+2
+
+1
+
+39
+1
+
+15
+
+37
+
+diff ids
+
+9
+
+5
+
+17
+
+8
+
+1
+
+9
+
+5
+
+30
+
+5
+
+2
+
+5
+
+9
+
+diff freqs
+
+8
+
+4
+
+10
+
+1
+
+0
+
+12
+
+1
+
+24
+
+18
+
+1
+
+1
+
+3
+
+ids1
+
+14
+
+15
+
+27
+
+ids2
+
+9
+
+22
+
+39
+
+37
+
+37
+
+diff ids1
+
+14
+
+1
+
+12
+
+diff ids2
+
+9
+
+13
+
+17
+
+10
+
+Figure 3: Separating frequencies below f0 = 2 in our
+example treap. The part that is removed from the
+treap is dashed. For the documents with frequencies
+1 and 2, we show the absolute docids on the left and
+their differential version on the right.
+
+Figure 2: The compressed representation of the
+example treap.
+The original binary tree edges
+(dashed) are replaced by a general tree, whose topology is represented with parentheses. Docids and
+frequencies are sorted inorder and represented in
+differential form with respect to their parent.
+
+a block). Samples are stored separately and explicitly in
+an array, with pointers to the block [19]. Searches in these
+lists will ask for consecutively larger values, so we remember
+the last element found and exponentially search for the next
+query starting from there. Figure 3 illustrates the separation
+of low-frequency elements from our example treap.
+A neat feature of these lists is that often we will not need
+to access them at all during queries, since ranked queries
+aim at the highest frequencies.
+
+a first sequence, the second chunks in a second sequence,
+and so on. Some numbers xi will only participate in the
+first sequences because they are smaller than others. Compact bitmap representations are used to drive the extraction
+process for any xi through the different sequences where its
+chunks are represented. DACs can tune the block sizes so
+as to use minimum space, given the sequence of xi values.
+Figure 2 illustrates our compressed treap representation.
+
+4.4
+
+1
+27
+
+14
+
+1
+
+(((()())(()())())()((())))
+
+Topology
+
+44
+
+1
+
+9
+
+39
+
+15
+
+3
+
+2
+22
+
+4
+
+44
+
+1
+14
+
+6
+
+3
+
+2
+2
+
+35
+
+35
+
+6
+
+9
+
+6
+
+14
+
+6
+
+14
+
+24
+
+4.5
+4.5.1
+
+Practical Improvements
+
+Query Processing
+General procedure
+
+Let Q be a query composed of q terms t ∈ Q. To obtain the top-k documents from the intersection or union of
+q posting lists we proceed in DAAT fashion: We traverse
+the q posting lists in synchronization, identifying the documents that appear in all or some of them, and accumulating
+P
+their
+P weights w(t, d) into a final score(Q, d) = t w(t, d) =
+Those documents are inserted in a mint tf t,f · idft .
+priority queue limited to k elements, where the priority is
+the score. Each time we insert a new element and the queue
+size reaches k + 1, we remove the minimum. At the end of
+the process, the priority queue contains the top-k results.
+Furthermore, at any stage of the process, if the queue has
+reached size k, then its minimum score L is a lower bound to
+the scores we are interested in for the rest of the documents.
+
+The scheme detailed above would not be so successful
+without two important improvements. First, because many
+posting lists are very short, it turns out to be more efficient
+to store two single DAC sequences, with all the differential
+docids and all the differential frequencies for all the lists together, even if using individual DACs would have allowed
+us to optimize their space for each sequence separately. The
+overhead of storing the chunk lengths and other administrative data overweights the benefits for short sequences.
+A second improvement is to break ties in frequencies so as
+to make the treap as balanced as possible, by choosing the
+maximum that is closest to the center of each interval. This
+improves the binary searches for docids.
+The third, and more important, improvement is to omit
+from the treap representation all the elements of the lists
+where the frequency is below some threshold f0 . According
+to Zipf’s law [40, 18, 16, 5], a large number of elements will
+have low frequencies, and thus using a separate posting list
+for each frequency below f0 will save us from storing those
+frequencies wherever those elements would have appeared
+in the treap. Further, the docids of each list can be differentially encoded in classical sequential form, which is more
+efficient than in treap order.
+It turns out that many terms do not have to store a treap
+at all, as they never occur more than f0 times in any document. We represent the gap-encoded lists using Rice codes
+and take an absolute sample every 128 values (which form
+
+4.5.2
+
+Intersections
+
+Let d be the smallest docid not yet considered (initially
+d = 1). All the treaps t maintain a stack of nodes (initially
+holding just a sentinel value element ut with id(ut ) = +∞
+and f (ut ) = +∞), and a cursor vt (initially the treap root).
+The stack will contain the nodes in the path from the root
+to vt where we descend by the left child. We will always call
+ut the top of the stack, thus ut is an ancestor of vt and it
+holds id(ut ) > id(vt ).
+We advance in all the treaps simultaneously towards a
+node v with docid id(v) = d, while skipping nodes using the
+current lower bound L. In all the treaps t we maintain the
+
+197
+
+invariant that, if v is in the treap, it must appear in the
+subtree rooted at vt . In particular, this implies d < id(ut ).
+Because of the decreasing frequency property of treaps,
+if d is in a node v within the subtree rooted at vt , then
+f (v) ≤ f (vt ). Therefore, we can compute an upper bound U
+to the score of document
+P d by using values f (vt ) instead of
+f (v), for example U = t∈Q f (vt ) · idft for a tf-idf scoring1 .
+If this upper bound is U ≤ L, then there is a valid topk answer where d does not participate, so we can discard
+d. Further, no node that is below all the current vt nodes
+can qualify. Therefore, we can safely compute a new target
+d ← mint (id(ut )). Each time the value of d changes (it
+always increases), we must update the stack of all the treaps
+t to restore the invariants: While id(ut ) ≤ d, we assign
+vt ← ut and remove ut from the stack. We then resume
+the global intersection process with this new target d. The
+upper bound U is recomputed incrementally each time any
+vt value changes (U may increase or decrease).
+When U > L, it is still feasible to find d with sufficiently
+high score. In this case we have to advance towards the node
+containing d in some treap. We obtained the best results by
+choosing the treap t of the shortest list. We must choose a
+treap where we have not yet reached d; if we have reached
+d in all the treaps then we can output d as an element of
+the intersection, with a known score (the current U value is
+the actual score of d), insert it in the priority queue of top-k
+results as explained (which may increase the lower bound L),
+and resume the global intersection process with d ← d + 1
+(we must update stacks, as d has changed).
+In order to move towards d 6= id(vt ) in a treap t, we
+proceed as follows. If d < id(vt ), we move to the left child
+of vt , lt , push vt in the stack, and make vt ← lt . Instead,
+if d > id(vt ), we move to the right child of vt , rt , and make
+vt ← rt . We then recompute U with the new vt value.
+If we have to move to the left and there is no left child of
+vt , then d does not belong to the intersection. We stay at
+node vt and redefine a new target d ← id(vt ). If we have
+to move to the right and there is no right child of vt , then
+again d is not in the intersection. We make vt ← ut , remove
+ut from the stack, and redefine d ← id(ut ). In both cases
+we adjust the stacks of the other treaps to the new value of
+d, as before, and resume the intersection process.
+Algorithm 1 gives pseudocode for the intersection.
+
+4.5.3
+
+Algorithm 1 Top-k of intersection using treaps.
+Intersect(Q, k)
+results ← ∅ // priority queue of pairs (key, priority)
+for t ∈ Q do
+stackt ← h⊥i // stack of treap t, id(⊥) = f (⊥) = +∞
+vt ← root of treap t
+end for
+P
+compute score U using f (vt ) values, e.g.
+t∈Q f (vt ) · idft
+d←1
+L ← −∞
+while d < +∞ do
+while U ≤ L do
+changed(mint∈Q id(top(stackt )))
+end while
+if ∀t ∈ Q, d = id(vt ) then
+report(d, U )
+changed(d + 1)
+else
+t ← treap of shortest list such that d 6= id(vt )
+if d < id(vt ) then
+lt ← left child of vt
+if lt is not null then
+push(stackt ,vt )
+changev(t, lt )
+else
+changed(id(vt ))
+end if
+else
+rt ← right child of vt
+if rt is not null then
+changev(t, rt )
+else
+changev(t, pop(stackt ))
+changed(id(vt ))
+end if
+end if
+end if
+end while
+return results
+changed(newd)
+d ← newd
+for t ∈ Q do
+v ← vt
+while d ≥ id(top(stackt )) do
+v ← top(stackt )
+pop(stackt )
+end while
+changev(t, v)
+end for
+
+Handling low-frequency lists
+
+We have not yet considered the lists of documents with
+frequencies up to f0 , which are stored separately, one per
+frequency, outside the treap. While a general solution is
+feasible (but complicated), we describe a simple strategy for
+the case f0 = 1, which is the case we implemented.
+Recall that we store the posting lists in gap-encoded blocks.
+Together with the treap cursor, we will maintain a list cursor, which points inside some block that has been previously
+decompressed. Each time there is no left or right child in the
+treap, we must search the list for potential elements omitted in the treap. More precisely, we look for elements in
+the range [d, id(vt ) − 1] if we cannot go left, or in the range
+[d, id(ut ) − 1] if we cannot go right. Those elements must be
+processed as if they belonged to the treap before proceeding
+
+report(d, s)
+results ← results ∪ (d, s)
+if |results| > k then
+remove minimum from results
+L ← minimum priority in results
+end if
+changev(t, v)
+remove contribution of f (vt ) from U , e.g. U − f (vt ) · idft
+vt ← v
+add contribution of f (vt ) to U , e.g. U + f (vt ) · idft
+
+1
+
+Replacing f (v) by f (vt ) will yield an upper bound whenever the scoring function is monotonic with the frequencies.
+This is a reasonable assumption and holds for most weighting formulas, including tf-idf and BM25.
+
+198
+
+12000
+
+in the actual treap. Finding this new range [l, r] in the list
+may imply seeking and decompressing a new block.
+The cleanest way to process range [l, r] is to search as if it
+formed a subtree fully skewed to the right, descending from
+vt . If we descended to the left of vt towards the range, we
+push vt into the stack. Since all the elements in the list
+have the same frequency, when we are required to advance
+towards (a new) d we simply scan the interval until reaching
+or exceeding d, and the docid found acts as our new id(vt )
+value. When the interval [l, r] is exhausted, we return to the
+treap. Note that the interval [l, r] may span several physical
+list blocks, which may be subsequently decompressed.
+
+4.5.4
+
+10000
+
+Size (MB)
+
+8000
+
+5.1
+
+2000
+0
+40
+
+Unions
+
+80
+120
+160
+200
+Documents Inserted (x 100000)
+
+240
+
+Figure 4: Space usage per document inserted.
+
+Differential
+Treap
+Treap w/o f0
+Absolute
+
+docid freq
+8.9 1.6
+8.9 2.1
+11.0 5.6
+14.8 5.7
+
+Figure 5: Pie chart with fraction of space used by
+the structures in our index. Bottom right: bpp for
+different representations of docids and frequencies.
+
+EXPERIMENTS AND RESULTS
+Experimental Setup
+
+We use the TREC GOV2 collection, parsed using Porter’s
+stemming algorithm. The collection contains about 25.2 million documents and about 32.8 million terms in the vocabulary. The inverted lists contain about 4.9 billion postings
+in total. We used the TREC2006 Efficiency Queries dataset
+using distinct amounts of terms, from q = 2 to 5.
+We compare our results with two baselines: (1) BlockMax [21], using their implementation and modifying it to
+use tf-idf scoring, and (2) Dual-Sorted [25], using their implementation. As additional baselines, we implemented (3)
+our own version of a traditional docid-sorted inverted index
+using Rice encoding of the gaps, sampling values every 128
+values to support random access via exponential search, and
+Rice encoding of absolute frequencies, and (4) our own version of a traditional frequency-sorted inverted index, using
+gap- and run-length encoding for the frequencies, and Rice
+encoding of absolute docids (except within equal frequencies,
+where docids are sorted and differentialy encoded).
+Our experiments were performed on an Intel(r) Xeon(r)
+model E5620 running at 2.40 GHz with 96GB of RAM and
+12,288KB of cache, running version 2.6.31-41 64 bits of the
+Linux kernel. All solutions were implemented in C++, compiled with g++ version 4.4.3 and -O3 optimization.
+
+5.2
+
+6000
+4000
+
+The algorithm for ranked unions requires a few changes
+on the algorithm for intersections. First, in the two lines
+that call changed(id(vt )), we do not change the d for all
+the treaps when the current treap does not find it. Rather,
+we keep values nextdt where each treap stores the minimum
+d0 ≥ d it contains, thus those lines are changed by nextdt ←
+id(vt ). Second, we will choose the treap t to advance only
+among those where id(vt ) 6= d and nextdt = d, as if nextdt >
+d we cannot find d in treap t. Third, when all the treaps t
+where id(vt ) 6= d satisfy nextdt > d, we have found exactly
+the treaps where d appears. We add up score(Q, d) over
+those treaps where id(vt ) = d, report d, and advance to d+1.
+If, however, this happens but no treap t satisfies id(vt ) = d,
+we know that d is not in the union and we can advance
+d with changed(mint∈Q nextdt ). Finally, changed(newd)
+should not only update d but also update, for all the treaps
+t, nextdt to max(nextdt , newd).
+
+5.
+
+Treap
+Treap w/o f0
+Block Max
+DualSorted
+
+out representing the low-frequency lists separately. As it can
+be seen, the treap mechanism to encode both docids and frequencies in partially differential form is not sufficient by itself to beat a representation like Block-Max (which does not
+encode frequencies differentially, but encodes docids differentially much better, in left-to-right order) or Dual-Sorted
+(which does not encode docids differentially, but encodes
+frequencies differentially and with run-length encoding).
+When we separate the low-frequency lists (“Treap” in the
+figure), the situation is much better, as this is roughly equivalent to run-length compressing consecutive postings with
+frequency 1, and in addition the overhead of the tree topology and of non-left-to-right differential encoding of documents disappears within those lists. With this improvement,
+our compressed treap structures offer a space gain of 22%
+over Block-Max and of 18% over Dual-Sorted. While the
+idea of low-frequency lists could be applied to Block-Max
+and Dual-Sorted, it would probably make them slower (unlike our treaps, which become faster when processing lowfrequency lists) and the impact in their space would not be
+as high as on the treaps (e.g., they have no tree topology and
+their differential encoding of docids would not improve).
+Our tree representation (with low-frequency lists) requires
+about 12.3 bits per posting (bpp). Figure 5 shows how that
+space distributes across our structures. Almost half of the
+space is used for the treap DACs, the docids using about
+twice the space of the frequencies. The docids for frequency
+
+Space Usage
+
+Figure 4 shows the space usage of the main structures
+compared, for increasing subsets of GOV2. The line “Treap
+w/o f0 ” shows the space of our basic treap mechanism with-
+
+199
+
+Docid
+8.9
+14.8
+8.9
+11.0
+
+Freq
+5.7
+1.6
+2.1
+5.6
+
+Topology
+1.3
+2.4
+
+Intersection, varying k
+
+Total
+14.6
+16.4
+12.3
+19.0
+15.8
+15.0
+
+25
+Milliseconds per query
+
+Docid sorted
+Freq sorted
+Treap
+Treap w/o f0
+Block-Max
+Dual-Sorted
+
+Table 1: Bpps of main components of the indexes.
+
+f0 = 1 (F0), differentially encoded, use more than 40% of
+the space, which shows again how large is their impact on
+the space. Finally, the compressed treap topologies require
+about 10% of the space. Adding DACs and F0, we use 8.9
+bpp for the docids, plus 2.1 bpp for the frequencies and 1.3
+bpp for the topology. Our version without separating lowfrequency lists, instead, uses 11 bpp for the docids, 5.6 bpp
+for the frequencies, and 2.4 bpp for the topology, adding up
+to 19 bpp. This is compared in the figure (bottom right)
+with differential and absolute encodings of docids and frequencies (as detailed in Section 5.1), showing how treaps
+achieve intermediate results. Table 1 shows how the space
+of the various indexes adds up from those components.
+
+20
+15
+10
+5
+0
+10
+
+20
+
+30
+
+40
+
+50
+
+60
+
+k
+Intersection, k=10
+25
+Milliseconds per query
+
+5.3
+
+Treap
+Block-Max
+Dual-Sorted
+Intersection
+
+Ranked Intersection
+
+Figure 6 gives ranked intersection times for varying k,
+averaging over all the queries, and for k = 10 and k = 20,
+separating the queries by number of words (q). As noted in
+previous work [25], Dual-Sorted is unique in that it improves
+for longer queries, taking over for queries of 4–5 words or
+more. Averaged over all the queries, it performs similarly to
+Block-Max, and both are superior to a Boolean intersection
+followed by a ranking (labeled “Intersection”) implemented
+over our docid-sorted inverted index. None of these methods
+is much affected by k (which is expected for Dual-Sorted and
+Intersection since they always produce the full intersection
+and then rank the resulting documents).
+Our treaps are more affected by the value of k, achieving larger speedups over a plain intersection for smaller k.
+Indeed, they are much faster than all the alternatives for
+small k values, and become similar to them for k = 30. For
+k = 10, treaps outperform the others by a wide margin (up
+to 3 times faster than Block-Max, its closest competitor)
+for queries up to 4 words. For more than 4 words, as explained, Dual-Sorted takes over. The scenario is similar, yet
+less sharp, for k = 20.
+To explain the improved times of the treap representation
+compared to a plain intersection, Figure 7 shows the number of documents accessed in both cases. It can be seen that
+the treap data structure is very effective to prune the number of documents that must be considered, starting examining about 2.6% of the documents considered by a Boolean
+intersection for k = 10, and becoming ineffective only at
+k = 1000. On the other hand, the compact data structures of the treap (namely the compressed representation
+of the topology and the DAC representation of the docids
+and frequencies) are significantly slower than a plain representation: both require about 300 nanoseconds per basic
+operation [3, 14], whereas a plain memory access costs 15–30
+nanoseconds. This 10–20-fold slowdown makes the final time
+competitive only up to k = 30. The figure also shows the
+number of docids accessed at the low-frequency lists (F0),
+which increases with k but stays around 20% of the total.
+
+Treap
+Block-Max
+Dual-Sorted
+Intersection
+
+20
+15
+10
+5
+0
+2
+
+3
+
+4
+
+5
+
+Query length
+Intersection, k=20
+
+Milliseconds per query
+
+25
+Treap
+Block-Max
+Dual-Sorted
+Intersection
+
+20
+15
+10
+5
+0
+2
+
+3
+
+4
+
+5
+
+Query length
+
+Figure 6: Time performance for ranked intersections. On top, for all the queries and increasing
+k. The other two discriminate by number of words
+in the query and use fixed k = 10 and k = 20.
+
+5.4
+
+Ranked Union
+
+Figure 8 shows the results for ranked union queries. Using
+a Boolean union as a filter for these queries is ineffective, so
+we use our frequency-sorted inverted index to implement
+an approximate ranked union, Persin et al.’s [30] (labeled
+“Persin” in the plots). Dual-Sorted also implements Persin
+et al.’s algorithm, so both report only approximate results.
+Only Block-Max and our treaps give exact results.
+It can be seen that all the times worsen as k and q increase,
+more than linearly on q and sublinearly on k. Our treaps
+outperform Block-Max and Dual-Sorted for all k values up
+to 130. They are 2.5 times faster, for example for 3-word
+
+200
+
+30000
+60
+Milliseconds per query
+
+Amount of documents
+
+25000
+
+Union, varying k
+
+Intersection
+Treap
+f0
+
+20000
+15000
+10000
+5000
+0
+
+40
+30
+20
+10
+0
+
+10 100 200 300 400 500 600 700 800 900 1000
+k
+
+10 20 30 40 50 60 70 80 90 100 110 120 130
+k
+Union, k=10
+
+Figure 7: Documents evaluated during a ranked intersection query.
+Milliseconds per query
+
+60
+
+queries. Treaps are only outperformed by the native Persin
+implementation, which however is not exact.
+
+6.
+
+EXTENSIONS
+
+It is not hard to adapt our algorithm for unions to the
+ranked version of the more general thresholded queries [7],
+which in addition to Q give a value q 0 < q, so that at least
+q 0 of the q query terms must appear in the reported documents. In this more general view, ranked unions correspond
+to q 0 = 1 and ranked intersections to q 0 = q. The more general Weak-AND operator [15] can also be easily supported.
+When we find which treaps t reach value id(vt ) = d, we can
+evaluate document d and determine whether it qualifies.
+On the other hand, approximate answers for ranked union
+queries have been the norm for decades, and our treap data
+structures can efficiently implement those as well. For example, we could easily implement Persin et al.’s [30] TAAT
+processing, even better than classical frequency-sorted lists.
+We could maintain the candidate set as a list sorted by docid.
+Each new treap that is processed is traversed in docid order,
+stopping at nodes where the threshold for considering documents is reached. As we produce the qualifying documents
+in docid order, we can simply merge them with the candidate set, without the need of more sophisticated structures.
+Furthermore, for subtrees of treap nodes whose frequency
+is below the threshold for inserting new documents in the
+candidate set, we can switch to a mode where the subtree
+is intersected with the candidates, using the next candidate
+docid to skip treap nodes.
+
+7.
+
+Treap
+Block-Max
+Dual-Sorted
+Persin
+
+50
+
+Treap
+Block-Max
+Dual-Sorted
+Persin
+
+50
+40
+30
+20
+10
+0
+2
+
+3
+
+4
+
+5
+
+4
+
+5
+
+Query length
+Union, k=20
+
+Milliseconds per query
+
+60
+Treap
+Block-Max
+Dual-Sorted
+Persin
+
+50
+40
+30
+20
+10
+0
+2
+
+3
+Query length
+
+Figure 8: Time performance for ranked unions. On
+top, for all the queries and increasing k. The other
+two discriminate by number of words in the query
+and use fixed k = 10 and k = 20.
+
+CONCLUSIONS AND FUTURE WORK
+
+three times faster) for up to k = 30 on ranked intersections
+and k = 130 on ranked unions.
+A first future work question is how the scheme performs
+with other scoring formulas. We have used simple tf-idf, but
+we could use BM25, impacts, etc. Some require to adapt the
+way we compute the upper bound U , such as considering
+document sizes in BM25 (but this has been solved [15, 21]).
+A second question is what would be the impact of reassigning docids. There is much recent research on this topic
+(see, e.g., [21]) that shows that reassignment can significantly improve both space and processing time. How much
+would treaps improve with such schemes? Can we optimize
+the reassignment for a treap layout?
+
+We have introduced a new inverted index representation
+based on the treap data structure. Treaps turn out to be
+an elegant and flexible tool to represent simultaneously the
+docid and the weight ordering of a posting list. We use
+them to design efficient ranked intersection and union algorithms that simultaneously filter out document by docid and
+frequency. The treap also allows us to represent both docids and frequencies in differential form, thus enabling better
+compression of the posting lists. Our experiments show significant gains in space and time compared to the state of the
+art: not only our structure uses about 20% less space than
+previous ones, but also it is faster (sometimes as much as
+
+201
+
+An important part of our gain owed to separating lists
+with frequency f0 = 1. How to efficiently separate lists with
+higher frequencies is a challenge, and it can lead to substantial further gains. It is also interesting to test how this idea
+impacts on schemes like Block-Max and Dual-Sorted.
+Finally, our performance degrades sharply with q, an effect
+already noted before in Block-Max [21]. We believe the time
+would become almost nonincreasing with q if we used treaps
+under a TAAT scheme where the longer lists were processed
+after determining good lower bounds with the shorter lists.
+
+8.
+
+[18] B. Croft, D. Metzler, and T. Strohman. Search
+Engines: Information Retrieval in Practice. Pearson
+Education, 2009.
+[19] J. Culpepper and A. Moffat. Compact set
+representation for information retrieval. In Proc. 14th
+SPIRE, pages 137–148, 2007.
+[20] E. Demaine, A. López-Ortiz, and J. Munro. Adaptive
+set intersections, unions, and differences. In Proc. 11th
+SODA, pages 743–752, 2000.
+[21] S. Ding and T.Suel. Faster top-k document retrieval
+using block-max indexes. In Proc. 34th SIGIR, pages
+993–1002, 2011.
+[22] J. Fischer and V. Heun. Space-efficient preprocessing
+schemes for range minimum queries on static arrays.
+SIAM J. Comp., 40(2):465–492, 2011.
+[23] R. Grossi, A. Gupta, and J. Vitter. High-order
+entropy-compressed text indexes. In Proc. 14th SODA,
+pages 841–850, 2003.
+[24] H. Heaps. Information Retrieval - Computational and
+Theoretical Aspects. Academic Press, NY, 1978.
+[25] R. Konow and G. Navarro. Dual-sorted inverted lists
+in practice. In Proc. 19th SPIRE, pages 295–306, 2012.
+[26] C. Martı́nez and S. Roura. Randomized binary search
+trees. J. ACM, 45(2):288–323, 1997.
+[27] E. McCreight. Priority search trees. SIAM J. Comp.,
+14(2):257–276, 1985.
+[28] G. Navarro. Wavelet trees for all. In Proc. 23rd CPM,
+pages 2–26, 2012.
+[29] G. Navarro and S. Puglisi. Dual-sorted inverted lists.
+In Proc. 17th SPIRE, pages 309–321, 2010.
+[30] M. Persin, J. Zobel, and R. Sacks-Davis. Filtered
+document retrieval with frequency-sorted indexes. J.
+Am. Soc. Inf. Sci., 47(10):749–764, 1996.
+[31] K. Sadakane and G. Navarro. Fully-functional succinct
+trees. In Proc. 21st SODA, pages 134–149, 2010.
+[32] P. Sanders and F. Transier. Intersection in integer
+inverted indices. In Proc. 9th ALENEX, 2007.
+[33] F. Scholer, H. Williams, J. Yiannis, and J. Zobel.
+Compression of inverted indexes for fast query
+evaluation. In Proc. 25th SIGIR, pages 222–229, 2002.
+[34] R. Seidel and C. Aragon. Randomized search trees.
+Algorithmica, 16(4/5):464–497, 1996.
+[35] T. Strohman and B. Croft. Efficient document
+retrieval in main memory. In Proc. 30th SIGIR, pages
+175–182, 2007.
+[36] J. Vuillemin. A unifying look at data structures.
+Comm. ACM, 23(4):229–239, 1980.
+[37] L. Wang, J. Lin, and D. Metzler. A cascade ranking
+model for efficient ranked retrieval. In Proc. 34th
+SIGIR, pages 105–114, 2011.
+[38] I. Witten, A. Moffat, and T. Bell. Managing
+Gigabytes. Morgan Kaufmann, 2nd edition, 1999.
+[39] H. Yan, S. Ding, and T. Suel. Inverted index
+compression and query processing with optimized
+document ordering. In Proc. 18th WWW, pages
+401–410, 2009.
+[40] G. Zipf. Human Behaviour and the Principle of Least
+Effort. Addison-Wesley, 1949.
+[41] J. Zobel and A. Moffat. Inverted files for text search
+engines. ACM Comp. Surv., 38(2):art. 6, 2006.
+
+REFERENCES
+
+[1] V. Anh and A. Moffat. Inverted index compression
+using word-aligned binary codes. Inf. Retr.,
+8(1):151–166, 2005.
+[2] V. Anh and A. Moffat. Pruned query evaluation using
+pre-computed impacts. In Proc. 29th SIGIR, pages
+372–379, 2006.
+[3] D. Arroyuelo, R. Cánovas, G. Navarro, and
+K. Sadakane. Succinct trees in practice. In Proc. 11th
+ALENEX, pages 84–97, 2010.
+[4] R. Baeza-Yates, A. Moffat, and G. Navarro. Searching
+large text collections. In Handbook of Massive Data
+Sets, pages 195–244. Kluwer, 2002.
+[5] R. Baeza-Yates and B. Ribeiro-Neto. Modern
+Information Retrieval. Addison-Wesley, 2nd edition,
+2011.
+[6] R. Baeza-Yates and A. Salinger. Experimental
+analysis of a fast intersection algorithm for sorted
+sequences. In Proc. 12th SPIRE, pages 13–24, 2005.
+[7] J. Barbay and C. Kenyon. Adaptive intersection and
+t-threshold problems. In Proc. 13th SODA, pages
+390–399, 2002.
+[8] J. Barbay, A. López-Ortiz, T. Lu, and A. Salinger. An
+experimental investigation of set intersection
+algorithms for text searching. ACM J. Exp. Alg.,
+14:art. 7, 2009.
+[9] M. Bender and M. Farach-Colton. The LCA problem
+revisited. In Proc. 9th LATIN, pages 88–94, 2000.
+[10] O. Berkman and U. Vishkin. Recursive star-tree
+parallel data structure. SIAM J. Comp.,
+22(2):221–242, 1993.
+[11] I. Bialynicka-Birula. Ranked Queries in Index Data
+Structures. PhD thesis, University of Pisa, 2008.
+[12] I. Bialynicka-Birula and R. Grossi. Rank-sensitive data
+structures. In Proc. 12th SPIRE, pages 79–90, 2005.
+[13] G. Blelloch and M. Reid-Miller. Fast set operations
+using treaps. In Proc. 10th SPAA, pages 16–26, 1998.
+[14] N. Brisaboa, S. Ladra, and G. Navarro. DACs:
+Bringing direct access to variable-length codes. Inf.
+Proc. Manag., 49(1):392–404, 2013.
+[15] A. Broder, D. Carmel, M. Herscovici, A. Soffer, and
+J. Zien. Efficient query evaluation using a two-level
+retrieval process. In Proc. 12th CIKM, pages 426–434,
+2003.
+[16] S. Büttcher, C. Clarke, and G. Cormack. Information
+Retrieval: Implementing and Evaluating Search
+Engines. MIT Press, 2010.
+[17] F. Claude, P. Nicholson, and D. Seco. Differentially
+encoded search trees. In Proc. 22nd DCC, pages
+357–366, 2012.
+
+202
+
+

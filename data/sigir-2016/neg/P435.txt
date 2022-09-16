@@ -1,0 +1,1750 @@
+Parameterized Fielded Term Dependence Models for
+Ad-hoc Entity Retrieval from Knowledge Graph
+Fedor Nikolaev
+Department of Computer Science
+Wayne State University
+Detroit, Michigan 48202
+
+Kazan Federal University
+35 Kremlyovskaya Street
+Kazan, Russia 420008
+
+fedor@wayne.edu
+
+feanikolaev@kpfu.ru
+
+Alexander Kotov
+
+∗
+
+Nikita Zhiltsov
+Kazan Federal University
+35 Kremlyovskaya Street
+Kazan, Russia 420008
+
+Department of Computer Science
+Wayne State University
+Detroit, Michigan 48202
+
+nzhilcov@kpfu.ru
+
+kotov@wayne.edu
+ABSTRACT
+
+1.
+
+INTRODUCTION
+
+Recent studies [16, 22] indicate that more than 75% of
+queries issued to Web search systems aim at finding information about entities, which could be material objects or
+concepts that exist in the real world or fiction (e.g. people,
+products, scientific papers, colors). Most common information needs underlying this type of queries include finding a
+certain entity (e.g. “Einstein relativity theory”), a particular attribute or property of an entity (e.g. “Who founded
+Intel?”) or a list of entities satisfying a certain criteria (e.g.
+“Formula 1 drivers that won the Monaco Grand Prix”). Such
+information needs can be efficiently addressed by presenting
+the target entity or a list of entities, either directly as search
+results or in addition to the ranked list of documents. This
+scenario gives rise to the problem of ad-hoc entity retrieval
+from knowledge graph, when the output of retrieval models
+is a list of entities given their (potentially verbose) textual
+description.
+Recent successes in the development of Web information
+extraction methods have resulted in the emergence of a number of large-scale publicly available and proprietary knowledge repositories, such as DBpedia1 , Freebase2 , Google’s
+Knowledge Graph and Microsoft’s Satori. All these repositories adopt a simple knowledge representation model based
+on subject-predicate-object triples that can be conceptualized as a directed labeled multi-graph (commonly referred
+to as a knowledge graph), in which the nodes correspond to
+entities and the edges denote typed relations between entities. This model makes knowledge graphs a natural choice
+for addressing different types of entity-centric information
+needs. However, since the structure of knowledge graphs
+has been optimized for automated reasoning and answering
+structured graph pattern queries, finding entities in knowledge graphs that conceptually match unstructured free-text
+queries presents certain challenges to existing retrieval models.
+First, since entities in knowledge graphs are designated
+only by an identifier (e.g. machine ID /m/0jcx, in the case
+of Freebase, or URI http://dbpedia.org/page/Albert Einstein,
+
+Accurate projection of terms in free-text queries onto structured entity representations is one of the fundamental problems in entity retrieval from knowledge graph. In this paper, we demonstrate that existing retrieval models for ad-hoc
+structured and unstructured document retrieval fall short of
+addressing this problem, due to their rigid assumptions. According to these assumptions, either all query concepts of the
+same type (unigrams and bigrams) are projected onto the
+fields of entity representations with identical weights or such
+projection is determined based only on one simple statistic,
+which makes it sensitive to data sparsity. To address this
+issue, we propose the Parametrized Fielded Sequential Dependence Model (PFSDM) and the Parametrized Fielded
+Full Dependence Model (PFFDM), two novel models for entity retrieval from knowledge graphs, which infer the user’s
+intent behind each individual query concept by dynamically
+estimating its projection onto the fields of structured entity
+representations based on a small number of statistical and
+linguistic features. Experimental results obtained on several
+publicly available benchmarks indicate that PFSDM and
+PFFDM consistently outperform state-of-the-art retrieval
+models for the task of entity retrieval from knowledge graph.
+
+CCS Concepts
+•Information systems → Structured text search;
+
+Keywords
+Entity Retrieval; Structured Document Retrieval; Featurebased Models; Learning-to-rank Models; Knowledge Graph
+∗The first two authors provided equal contribution.
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+
+SIGIR ’16, July 17 - 21, 2016, Pisa, Italy
+c 2016 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ISBN 978-1-4503-4069-4/16/07. . . $15.00
+
+1
+2
+
+DOI: http://dx.doi.org/10.1145/2911451.2911545
+
+435
+
+http://dbpedia.org
+http://freebase.com
+
+in the case of DBpedia), there is no notion of document in
+this retrieval scenario. A simple workaround for this issue
+used in recent work is to aggregate the objects and predicates in all the triples, which include each distinct entity
+as a subject, into the fields of a structured document for
+that entity. Such aggregation can be done by predicate type
+[21], according to the importance weights manually assigned
+to predicates [6], based on a flat structure with fixed number of fields (e.g. title and content [19] or entity name, attributes, categories, similar and related entity names [33])
+or a two-level hierarchy, in which the first level corresponds
+to predicate types, while the second level corresponds to individual predicates [18]. Accurately matching unstructured
+keyword queries with such structured entity representations,
+however, is another fundamental theoretical problem, which
+has received much less research attention.
+In particular, existing retrieval models are based on a set
+of rigid assumptions, which limit their effectiveness for retrieval of structured entity documents. On one hand, retrieval models incorporating term dependencies, such as Sequential Dependence Model [17] (which allows to assign different importance weights to matching query concepts of different type), Weighted Sequential Dependence Model (WSDM)
+[4] (which estimates the importance of each matching query
+concept individually) and retrieval model based on copulas
+[10] disregard entity document structure by considering the
+matches of the same query concept in different fields of entity documents as equally important. On the other hand,
+although existing models for ad-hoc structured document
+retrieval, such as the Mixture of Language Models (MLM)
+[20] and BM25F [23], factor in document structure when determining the degree of relevance of queries to documents,
+they do not take into account term dependencies (i.e. are
+agnostic to bigram query concepts). Furthermore, these models calculate the retrieval score of a structured document
+as a sum of the matching scores of each query term in a
+linear combination of the language models (LMs) for each
+document field. As a result, the field weights in this linear combination, which effectively determine the projection
+of query terms onto document fields, are the same for all
+query terms. Although the recently proposed Fielded Sequential Dependence Model (FSDM) [33] partially addressed
+this limitation by allowing different importance weights to
+the matches of a query concept in different fields of structured entity documents, such parametrization still lacks flexibility, as those weights are the same for all query concepts of
+the same type (unigrams, ordered and unordered bigrams).
+This can create a problem, which is illustrated by an example query “capitals in Europe which were host cities of
+summer Olympic games”. First, contrary to the assumption
+of FSDM, query concepts of the same type in this query
+should be projected onto different fields of relevant entity
+documents (e.g. “capitals” should be mapped onto the categories field, while “Europe” should be mapped onto the attributes field). Incorrect projection of any query concept
+(e.g. mapping “Europe” and “Olympic games” to the entity
+names field) is likely to substantially degrade the accuracy of
+retrieval results for this query. Probabilistic Retrieval Model
+for Semistructured Data (PRMS) [14] is a unigram bag-ofwords model for ad-hoc structured document retrieval that
+learns a simple statistical relationship between the intended
+mapping of terms in free-text queries and their frequency in
+different document fields. Robust estimation of this relation-
+
+436
+
+ship, however, requires query terms to have a non-uniform
+distribution across document fields and is negatively affected
+by data sparsity, particularly in the case of entity representations with a large number of fields. As a result, PRMS
+has inferior performance on entity retrieval tasks not only
+relative to FSDM [33], but also to both MLM and BM25F
+[2, 33].
+To overcome the limitations of existing retrieval models,
+we propose the Parametrized Fielded Sequential Dependence
+Model (PFSDM) and the Parametrized Fielded Full Dependence Model (PFFDM), two novel feature-based retrieval
+models, which infer the user’s intent behind each individual
+query concept (unigram or bigram) by dynamically estimating its probabilistic mapping onto the fields of structured entity representations using a small number of statistical and
+linguistic features. We also provide a learning-to-rank algorithm to learn the weights of these features that maximize
+the target retrieval metric from the training data. The key
+contributions of this work are as follows:
+1. We proposed PFSDM and PFFDM, two novel featurebased models for structured document retrieval, which account for sequential and full term dependencies as well as
+provide flexible parametrization allowing to dynamically
+project each query concept onto document fields. To the
+best of our knowledge, there are no previous studies of
+feature-based models for structured document retrieval,
+in general, and ad-hoc entity retrieval from knowledge
+graph, in particular;
+2. We propose a set of statistical and linguistic features of
+query concepts that enable their accurate projection onto
+the fields of structured entity documents;
+3. We experimentally demonstrate that, for the task of adhoc entity retrieval from knowledge graph, dynamic projection of query concepts onto entity representations is
+more effective than dynamic estimation of their importance. We also found out that retrieval models accounting
+for all dependencies between query terms provide more accurate retrieval results for this task than the models that
+account only for sequential dependencies.
+The rest of this paper is organized as follows. Section 2
+provides a brief overview of previous research along the directions relevant to the present work. Ranking functions
+of PFSDM and PFFDM, features to estimate the mapping
+of query concepts onto the fields of entity documents along
+with the method to learn the weights of those features are
+presented in Section 3. Experimental results are reported
+and analyzed in Section 4, while Section 5 concludes the
+paper and outlines the directions for future work.
+
+2.
+
+RELATED WORK
+
+In this section, we provide an overview of the recent work
+in ad-hoc entity retrieval from knowledge graph as well as
+term dependence and feature-based retrieval models, the
+three research directions most closely related to this work.
+Ad-hoc Entity Retrieval from Knowledge Graph.
+Every information access task involving knowledge graphs
+requires finding entities matching a keyword query, either as
+an intermediate step or a final goal. Entity retrieval methods are typically designed to address one particular entitycentric information need, such as entity search [29, 32, 33],
+list search [7] or entity-based question answering [26, 31],
+and consist of two stages. Entities retrieved in the first stage
+
+of those methods using a standard retrieval model, such as
+BM25 [2, 29], BM25F [6, 11, 29] or MLM [18, 32], are reranked or expanded in the second stage with their immediate
+neighbors in the knowledge graph, which can be obtained using SPARQL queries [29] or through random walk [24].
+In particular, Tonon et al. [29] proposed a hybrid method
+combining IR and structured graph search that starts by retrieving an initial set of entities using BM25 retrieval model
+and then extends it using SPARQL queries with the entities that are directly related to the ones in the initial search
+results. Zhiltsov and Agichtein [32] proposed a learning-torank method for re-ranking the results of MLM using query
+term and structural entity similarity features calculated in latent space. The SemSets method [7] proposed for entity list
+search utilizes the relevance of entities to automatically constructed categories (i.e. semantic sets) measured according
+to structural and textual similarity. This approach combines
+a basic TF-IDF retrieval model with spreading activation
+over the link structure of a knowledge graph and evaluation
+of membership in semantic sets. Sawant and Chakrabarti
+[25] proposed a learning-to-rank method for handling Web
+queries aimed at finding entities that belong to a particular
+category. Several approaches that translate free-text questions into structured SPARQL queries have been proposed
+for question answering over linked data [26, 31]. The proposed retrieval models can be leveraged in the first stage
+of the above methods to improve their overall performance.
+Models designed specifically for ad-hoc entity retrieval can
+also be leveraged to obtain a set of entities related to a keyword query (a process known as entity linking [12]), which is
+an important step for the methods utilizing knowledge bases
+for query expansion in ad-hoc document retrieval [9, 15, 30].
+Several entity representation schemes, in which the objects
+from RDF triples involving an entity are grouped into the
+fields of a structured entity document based on the predicates in those triples, have also been proposed [6, 18, 19]. In
+[6], objects are grouped into three fields based on manually
+designated predicate type (important, neutral, and unimportant). A simple scheme, in which the entities are represented as documents with two fields (title and content)
+was proposed in [19]. Experimental comparison of a structured entity representation scheme based on four fields with
+an unstructured and more complicated hierarchical scheme
+indicated superior performance of a simple structured representation [18].
+Term Dependence and Feature-based Retrieval Models. Markov Random Fields (MRF) based retrieval framework [17], proposed by Metzler and Croft, provided a theoretical foundation for incorporating term dependencies (in
+the form of query bigrams and unordered two-word phrases)
+into retrieval models. Sequential Dependence Model (SDM),
+which only considers two-word sequences of query terms, and
+Full Dependence Model (FDM), which considers all possible
+two-word combinations of query terms, are the two most
+popular variants of the MRF retrieval models for ad-hoc
+document retrieval. Subsequent work along this direction
+[1, 8] demonstrated strong positive effect of accounting for
+query term dependencies and proximity on both ad-hoc and
+Web document retrieval.
+SDM was later extended into WSDM by Bendersky et al.
+[4]. WSDM estimates the relative importance of query concepts as a linear combination of statistical features based on
+the frequency of occurrence of these concepts in the collec-
+
+tion and external resources. Superior retrieval performance
+of different variants of WSDM for ad-hoc document retrieval
+has been demonstrated through extensive experimental evaluation in [13]. The utility of linguistic analysis for accurate
+processing of verbose queries in ad-hoc document retrieval
+has been demonstrated in [3]. While feature-based retrieval
+models have been shown to be effective for weighting concepts in verbose queries [4, 5], this work examines their effectiveness for ad-hoc entity retrieval from knowledge graph.
+
+3.
+
+APPROACH
+
+In this section, we introduce the ranking functions of Parameterized Fielded Sequential Dependence (PFSDM) and
+the Parameterized Fielded Full Dependence (PFFDM) retrieval models, the features used by these models to determine the projection of query concepts onto the fields of entity
+documents along with an algorithm to learn the weights of
+those features that maximize the target retrieval metric.
+
+3.1
+
+PFSDM and PFFDM
+
+The quality of retrieval results for entity-centric free-text
+queries depends on the correctness of inference of implicit
+query structure and the accuracy of matching the intent behind each query concept with different aspects of semantics
+of relevant entities encoded in their structured representations. However, the ambiguity of natural language can lead
+to many plausible interpretations of a keyword query, which
+combined with the requirement to accurately project those
+interpretations onto entity representations, makes entity retrieval from knowledge graph a challenging IR problem.
+PFSDM is a parametric extension of FSDM [33], a recently proposed MRF-based entity retrieval model, which
+takes into account both term dependencies and document
+structure. FSDM uses the following function to score each
+entity profile E with respect to a given keyword query Q:
+rank
+
+PΛ (E|Q) = λT
+
+X
+
+f˜T (qi , E) +
+
+q∈Q
+
+λO
+
+X
+
+f˜O (qi , qi+1 , E) +
+
+q∈Q
+
+λU
+
+X
+
+f˜U (qi , qi+1 , E)
+
+(1)
+
+q∈Q
+
+where f˜T (qi , E), f˜O (qi , qi+1 , E), f˜U (qi , qi+1 , E) are the potential functions and λT , λO , λU are the relative importance
+weights for unigram, ordered and unordered bigram query
+concepts, respectively. The potential function for unigrams
+is defined as:
+f˜T (qi , E) = log
+
+F
+X
+j=1
+
+wjT P (qi |θjE ) = log
+
+F
+X
+j=1
+
+wjT
+
+tfqi ,Ej + µj
+
+cfqi ,j
+|Cj |
+
+|Ej | + µj
+
+where F is the number of fields in structured entity documents, θjE is the language model of field j in structured document for entity E smoothed using the field-specific Dirichlet prior µj ; |Ej | is the length of field j in E and wjT are
+the
+PF fieldTweights Tfor unigrams with the following constraints:
+j=1 wj = 1, wj ≥ 0; tfqi ,Ej is the frequency of query unigram qi in field j of E; cfqi ,j is the frequency of qi in the
+field j across structured documents for all entities in the collection; |Cj | is the total number of terms in field j across all
+
+437
+
+3.2
+
+entity documents in the collection. The potential function
+for ordered bigrams is defined as:
+f˜O (qi,i+1 , E) = log
+
+F
+X
+
+wjO
+
+tf#1(qi,i+1 ),Ej + µj
+
+cf#1(q
+
+i,i+1 ),j
+
+|Cj |
+
+|Ej | + µj
+
+j=1
+
+while the potential function for unordered bigrams is defined
+as:
+f˜U (qi,i+1 , E) = log
+
+F
+X
+
+wjU
+
+tf#uwn (qi,i+1 ),Ej + µj
+
+cf#uwn (q
+
+i,i+1 ),j
+
+|Cj |
+
+|Ej | + µj
+
+j=1
+
+where tf#1(qi,i+1 ),Ej is the frequency of query bigram qi qi+1
+in field j of structured document for entity E, cf#1(qi,i+1 ),j is
+the collection frequency of qi qi+1 in field j and tf#uwn (qi,i+1 ),E j
+is the number of times the terms qi and qi+1 co-occur within
+a window of n words in field j of E, regardless of their order.
+In the case of entity descriptions with F fields, FSDM has
+3 ∗ F + 3 parameters: F field mapping weights plus λT , λO
+and λU . We believe that this parametrization lacks the necessary degrees of freedom, which can potentially limit the
+accuracy of this retrieval model. We propose to address this
+issue by dynamically estimating wqTi ,j , the relative contribution of each individual query unigram qi , and wqO,U
+, the
+i,i+1 ,j
+relative contribution of each individual query bigram qi,i+1 ,
+that are matched in field j of structured entity document for
+E towards the retrieval score of this entity, as a weighted linear combination of features:
+wqTi ,j =
+
+X
+
+U
+αj,k
+φk (qi , j)
+
+k
+
+wqO,U
+=
+i,i+1 ,j
+
+X
+
+B
+αj,k
+φk (qi,i+1 , j)
+
+k
+
+under the following set of constraints:
+X
+
+U
+wqTi ,j = 1, wqTi ,j ≥ 0, αj,k
+≥ 0, 0 ≤ φk (qi , j) ≤ 1
+
+j
+
+X
+
+wqO,U
+i,i+1 ,j
+
+The features of different type that we propose to estimate
+the projection of a query concept κ onto field j of structured
+entity representations are presented in Table 1. In particular, PFSDM and PFFDM use two types of features: the
+ones whose value depends on a query concept and a field of
+entity representation and the ones that depend only on a
+query concept itself. The intuition behind also having the
+latter type of features is that the relation between them and
+the fields will be learned in the process of estimating their
+weights. For example, one can expect that the weight of
+a feature indicating whether a query concept is plural nonproper noun (N N S) will be higher in the categories field
+than in all other fields. For the features that depend on a
+field, one can expect that the value of the feature in that
+field will indicate the likelihood of a concept to be mapped
+to it. Nevertheless, we still learn the weights for these features, since: (1) ranges of values for particular features can
+be different in different fields and optimizing their weights is
+one of the ways to perform adequate scaling (2) contribution
+of the feature to the relevance of a field can be different for
+different fields.
+Two of the features (F P , T S) depend on the collection
+statistics of a particular field. During optimization and retrieval, these two real-valued features (F P , T S) were rescaled
+to [0, 1] range. The F P feature was rescaled logarithmically.
+The other group of field mapping features (N N P , N N S,
+JJS, N P P , N N O) are binary and take particular values
+based on the output of Standford POS Tagger or Parser.
+N N P takes positive values for the query concepts that are
+proper nouns (e.g. entity names) and, thus, should be mapped
+to the names, similar entity names and related entity names
+fields. The N N S, N P P , and N N O features take positive
+values for the concepts that designate a broader class or type
+of the desired entities and, therefore, should be mapped to
+the categories field, while the JJS feature should project superlative adjectives to the attributes field. Constant feature
+(IN T ), which has the same value for all concepts, is known
+to be useful for mapping bigrams concepts.
+
+3.3
+=
+
+1, wqO,U
+i,i+1 ,j
+
+≥
+
+B
+0, αj,k
+
+Features
+
+Parameter estimation
+
+In total, PFSDM and PFFDM have F ∗ U + F ∗ B + 3
+parameters (F ∗ U + F ∗ B feature weights as well as λT ,
+λO and λU ), where F is the number of fields, while U and
+B are the number of field mapping features for unigrams
+and bigrams, respectively. An efficient two-stage block optimization algorithm for learning the parameters of PFSDM
+and PFFDM with respect to the target retrieval metric is
+presented in Algorithm 1.
+
+≥ 0, 0 ≤ φk (qi,i+1 , j) ≤ 1
+
+j
+
+where φk (qi , j) and φk (qi,i+1 , j) are the values of the k-th
+non-negative feature function for query unigram qi and bigram qi,i+1 in field j of entity document, respectively. wqTi ,j
+and wqO,U
+, which can also be considered as posteriors
+i,i+1 ,j
+p(Ej |qi ) and p(Ej |qi,i+1 ), provide probabilistic projection of
+query unigram qi and bigram qi,i+1 onto the fields of structured entity representations (to reduce the number of parameters in the model, we set wqOi,i+1 ,j = wqUi,i+1 ,j ). PFSDM
+determines this projection based on multiple features, unlike
+PRMS [14], which estimates it directly from the data based
+only on the total number of occurrences of a query term in a
+particular field across all documents in a collection. Featurebased estimation of this projection increases its robustness
+by overcoming the issues of sparsity and uniform distribution of occurrences of a query concept across the fields of
+entity documents.
+PFFDM is different from PFSDM in that it accounts for
+all dependencies between the query terms, rather than only
+sequential ones.
+
+Algorithm 1 An algorithm for learning the feature weights
+in PFSDM and PFFDM.
+1: Q ← Train queries
+2: eU = {1, 0, 0}, eB = {0, 1, 1}
+3: for s ∈ {U, B} do
+4:
+λ = es
+5:
+α̂s ← CA(Q, λ)
+6: end for
+7: λ̂ ← CA(Q, α̂U , α̂B )
+In the first stage (lines 3-6), the algorithm optimizes field
+mapping feature weights α separately for unigrams and bigrams. During optimization of the feature weights for un-
+
+438
+
+Table 1: Features to estimate the contribution of query concept κ matched in field j towards the retrieval
+score of E. Column CT designates the type of query concept that a feature is used for (UG stands for
+unigrams, BG stands for bigrams).
+Source
+
+Feature
+
+Description
+
+CT
+
+F P (κ, j)
+
+Posterior probability P (Ej |w) obtained through Bayesian inversion of
+P (w|Ej ), as defined in [14].
+
+UG BG
+
+Collection statistics
+T S(κ, j)
+
+Stanford POS Tagger3
+
+Stanford Parser4
+
+Retrieval score of the top document according to SDM [17], when concept
+κ is used as a query and only the jth fields of entity representations are
+used as documents.
+
+N N P (κ)
+
+Is concept κ a proper noun (singular or plural)?
+
+UG
+
+N N S(κ)
+
+Is concept κ a plural non-proper noun? We consider a bigram as plural
+when at least one of its terms is plural.
+
+UG BG
+
+JJS(κ)
+
+Is concept κ a superlative adjective?
+
+UG
+
+N P P (κ)
+
+Is concept κ part of a noun phrase?
+
+BG
+
+N N O(κ)
+
+Is concept κ the only singular non-proper noun in a noun phrase?
+
+UG
+
+Intercept feature, which has value 1 for all concepts.
+
+UG BG
+
+IN T
+
+igrams, the feature weights for bigrams are not considered
+and vice versa. This is achieved by setting the corresponding
+λ weights to 0. After the algorithm is finished with optimizing the α weights, it proceeds to optimize the weights of
+MRF potential functions for different query concept types
+(λT , λO and λU in Eq. 1).
+
+4.
+4.1
+
+EXPERIMENTS
+Experimental setup
+
+Experimental results reported in this work were obtained
+on a publicly available benchmark developed by Balog and
+Neumayer [2], which uses DBpedia as the knowledge graph.
+For fair comparison, we used the same five field entity representation scheme and the same query sets as in [33] (SemSearch ES consisting primarily of named entity queries, ListSearch consisting primarily of entity list search queries, QALD2 consisting of entity-focused natural language questions,
+and INEX-LD containing a mix of entity-centric queries of
+different type). We pre-processed both entity documents
+and queries by applying the Krovetz stemmer and removing
+the stopwords in the INQUERY stopword list.
+
+4.2
+
+Feature analysis
+
+First, to evaluate the effectiveness of the proposed features, we performed an exploratory analysis of distributions
+of their values (for the features whose values depend on document fields) or frequencies of their occurrences (for the
+features whose values are independent of document fields)
+in different fields of entity representations. Specifically, we
+manually annotated each concept in all queries according
+to the user’s intent with respect to a particular aspect of
+target entities as an attribute concept, entity concept, relation concept, or type concept. Our intuition is that the
+attribute query concepts (e.g. when a user is searching for
+an entity attribute rather than an entity itself) should be
+3
+4
+
+BG
+
+http://nlp.stanford.edu/software/tagger.html
+http://nlp.stanford.edu/software/lex-parser.html
+
+439
+
+frequently occurring or have relatively higher feature values in the attributes field of entity representations. Query
+terms or phrases marked as entity concepts (e.g. when a
+user is searching for a particular named entity) should be
+primarily occurring in the names and similar entity names
+fields, while the relation concepts (when a query is about a
+relation between the two named entities) should be primarily occurring in the similar entity names and related entity
+names fields of entity representations. Finally, query concepts marked as type (when a query is about several entities
+with the same type) should be frequently occurring or have
+relatively greater feature values in the categories field.
+Figure 1 visualizes the distributions of values of the Field
+Probability (F P ) and Top Score (T S) features for the query
+concepts of different types in different fields of structured entity representations. As can be observed in Figure 1 (left),
+the median values of the F P feature for the query concepts
+of type entity in all three entity fields (entity names, similar entity names and related entity names) are significantly
+greater than the median values of the same feature for the
+query concepts of the same type in both the attributes and
+categories fields. The median values of the F P feature for
+the query concepts of type attribute in the attributes and categories fields are significantly greater than the median values
+of the same feature for the query concepts of the same type in
+all three entity fields. Furthermore, for the type and relation
+query concepts, the median values of the same feature in the
+categories and related entity names fields, respectively, are
+significantly greater than the median values of this feature
+in all other fields. It can also be observed in Figure 1 (right),
+that the median values of the T S feature for the query concepts of type entity in the similar entity names and related
+entity names fields are significantly greater than the median
+values of the same feature for the query concepts of the same
+type in all other fields. Furthermore, the median values of
+the T S feature for the type and attribute query concepts in
+the attributes field are greater than the median values of the
+same feature in all other fields.
+To formally validate these observations, we conducted statistical significance tests. In particular, the Kruskal-Wallis
+
+FP
+
+TS
+
+−5
+
+feature value
+
+−20
+
+−10
+
+−24
+−15
+
+−28
+
+att
+
+ute
+r ib
+
+s
+ca
+
+teg
+
+or i
+
+es
+ti
+en
+
+ty
+
+na
+
+rel
+
+me
+
+ate
+
+d
+
+s
+ti
+en
+
+ty
+
+na
+
+me
+
+sim
+
+ila
+
+r
+
+s
+ti
+en
+
+ty
+
+concept type
+
+na
+
+me
+
+s
+att
+
+ute
+r ib
+
+s
+ca
+
+teg
+
+or i
+
+es
+ti
+en
+
+ty
+
+na
+
+rel
+
+attribute
+
+entity
+
+relation
+
+me
+
+ate
+
+d
+
+s
+ti
+en
+
+ty
+
+na
+
+me
+
+sim
+
+ila
+
+r
+
+s
+ti
+en
+
+ty
+
+na
+
+me
+
+s
+
+type
+
+Figure 1: Boxplots for the distributions of values of real-valued features for the query concepts of different
+types in different fields of entity documents.
+
+log(field frequency)
+
+JJS
+
+NNO
+
+NNP
+
+NNS
+
+NPP
+
+−5
+
+−10
+
+−15
+
+−20
+att
+
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s
+s ies
+s
+s
+s
+s
+r
+me me me ibute gorie ame ame ame ibute gorie ame ame ame ibute gorie ame ame ame ibute gorie ame ame ame
+ute
+n
+n
+n
+n
+n
+n
+n
+n
+n
+n
+n
+n
+r i b tego y na y na y na
+r
+r
+r
+r
+att cate ntity ntity ntity
+att cate ntity ntity ntity
+att cate ntity ntity ntity
+att cate ntity ntity ntity
+ca ntit ntit ntit
+e de re
+e de re
+e de re
+e de re
+e de re
+a
+a
+a
+a
+a
+ate simil
+ate simil
+ate simil
+ate simil
+ate simil
+rel
+rel
+rel
+rel
+rel
+
+feature value
+
+0
+
+1
+
+Figure 2: Boxplots for the distributions of normalized frequencies of query concepts with negative and positive
+feature values in different fields of entity documents.
+
+test [27] indicated that the null hypothesis of the F P and
+T S feature values having the same median in different fields
+of entity representations for all concept types should be rejected (p < 0.05). Following the Kruskal-Wallis test, we
+performed a multiple comparison test (kruskalmc), which besides confirming the above empirical observations, indicated
+other statistically significant differences in feature values. In
+particular, the values of the T S feature for the query concepts of type relation in the related entity names field are
+different from its values in the categories and all three entity fields. This test also indicated that for all concept types
+the values of the F P feature in all three entity fields (entity
+names, similar entity names and related entity names) are
+significantly different from the values of the same feature in
+both attributes and categories fields, which in turn are significantly different from each other for the query concepts of
+type relation.
+Figure 2 visualizes the distributions of normalized frequencies of query concepts with negative and positive values of
+the features that do not depend on a field in different fields
+
+of structured entity representations. Examining the properties of these distributions for concepts with positive and
+negative feature values in the same field as well as across
+different fields can give us an intuition about whether the
+concepts having positive values for a particular feature are
+more likely to occur in certain fields of entity representations
+than in the others. This in turn can give us an insight about
+whether certain linguistic properties of query concepts are indicative of the user’s intent with respect to the projection of
+those concepts onto specific aspects of relevant entities. As
+follows from Figure 2, the query concepts that are superlative adjectives (JJS is true) much more frequently occur in
+the attributes field and are very likely to designate the attributes of relevant entities; plural non-proper unigrams and
+bigrams (N N S is true), bigrams (N P P is true) or singular
+non-proper nouns (N N O is true) that are part of a noun
+phrase are more likely to represent the categories of relevant entities, while singular or plural proper nouns (N N P
+is true) more frequently occur in three entity fields, than
+in any other field of entity documents and, thus, typically
+
+440
+
+0.240
+
+map
+
+0.235
+
+0.230
+
+UG: FP, NNP, TS; BG: FP, TS, NPP
+
+UG: FP, NNP, NNS; BG: INT, FP, TS, NPP, NNS
+
+UG: FP, NNP; BG: INT
+
+UG: FP, NNP, JJS; BG: FP, TS, NPP
+
+UG: FP, NNP, NNS; BG: INT
+
+UG: FP, NNP, JJS; BG: INT
+
+UG: FP, NNP, JJS; BG: INT, TS
+
+UG: FP, NNP, TS; BG: INT
+
+UG: FP, NNP, TS; BG: INT, TS, NPP, NNS
+
+UG: FP, NNP; BG: INT, TS
+
+UG: FP, NNO; BG: FP, TS, NPP, NNS
+
+UG: FP, NNP, NNS; BG: FP, TS, NPP
+
+UG: FP, NNO; BG: TS, NPP, NNS
+
+UG: FP, NNP, TS; BG: INT, FP, TS, NPP, NNS
+
+UG: FP, NNO; BG: INT
+
+UG: FP, NNO; BG: INT, FP, TS, NPP, NNS
+
+UG: FP, NNO; BG: INT, TS
+
+UG: FP, NNS; BG: FP, TS, NPP
+
+UG: FP, NNP, JJS; BG: INT, TS, NPP, NNS
+
+UG: FP, NNP, JJS; BG: INT, FP, TS, NPP, NNS
+
+UG: FP, NNP; BG: TS, NPP, NNS
+
+UG: FP, NNP, JJS; BG: FP, TS, NPP, NNS
+
+UG: FP, NNO; BG: FP, TS, NPP
+
+UG: FP, NNP, JJS; BG: TS, NPP, NNS
+
+UG: FP, NNP, NNS; BG: INT, TS
+
+UG: FP, NNO; BG: INT, TS, NPP, NNS
+
+UG: FP, NNP; BG: INT, FP, TS, NPP, NNS
+
+UG: FP, NNP; BG: FP, TS, NPP
+
+UG: FP, NNP, TS; BG: FP, TS, NPP, NNS
+
+UG: FP, NNS; BG: TS, NPP, NNS
+
+UG: FP, NNP; BG: INT, TS, NPP, NNS
+
+UG: FP, NNP, TS; BG: INT, TS
+
+UG: FP, NNP, TS; BG: TS, NPP, NNS
+
+UG: FP, NNS; BG: FP, TS, NPP, NNS
+
+UG: FP, NNP, NNS; BG: FP, TS, NPP, NNS
+
+UG: FP, NNS; BG: INT
+
+UG: FP, NNP, NNS; BG: INT, TS, NPP, NNS
+
+UG: FP, NNP; BG: FP, TS, NPP, NNS
+
+UG: FP, NNS; BG: INT, FP, TS, NPP, NNS
+
+UG: FP, NNS; BG: INT, TS
+
+UG: FP, NNS; BG: INT, TS, NPP, NNS
+
+UG: FP, NNP, NNS; BG: TS, NPP, NNS
+
+0.225
+
+Figure 3: MAP of PFSDM on DBpedia knowledge graph and the benchmark in [2] depending on different
+combinations of field mapping features for unigram and bigram query concepts. Dashed red line represents
+the performance of FSDM [33].
+
+designate the target entities directly. These observations indicate that entity-centric keyword queries have an implicit
+structure, with each element in that structure designating a
+particular aspect in multi-fielded representation of relevant
+entities.
+
+4.3
+
+ment (BM25F [23], PRMS [14], MLM [20] and FSDM [33])
+retrieval in Table 2. Parameters of both the proposed retrieval models and the baselines have been optimized using
+5-fold cross validation (except PRMS, which does not require
+optimization).
+Several important conclusions can be made based on the
+results in Table 2. First, WSDM shows minor improvement
+and, on some query sets, is even worse than SDM, which indicates that feature-based query concept importance weighting is less effective for entity retrieval than for document
+retrieval. On the other hand, dynamic feature-based estimation of relative importance of matching query concepts in
+different fields of entity documents provides significant improvement of retrieval accuracy on verbose queries, such as
+the ones in QALD-2 query set. Second, the relatively small
+difference in performance between PFSDM and FSDM on
+SemSearch ES and ListSearch query sets can be explained
+by the fact that all concepts in those query sets map to only
+a few fields. In particular, most concepts in SemSearch ES
+queries map onto the entity field, while most concepts in
+ListSearch queries map onto the categories and attributes
+fields. In such cases, estimating field mapping degenerates
+to estimating relative importance of matching concepts in
+a particular field of entity representation, which nullifies
+the advantages of PFSDM. We can also observe that taking into account all dependencies between query terms can
+partially mitigate this problem, as evidenced by superior
+performance of PFFDM on both ListSearch and INEX-LD
+query sets. Third, although it can be seen that PFSDM
+achieves improvement over FSDM in terms of MAP, MRR
+and NDCG@5 at the expense of decreased P@10, taking
+into account all dependencies between the query terms allows PFFDM to achieve consistent improvement over both
+FSDM and FFDM in terms of all retrieval metrics.
+Table 4 compares the retrieval accuracy of PFSDM and
+PFFDM with the same baselines on the knowledge graph
+
+Feature effectiveness
+
+To determine the combination of features, which results in
+the best performance of PFSDM and PFFDM, we conducted
+a feature selection study. First, we determined the combinations of only unigram and only bigram features (using
+simplified versions of PFSDM that consider only unigrams
+or bigrams, respectively), which result in the best retrieval
+performance in terms of MAP (target retrieval metric). In
+particular, we identified 6 most effective unigram and 7 most
+effective bigram feature sets. Then we evaluated the performance of PFSDM using each possible combination of unigram and bigram feature sets to determine the best performing combined feature set. Retrieval effectiveness of different
+feature combinations for PFSDM is illustrated in Figure 3.
+As follows from Figure 3, most feature combinations result
+in higher MAP than FSDM. PFSDM achieves the highest
+MAP of 0.240 in conjunction with F P , N N S, N N P features
+for unigram query concepts and T S, N N S, N P P features
+for bigram ones. The weights of these features that result in
+the highest MAP of PFSDM are presented in Table 3.
+From Table 3, it follows that the learned feature weights
+are similar to the distribution of frequencies of manually
+marked up query concept types across the fields of structured entity representation.
+
+4.4
+
+Comparison with baselines
+
+Retrieval accuracy of PFSDM and PFFDM using the best
+feature combination is compared with that of state-of-theart retrieval models for ad-hoc document (SDM [17] and
+WSDM [4] with cf and df features) and structured docu-
+
+441
+
+Table 2: Performance of retrieval models on DBpedia knowledge graph and the benchmark in [2]. Relative
+improvement over PRMS and FSDM is shown in parenthesis, while “*” and “†” indicate statistically significant
+improvement over the same baselines, according to the Fisher’s randomization test (α = 0.05) [28].
+
+SDM
+WSDM
+BM25F-tc [2]
+PRMS
+MLM
+FSDM
+PFSDM
+FFDM
+PFFDM
+
+MAP
+0.254 (+10.5%)
+0.246 (+7.2%)
+0.334 (+45.3%)
+0.230
+0.320 (+39.3%)
+0.386 (+68.1%)
+0.394∗ (+71.4%/+1.9%)
+0.389∗ (+69.3%/+0.7%)
+0.380∗ (+65.3%/−1.7%)
+
+SDM
+WSDM
+BM25F-tc [2]
+PRMS
+MLM
+FSDM
+PFSDM
+FFDM
+PFFDM
+
+MAP
+0.197 (+78.3%)
+0.194 (+75.4%)
+0.159 (+43.9%)
+0.111
+0.190 (+71.7%)
+0.203 (+83.9%)
+0.201∗ (+81.8%/−1.1%)
+0.226∗† (+104.4%/+11.2%)
+0.228∗† (+106.4%/+12.3%)
+
+SDM
+WSDM
+BM25F-tc [2]
+PRMS
+MLM
+FSDM
+PFSDM
+FFDM
+PFFDM
+
+MAP
+0.117 (+83.5%)
+0.118 (+85.3%)
+0.117 (+83.0%)
+0.064
+0.102 (+60.2%)
+0.111 (+74.4%)
+0.116∗ (+81.7%/+4.2%)
+0.122∗† (+91.3%/+9.7%)
+0.121∗† (+89.9%/+8.9%)
+
+SDM
+WSDM
+BM25F-tc [2]
+PRMS
+MLM
+FSDM
+PFSDM
+FFDM
+PFFDM
+
+MAP
+0.184 (+52.9%)
+0.183 (+52.8%)
+0.107 (−11.1%)
+0.120
+0.152 (+26.3%)
+0.195 (+62.7%)
+0.218∗† (+81.9%/+11.7%)
+0.200∗ (+66.5%/+2.3%)
+0.219∗† (+82.1%/+11.9%)
+
+SDM
+WSDM
+BM25F-tc [2]
+PRMS
+MLM
+FSDM
+PFSDM
+FFDM
+PFFDM
+
+MAP
+0.192 (+41.5%)
+0.189 (+39.6%)
+0.182 (+34.3%)
+0.136
+0.196 (+44.3%)
+0.231 (+70.4%)
+0.240∗† (+77.1%/+3.9%)
+0.241∗† (+77.5%/+4.2%)
+0.244∗† (+79.9%/+5.6%)
+
+SemSearch ES
+P@10
+MRR
+0.202 (+14.4%)
+0.520 (−5.3%)
+0.201 (+13.5%)
+0.507 (−7.7%)
+0.263 (+48.7%)
+0.705 (+28.4%)
+0.177
+0.549
+0.250 (+41.3%)
+0.680 (+23.9%)
+0.286 (+61.7%)
+0.737 (+34.3%)
+0.286∗ (+61.7%/0.0%)
+0.757∗ (+38.0%/+2.7%)
+0.286∗ (+61.7%/0.0%)
+0.734∗ (+33.8%/−0.4%)
+∗
+0.286 (+61.7%/0.0%)
+0.739∗ (+34.6%/+0.2%)
+ListSearch
+P@10
+MRR
+0.252 (+63.8%)
+0.463 (+30.5%)
+0.257 (+66.7%)
+0.457 (+28.8%)
+0.221 (+43.5%)
+0.390 (+9.8%)
+0.154
+0.355
+0.252 (+63.8%)
+0.439 (+23.5%)
+0.256 (+66.1%)
+0.447 (+25.8%)
+0.253∗ (+64.4%/−1.0%)
+0.443∗ (+24.8%/−0.8%)
+0.282∗† (+83.1%/+10.2%) 0.499∗† (+40.6%/+11.7%)
+0.286∗† (+85.9%/+11.9%)
+0.487∗ (+37.2%/+9.1%)
+INEX-LD
+P@10
+MRR
+0.258 (+77.9%)
+0.567 (+38.7%)
+0.257 (+77.2%)
+0.549 (+34.4%)
+0.249 (+71.7%)
+0.559 (+36.7%)
+0.145
+0.409
+0.238 (+64.1%)
+0.530 (+29.7%)
+0.263 (+81.4%)
+0.546 (+33.7%)
+0.259∗ (+78.6%/−1.5%)
+0.579∗ (+41.5%/+5.9%)
+0.273∗ (+88.3%/+3.8%)
+0.560∗ (+37.0%/+2.5%)
+0.274∗ (+89.0%/+4.2%)
+0.556∗ (+36.0%/+1.8%)
+QALD-2
+P@10
+MRR
+0.106 (+35.5%)
+0.287 (+52.0%)
+0.112 (+42.7%)
+0.288 (+52.6%)
+0.062 (−20.9%)
+0.158 (−16.0%)
+0.079
+0.188
+0.103 (+30.9%)
+0.215 (+14.0%)
+0.136 (+73.6%)
+0.283 (+50.0%)
+0.140∗ (+78.2%/+2.6%)
+0.308∗ (+63.2%/+8.8%)
+0.139∗ (+76.4%/+1.6%)
+0.292∗ (+54.9%/+3.3%)
+0.147∗ (+87.3%/+7.9%)
+0.310∗ (+64.2%/+9.5%)
+All queries
+P@10
+MRR
+0.198 (+45.0%)
+0.449 (+21.3%)
+0.200 (+46.5%)
+0.441 (+19.1%)
+0.192 (+40.8%)
+0.442 (+19.5%)
+0.136
+0.370
+0.206 (+50.6%)
+0.458 (+23.7%)
+0.231 (+69.2%)
+0.498 (+34.5%)
+0.231∗ (+68.9%/−0.2%)
+0.516∗† (+39.5%/+3.7%)
+0.240∗† (+75.7%/+3.8%)
+0.515∗† (+39.2%/+3.4%)
+0.244∗† (+78.4%/+5.4%)
+0.518∗† (+39.9%/+4.0%)
+
+NDCG@5
+0.306 (−3.5%)
+0.298 (−5.9%)
+0.453 (+42.9%)
+0.317
+0.423 (+33.3%)
+0.476 (+50.3%)
+0.494∗† (+55.9%/+3.7%)
+0.479∗ (+51.3%/+0.6%)
+0.477∗ (+50.6%/+0.2%)
+NDCG@5
+0.282 (+60.1%)
+0.280 (+58.7%)
+0.217 (+23.2%)
+0.176
+0.280 (+58.5%)
+0.274 (+55.2%)
+0.278∗ (+57.5%/+1.5%)
+0.313∗† (+77.2%/+14.2%)
+0.302∗† (+71.3%/+10.4%)
+NDCG@5
+0.341 (+57.4%)
+0.341 (+57.4%)
+0.341 (+57.4%)
+0.216
+0.306 (+41.3%)
+0.322 (+48.7%)
+0.341∗ (+57.6%/+6.0%)
+0.345∗† (+59.5%/+7.3%)
+0.343∗ (+58.7%/+6.7%)
+NDCG@5
+0.215 (+46.5%)
+0.214 (+45.7%)
+0.117 (−20.6%)
+0.147
+0.170 (+15.7%)
+0.229 (+55.7%)
+0.253∗† (+72.5%/+10.8%)
+0.237∗ (+61.6%/+3.8%)
+0.267∗† (+81.5%/+16.6%)
+NDCG@5
+0.281 (+31.5%)
+0.278 (+30.2%)
+0.277 (+29.5%)
+0.214
+0.292 (+36.4%)
+0.325 (+52.0%)
+0.342∗† (+59.9%/+5.2%)
+0.342∗† (+60.1%/+5.3%)
+0.347∗† (+62.5%/+6.9%)
+
+Entity Search (ES) track of 20105 and 20116 Yahoo! Sem-
+
+from the 2009 Billion Triple Challenge (BTC-2009). This
+knowledge graph consists of 1.14 billion RDF triples and
+contains entities from other knowledge bases besides DBpedia. For this experiment, we used the queries from the
+
+5
+6
+
+442
+
+http://km.aifb.kit.edu/ws/semsearch10/
+http://km.aifb.kit.edu/ws/semsearch11/
+
+Table 3: Optimized weights of the best performing features for PFSDM (averaged over all folds).
+concept type
+Unigram
+
+Bigram
+
+feature
+
+attributes
+
+categories
+
+names
+
+related entity names
+
+similar entity names
+
+FP
+
+0.147
+
+0.109
+
+0.026
+
+0.020
+
+0.041
+
+NNS
+
+0.110
+
+0.141
+
+0.019
+
+0.023
+
+0.014
+
+NNP
+
+0.116
+
+0.092
+
+0.025
+
+0.060
+
+0.057
+
+TS
+
+0.065
+
+0.153
+
+0.029
+
+0.043
+
+0.087
+
+NNS
+
+0.039
+
+0.183
+
+0.028
+
+0.046
+
+0.057
+
+NP P
+
+0.091
+
+0.073
+
+0.000
+
+0.075
+
+0.042
+
+Table 4: Comparison of retrieval models on SemSearch ES queries and BTC-2009 knowledge graph.
+
+SDM
+WSDM
+PRMS
+MLM
+FSDM
+PFSDM
+FFDM
+PFFDM
+
+MAP
+0.102 (+4.4%)
+0.100 (+2.6%)
+0.098
+0.121 (+23.6%)
+0.171 (+75.3%)
+0.182∗† (+87.0%/+6.7%)
+0.180∗† (+84.8%/+5.4%)
+0.187∗ (+91.8%/+9.4%)
+
+P@10
+0.210 (+6.0%)
+0.214 (+8.2%)
+0.198
+0.243 (+22.8%)
+0.323 (+63.3%)
+0.335∗ (+69.4%/+3.7%)
+0.330∗† (+66.9%/+2.2%)
+0.342∗† (+72.6%/+5.7%)
+
+MRR
+0.518 (−4.9%)
+0.495 (−9.1%)
+0.545
+0.588 (+8.0%)
+0.631 (+15.8%)
+0.657∗† (+20.7%/+4.2%)
+0.647∗ (+18.8%/+2.6%)
+0.650∗ (+19.4%/+3.1%)
+
+NDCG@5
+0.248 (−8.0%)
+0.230 (−14.7%)
+0.269
+0.312 (+16.0%)
+0.358 (+32.9%)
+0.371∗ (+37.8%/+3.7%)
+0.373∗† (+38.6%/+4.3%)
+0.377∗ (+40.2%/+5.5%)
+
+0.6
+
+0.6
+
+0.3
+0.3
+
+0.0
+0.0
+-0.3
+0
+
+50
+
+100
+
+0
+
+(a)
+
+50
+
+100
+
+(b)
+
+Figure 4: Topic-level differences in average precision on BTC-2009: a) between PFSDM and FSDM; b)
+between PFFDM and FFDM.
+
+Search Challenge and publicly available relevance judgments
+for those queries7 . We used the same 5-field entity representation scheme for this knowledge graph, as we did for the DBpedia one. As can be seen in Table 4, PFSDM and PFFDM
+demonstrate significant and consistent improvement relative
+to PRMS, as well as FSDM and FFDM, respectively.
+From Figures 4a and 4b, it also follows that parameterizing the field importance weights in PFSDM and PFFDM
+results in more improved topics and greater magnitude of improvements than using static weights in FSDM and FFDM.
+
+4.5
+
+ina?”, PFSDM returns the correct result A.G. Barr at the
+top, unlike FSDM, which ranks it as the 18th result. For
+this query, PFSDM correctly assigns higher weights to the
+matches of the query term produce in the attributes (0.49)
+and categories (0.41) fields, of the query term Orangina in
+the related entity names field (0.55) and of the bigram produce Orangina in the categories (0.45) field, unlike FSDM,
+which uses the same field weighting scheme (0.40 for attributes, 0.20 for categories, 0.30 for related entity names
+and 0.10 for similar entity names fields) for all query unigrams. The correct field mapping weights for these query
+concepts are determined by the F P and N N P features. The
+same effect was observed for the query “Who is the governor
+of Texas?”. PFSDM promoted Rick Perry, the only correct
+answer for this query, from the second to the first position
+by boosting the matches of query concepts governor (captured by the F P and N N P features) and governor Texas
+(captured by the T S feature) in the categories field.
+Another type of queries with the highest relative MAP
+
+Success/Failure Analysis
+
+Next, we provide a brief qualitative analysis of sample
+queries illustrating the strengths and weaknesses of PFSDM
+and PFFDM. The ability to map query concepts of the same
+type onto different fields of entity documents allows PFSDM
+to promote the correct entities for verbose and question
+queries. For example, for the query “Who produces Orang7
+
+https://github.com/nzhiltsov/YSC-relevance-data
+
+443
+
+gain of PFSDM over FSDM are list search queries, such as
+“Give me a list of all American inventions” (from 0.032 to
+0.232), “Tom Hanks movies where he plays a leading role”
+(from 0.073 to 0.181) and “Give me all companies in Munich” (from 0.114 to 0.252). For the first query, PFSDM
+promotes the correct entities Aberdeen Chronograph, Lisp
+programming language by boosting their matching scores in
+the categories field, while FSDM ranks The Heroic Age of
+American Invention, a science book for children, as the highest entity, by not taking into account the absence of an important term invention in its categories field.
+We also observed that the common causes of PFSDM failures are assignment of uniform field weights to query concepts and a lack of concept statistics. For example, for the
+query “Give me all people that were born in Vienna and died
+in Berlin”, PFSDM underestimates the importance of relatively rare concepts Vienna and Berlin, but overestimates
+the importance of very popular concepts born and die. The
+issue can be addressed by using a minimum support matching strategy or by introducing additional features.
+
+5.
+
+[9] J. Dalton, L. Dietz, and J. Allan. Entity Query Feature
+Expansion Using Knowledge Base Links. In Proceedings of the
+37th ACM SIGIR, pages 365–374, 2014.
+[10] C. Eickhoff, A. P. de Vries, and T. Hoffman. Modelling Term
+Dependencies with Copulas. In Proceedings of the 38th ACM
+SIGIR, pages 783–786, 2015.
+[11] B. Fetahu, U. Gadiraju, and S. Dietze. Improving Entity
+Retrieval on Structured Data. In Proceedings of the 14th
+ISWC, pages 474–491, 2015.
+[12] F. Hasibi, K. Balog, and S. E. Bratsberg. Entity Linking in
+Queries: Tasks and Evaluation. In Proceedings of the 1st ACM
+ICTIR, pages 171–180, 2015.
+[13] S. Huston and W. B. Croft. A Comparison of Retrieval Models
+using Term Dependencies. In Proceedings of the 23rd ACM
+CIKM, pages 111–120, 2014.
+[14] J. Y. Kim, X. Xue, and W. B. Croft. A Probabilistic Retrieval
+Model for Semistructured Data. In Proceedings of the 31st
+ECIR, pages 228–239, 2009.
+[15] A. Kotov and C. Zhai. Tapping into Knowledge Base for
+Concept Feedback: Leveraging ConceptNet to Improve Search
+Results for Difficult Queries. In Proceedings of the 5th WSDM,
+pages 403–412, 2012.
+[16] T. Lin, P. Pantel, M. Gamon, A. Kannan, and A. Fuxman.
+Active Objects Actions for Entity Centric Search. In
+Proceedings of the 21st WWW, pages 589–598, 2012.
+[17] D. Metzler and W. B. Croft. A Markov Random Field Model
+for Term Dependencies. In Proceedings of the 28th ACM
+SIGIR, pages 472–479, 2005.
+[18] R. Neumayer, K. Balog, and K. Nørvåg. On the Modeling of
+Entities for Ad-hoc Entity Search in the Web of Data. In
+Proceedings of the 34th ECIR, pages 133–145, 2012.
+[19] R. Neumayer, K. Balog, and K. Nørvåg. When Simple is (more
+than) Good Enough: Effective Semantic Search with (almost)
+no Semantics. In Proceedings of the 34th ECIR, pages 540–543,
+2012.
+[20] P. Ogilvie and J. Callan. Combining Document Representations
+for Known-item Search. In Proceedings of the 26th ACM
+SIGIR, pages 143–150, 2003.
+[21] J. R. Pérez-Aguera, J. Arroyo, J. Greenberg, J. P. Iglesias, and
+V. Fresno. Using BM25F for Semantic Search. In Proceedings
+of the 3rd SemSearch Workshop, 2010.
+[22] J. Pound, P. Mika, and H. Zaragoza. Ad-hoc Object Retrieval
+in the Web of Data. In Proceedings of the 19th WWW, pages
+771–780, 2010.
+[23] S. Robertson, H. Zaragoza, and M. Taylor. Simple BM25
+Extension to Multiple Weighted Fields. In Proceedings of the
+13th ACM CIKM, pages 42–49, 2004.
+[24] C. Rocha, D. Schwabe, and M. P. de Argão. A Hybrid
+Approach for Searching in the Semantic Web. In Proceedings of
+the 13th WWW, pages 374–383, 2004.
+[25] U. Sawant and S. Chakrabarti. Learning Joint Query
+Interpretation and Response Ranking. In Proceedings of the
+22nd WWW, pages 1099–1110, 2013.
+[26] S. Shakarpour, A.-C. N. Ngomo, and S. Auer. Question
+Answering on Interlinked Data. In Proceedings of the 22nd
+WWW, pages 1145–1156, 2013.
+[27] S. C. Siegel and J. Castellan. Nonparametric Statistics for the
+Behavioral Sciences. McGraw-Hill, 1998.
+[28] M. D. Smucker, J. Allan, and B. Carterette. A Comparison of
+Statistical Significance Tests for Information Retrieval
+Evaluation. In Proceedings of the 16th ACM CIKM, pages
+623–632, 2007.
+[29] A. Tonon, G. Demartini, and P. Cudré-Mauroux. Combining
+Inverted Indices and Structured Search for Ad-hoc Object
+Retrieval. In Proceedings of the 35th ACM SIGIR, pages
+125–134, 2012.
+[30] C. Xiong and J. Callan. Query Expansion with Freebase. In
+Proceedings of the 1st ACM ICTIR, pages 111–120, 2015.
+[31] M. Yahya, K. Berberich, S. Elbassuoni, and G. Weikum.
+Robust Question Answering over the Web of Linked Data. In
+Proceedings of the 22nd ACM CIKM, pages 1107–1116, 2013.
+[32] N. Zhiltsov and E. Agichtein. Improving Entity Search over
+Linked Data by Modeling Latent Semantics. In Proceedings of
+the 22nd ACM CIKM, pages 1253–1256, 2013.
+[33] N. Zhiltsov, A. Kotov, and F. Nikolaev. Fielded Sequential
+Dependence Model for Ad-Hoc Entity Retrieval in the Web of
+Data. In Proceedings of the 38th ACM SIGIR, pages 253–262,
+2015.
+
+CONCLUSION
+
+In this paper, we proposed two novel models for ad-hoc entity retrieval from knowledge graph, which account for term
+dependencies and perform feature-based projection of query
+concepts onto the fields of entity documents. By demonstrating the possibility of inferring implicit structure of keyword
+queries using linguistic attributes and simple field statistics
+of query concepts, the proposed models constitute an important step in the evolution of models for structured document
+retrieval. We hypothesize that the proposed models can be
+effective in other structured information retrieval scenarios,
+such as product and social graph search, and leave verification of this hypothesis to future work.
+
+Acknowledgments
+This work was partially supported by the subsidy from the
+government of the Russian Federation to support the program of competitive growth of Kazan Federal University and
+by the Russian Foundation for Basic Research (grants # 1507-08522, 15-47-02472).
+
+6.
+
+REFERENCES
+
+[1] J. Bai, Y. Chang, H. Cui, Z. Zheng, G. Sun, and X. Li.
+Investigation of Partial Query Proximity in Web Search. In
+Proceedings of the 17th WWW, pages 1183–1184, 2008.
+[2] K. Balog and R. Neumayer. A Test Collection for Entity Search
+in DBpedia. In Proceedings of the 36th ACM SIGIR, pages
+737–740, 2013.
+[3] M. Bendersky and W. B. Croft. Discovering Key Concepts in
+Verbose Queries. In Proceedings of the 31st ACM SIGIR,
+pages 491–498, 2008.
+[4] M. Bendersky, D. Metzler, and W. B. Croft. Learning Concept
+Importance Using a Weighted Dependence Model. In
+Proceedings of the 3rd ACM WSDM, pages 31–40, 2010.
+[5] M. Bendersky, D. Metzler, and W. B. Croft. Parameterized
+Concept Weighting in Verbose Queries. In Proceedings of the
+34th ACM SIGIR, pages 605–614, 2011.
+[6] R. Blanco, P. Mika, and S. Vigna. Effective and Efficient Entity
+Search in RDF Data. In Proceedings of the 10th ISWC, pages
+83–97, 2011.
+[7] M. Ciglan, K. Nørvåg, and L. Hluchý. The SemSets Model for
+Ad-hoc Semantic List Search. In Proceedings of the 21st
+WWW, pages 131–140, 2012.
+[8] R. Cummins and C. O’Riordan. Learning in a Pairwise
+Term-term Proximity Framework for Information Retrieval. In
+Proceedings of the 32nd ACM SIGIR, pages 251–258, 2009.
+
+444
+
+

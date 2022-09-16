@@ -1,0 +1,2637 @@
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Compositional Coding for Collaborative Filtering∗
+Chenghao Liu1,2 , Tao Lu2,5 , Xin Wang4 , Zhiyong Cheng6 , Jianling Sun2,5 , Steven C.H. Hoi1,3
+1 Singapore
+
+Management University, 2 Zhejiang University, 3 Salesforce Research Asia, 4 Tsinghua University,
+5 Alibaba-Zhejiang University Joint Institute of Frontier Technologies,
+6 Shandong Computer Science Center (National Supercomputer Center in Jinan)
+Qilu University of Technology (Shandong Academy of Sciences)
+{twinsken,3140102441,sunjl}@zju.edu.cn,xin_wang@tsinghua.edu.cn,jason.zy.cheng@gmail.com,chhoi@smu.edu.sg
+
+ABSTRACT
+
+KEYWORDS
+
+Efficiency is crucial to the online recommender systems, especially
+for the ones which needs to deal with tens of millions of users and
+items. Because representing users and items as binary vectors for
+Collaborative Filtering (CF) can achieve fast user-item affinity computation in the Hamming space, in recent years, we have witnessed
+an emerging research effort in exploiting binary hashing techniques
+for CF methods. However, CF with binary codes naturally suffers
+from low accuracy due to limited representation capability in each
+bit, which impedes it from modeling complex structure of the data.
+In this work, we attempt to improve the efficiency without
+hurting the model performance by utilizing both the accuracy
+of real-valued vectors and the efficiency of binary codes to represent users/items. In particular, we propose the Compositional
+Coding for Collaborative Filtering (CCCF) framework, which not
+only gains better recommendation efficiency than the state-of-theart binarized CF approaches but also achieves even higher accuracy
+than the real-valued CF method. Specifically, CCCF innovatively
+represents each user/item with a set of binary vectors, which are
+associated with a sparse real-value weight vector. Each value of the
+weight vector encodes the importance of the corresponding binary
+vector to the user/item. The continuous weight vectors greatly enhances the representation capability of binary codes, and its sparsity
+guarantees the processing speed. Furthermore, an integer weight
+approximation scheme is proposed to further accelerate the speed.
+Based on the CCCF framework, we design an efficient discrete optimization algorithm to learn its parameters. Extensive experiments
+on three real-world datasets show that our method outperforms
+the state-of-the-art binarized CF methods (even achieves better
+performance than the real-valued CF method) by a large margin in
+terms of both recommendation accuracy and efficiency. We publish
+our project at https://github.com/3140102441/CCCF.
+
+Recommendation, Collaborative Filtering, Discrete Hashing
+ACM Reference Format:
+Chenghao Liu1,2 , Tao Lu2,5 , Xin Wang4 , Zhiyong Cheng6 , Jianling Sun2,5 ,
+Steven C.H. Hoi1,3 . 2019. Compositional Coding for Collaborative Filtering.
+In Proceedings of the 42nd International ACM SIGIR Conference on Research
+and Development in Information Retrieval (SIGIR ’19), July 21–25, 2019, Paris,
+France. ACM, New York, NY, USA, 10 pages. https://doi.org/10.1145/3331184.
+3331206
+
+1
+
+CCS CONCEPTS
+• Information systems → Recommender System; • Humancentered computing → Collaborative filtering;
+∗ Jianling
+
+INTRODUCTION
+
+Real-world recommender systems often have to deal with large
+numbers of users and items especially for online applications, such
+as e-commerce or music streaming services [2, 3, 13, 14, 27]. For
+many modern recommender systems, a de facto solution is often
+based on Collaborative Filtering (CF) techniques, as exemplified
+by Matrix Factorization (MF) algorithms [8]. The principle of MF
+is to represent users’ preferences and items’ characteristics into r
+low-dimensional vectors, based on the m × n user-item interaction
+matrix of m users and n items. With the obtained user and item
+vectors (in the offline training stage), during the online recommendation stage, the preference of a user towards an item is computed
+by the dot product of their represented vectors. However, when
+dealing with large numbers of users and items (e.g., millions or
+even billions of users and items), a naive implementation of typical
+collaborative filtering techniques (e.g., based on MF) will lead to
+very high computation cost for generating preferred item ranking
+list for a target user [11]. Specifically, recommending the top-k preferred items for a user from those n items costs O(nr + n log k) with
+real-valued vectors. As a result, this process will become a critical
+efficiency bottleneck in practice where the recommender systems
+typically require a real-time response for large-scale users simultaneously. Therefore, a fast and scalable yet accurate CF solution is
+crucial towards building real-time recommender systems.
+Recent years have witnessed extensive research efforts for improving the efficiency of CF methods for scalable recommender systems. One promising paradigm is to explore the hashing techniques
+[18, 33, 35] to represent users/items with binary codes instead of the
+real-value latent factors in traditional MF methods. In this way, the
+dot-products of user vector and item vector in MF can be completed
+by fast bit-operations in the Hamming space [35]. Furthermore, by
+exploiting special data structures for indexing all items, the computational complexity of generating top-K preferred items can achieve
+sub-linear or even constant [26, 33], which significantly accelerates
+the recommendation process.
+However, learning the binary codes is generally NP-hard [5]
+due to its discrete constraints. Given this NP-hardness, a two-stage
+
+Sun is the corresponding author.
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+SIGIR ’19, July 21–25, 2019, Paris, France
+© 2019 Association for Computing Machinery.
+ACM ISBN 978-1-4503-6172-9/19/07. . . $15.00
+https://doi.org/10.1145/3331184.3331206
+
+145
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+optimization procedure [18, 33, 35], which first solves a relaxed
+optimization problem through ignoring the discrete constraints
+and then binarizes the results by thresholding, becomes a compromising solution. Nevertheless, this solution suffers from a large
+quantization loss [30] and thus fails to preserve the original data
+geometry (user-item relevance and user-user relationship) in the
+continuous real-valued vector space. As accuracy is arguably the
+most important evaluation metric for recommender systems, researchers put lots of efforts to reduce the quantization loss by direct
+discrete optimization [12, 16, 30]. In spite of the advantages of this
+improved optimization method, compared to real-valued vectors,
+CF with binary codes naturally suffers from low accuracy due to
+limited representation capability in each bit, which impedes it from
+modeling complex relationship between users and items.
+𝒅𝟑
+
+y
+
+-1 +1
+
++1 +1
+
+x
+
+𝑣2
+
+𝑣4
+𝒅𝟒
+
+-1 -1
+
++1 -1
+
+2
+
+Film Title
+
+Genres
+
+𝒗 𝟏 𝒅𝟏
+
+Star Wars
+
+Action, Adventure
+
+𝒗𝟐 𝒅𝟐
+
+Star Wars II
+
+Action, Adventure
+
+𝒗𝟑 𝒅𝟑
+
+The Matrix
+Reloaded
+
+Action, Sci-Fi
+
+𝒗𝟒 𝒅𝟒
+
+Titanic
+
+Drama, Romance
+
+PRELIMINARIES
+
+In this section, we first review the two-stage hashing method for
+collaborative filtering. Then, we introduce the direct discrete optimization method, which has been used in Discrete Collaborative
+Filtering (DCF) [30]. Finally, we discuss the limitation of binary
+codes in representation capability.
+
+𝒅𝟏
+
+𝑣3
+
+𝑣1
+
+sparsity of the weight vector could preserve the high efficiency. To
+demonstrate how it works, we derive the Compositional Coding for
+Collaborative Filtering (CCCF) framework. To tackle the intractable
+discrete optimization of CCCF, we develop an efficient alternating optimization method which iteratively solves mixed-integer
+programming subproblems. Besides, we develop an integer approximation strategy for the weight vectors. This strategy can further
+accelerate the recommendation speed. We conduct extensive experiments in which our promising results show that the proposed CCCF
+method not only improves the accuracy but also boosts retrieval
+efficiency over state-of-the-art binary coding methods.
+
+2.1
+
+Two-stage Hashing Method
+
+Matrix Factorization (MF) is the most successful and widely used
+CF based recommendation method. It represents users and items
+with real-valued vectors. Then an interaction of the corresponding
+user and item can be efficiently estimated by the inner product.
+Formally, given a user-item interaction matrix R ∈ Rm×n with m
+users and n items. Let ui ∈ Rr and vj ∈ Rr denote the latent vector
+for user i and item j respectively. Then, the predicted preference of
+user i towards item j is formulated as rˆi j = ui⊤ vj . To learn all user
+latent vectors U = [u1, . . . , um ]⊤ ∈ Rm×r and item latent vectors
+V = [v1, . . . , un ]⊤ ∈ Rn×r , MF minimizes the following regularized
+squared loss on the observed ratings:
+Õ
+arg min
+(Ri j − ui⊤ vj )2 + λR(U, V),
+(1)
+
+𝒅𝟐
+
+Figure 1: A toy example to illustrate the limitation of binary codes of Discrete Collaborative Filtering (DCF) [30].
+v1, v2, v3 , and v4 denote the real-valued vectors for item embeddings, and d1, d2, d3 , and d4 denote the binary codes for
+item embeddings. According to the film title and genres, v 1
+is the most similar to v 2 , followed by v 3 , while they are all
+dissimilar to v 4 . However, the binary codes learned by DCF
+cannot preserve the intrinsic similarity due to the limited
+representation capability of binary codes.
+Figure 1 gives an example to illustrate the limit of binary codes.
+From the “film title" and “genres", we can see that Star Wars is the
+most similar with Star Wars II, followed by The Matrix Reloaded, and
+all of them are action movies while Titanic is remarkably dissimilar
+to them which is categorized as a Drama movie. The real-valued
+vectors could easily preserve the original data geometry in the
+continuous vector space (e.g., intrinsic movie relationships), like
+v1, v2, v3 , and v4 . However, if we preserve the geometric relations
+of Star Wars, Star Wars II and The Matrix Reloaded by representing
+them using the binary codes d1 , d2 , and d3 in the Hamming space,
+the binary code of movie Titanic d4 will become close to d2 and d3 ,
+which unfortunately leads to a large error.
+In this work, we attempt to improve the efficiency without hurting the model performance. We propose a new user/item representation named “Compositional Coding", which utilizes both the
+accuracy of real-valued vectors and the efficiency of binary codes
+to represent users and items. To improve the representation capability of the binary codes, each user/item is represented by G
+components of r -dimensional binary codes (r is relatively small)
+together with a G-dimensional sparse weight vector. The weight
+vector is real-valued and indicates the importance of the corresponding component of the binary codes. Compared to the binary
+codes with same length (equal to Gr ), the real-valued weight vector
+significantly enriches the representation capability. Meanwhile, the
+
+U,V
+
+(i,j)∈V
+
+where V denotes the all observed use-item pairs and R(U, V) is
+the regularization term with respect to U and V controlled by
+λ > 0. To improve recommendation efficiency, after we obtain
+the optimized user/item real-valued latent vectors, the two-stage
+hashing method use binary quantization (rounding off [33] or rotate [18, 35]) to convert the continuous latent representations into
+binary codes. Let us denote B = [b1, . . . , bm ]⊤ ∈ {±1}m×r and
+D = [d1, . . . , dn ]⊤ ∈ {±1}n×r respectively as r -length user/item
+binary codes, then the inner product between the binary codes of
+user and item can be formulated as bi⊤ dj = 2H (bi , dj ) − r, where
+H (·) denotes the Hamming similarity. Based on fast bit operations,
+Hamming distance computation is extremely efficient. However,
+this method usually incurs a large quantization error since the binary bits are obtained by thresholding real values to integers, and
+thus it cannot preserve the original data geometry in the continuous
+vector space [30].
+
+2.2
+
+Direct Discrete Optimization Method
+
+To circumvent the above issues, direct discrete optimization method
+has been proposed in Discrete Collaborative Filtering (DCF) [30]
+and widely studied in other researches[12, 16, 31]. More formally,
+it learns the binary codes by optimizing the following objective
+
+146
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+function:
+
+weight vector. Formally, denote by
+arg min
+B,D
+
+s.t .
+
+Õ
+
+(Ri j − bi⊤ dj )2
+
++ λR(B, D)
+
+(1)
+
+(i,j)∈V
+
+B ∈ {±1}m×r , D ∈ {±1}n×r .
+
+𝒃𝟏𝒊
+
+User 𝒊
+
+𝒃𝟐𝒊
+
+−1, +1, +1, +1
+
+−1, −1, +1, +1
+
+𝒃𝑮𝒊
++1, −1, −1, +1
+
+the compositional codes for the j-th item, respectively. Then the
+predicted preference of user i for item j is computed by taking the
+weighted sum of the inner product with respect to each of the G
+components:
+
+k =1
+
+(k)
+
+−𝟏
++𝟏 𝑮
+𝒅
++𝟏 𝒋
++𝟏
+
+𝜼𝟐𝒊 , 𝝃𝟐𝒋
+
+(k )
+
+(3)
+
+(k)
+
+(k )
+
+𝟎 = 𝟎. 𝟗 × 𝟎
+
+𝒒
+
+𝜼𝒊 , 𝝃𝒋
+
+Figure 2: Illustration of how the compositional coding
+framework makes a prediction for user i given item j.
+
+3
+
+COMPOSITIONAL CODING FOR
+COLLABORATIVE FILTERING
+3.1 Intuition
+In this work, we attempt to improve the efficiency of CF without
+hurting the prediction performance. We propose a new user/item
+representation named “Compositional Coding", which utilizes both
+the accuracy of real-valued vectors and the efficiency of binary
+codes to represent users and items. Since the fixed distance between
+each pair of binary codes impedes them from modeling different
+magnitudes of relationships between users and items, we assign realvalued weight to each bit to remarkably enrich their representation
+capability. Besides, this importance parameters could implicitly
+prune unimportant bits by setting their importance parameters
+close to 0, which naturally reduces the computation cost.
+
+3.2
+
+(k )
+
+(k )
+
+a multiplication operation over ηi and ξ j , which ensures that
+the importance weight will be assigned a high value if and only if
+both user and item weights are large and will become zero if either
+of them is zero. It is worth noting that we use the multiplication
+instead of addition operation over the user and item weight to
+achieve the high sparsity of the sparse weight vector, which can
+lead to a significant reduction of computation cost during online
+recommendation.
+Compared to representing users/items with binary codes, the
+key advantage of the proposed framework is that the sparse realvalued weight vector substantially increases the representation
+capacity of user/item embeddings by the compositional coding
+scheme. Recalling the example shown in Figure 1, we can preserve
+the movie relations by assigning them with different weight vectors,
+so as to predict user-item interactions with a lower error. Another
+benefit is mainly from the idea of compositional matrix approximation [10, 32], which is more suitable for real-world recommender
+systems, since the interaction matrix is very large and composed
+of diverse interaction behaviours. Under this view, the proposed
+compositional coding framework is characterized by multiple components of binary codes. Each component of binary codes can be
+employed to discover the localized relationships among certain
+types of similar users and items and thus can be more accurate in
+this particular region (e.g., young people viewing action movies
+while old people viewing romance movies). Therefore, the proposed
+compositional coding framework can encode users and items in a
+more informative way.
+In addition to the improved representation and better accuracy,
+the compositional coding framework does not lose the high efficiency advantage of binary codes, and can even gain more efficiency
+when imposing sufficient sparsity. In order to show this, we analyze
+the time cost of the proposed framework and compare it against
+the conventional binary coding framework. In particular, assume
+the time cost of calculating the Hamming distance of r -bit codes is
+Th and the time cost of weighted summation of all of inner product
+
+෍.
+
+𝒒
+
+(k )
+
+(k )
+
+w i j (bi )⊤ d j ,
+
+where w i j = ηi · ξ j is the importance weight of the k-th
+component of binary codes with respect to user i and item j.
+Figure 2 illustrates how to estimate a user-item interaction using compositional codes. The inner product of each component
+(k )
+(k )
+of binary codes (bi )⊤ dj can be efficiently computed in Hamming space using the fast bit operations. The importance weight
+(k )
+of the k-th component of binary codes w i j is obtained through
+
+Prediction
+
+𝟎 = 𝟎 × 𝟎. 𝟖
+
+G
+Õ
+
+r̂ i j =
+
+𝟏
+−𝟏 𝒅𝒋 Component weight
+𝟎. 𝟕𝟐 = 𝟎. 𝟔 × 𝟏. 𝟐
++𝟏
+𝜼𝟏𝒊 , 𝝃𝟏𝒋
++𝟏
++𝟏
+𝟐
+−𝟏 𝒅𝒋
++𝟏
++𝟏
++𝟏
+
+
+
+(1)
+(G)
+∈ {±1}r , ηi = ηi , · · · , ηi
+∈ RG
+
+the compositional codes for the i-th user, and
+
+
+(1)
+(G)
+(1)
+(G)
+dj , . . . , dj ∈ {±1}r , ξ j = ξ j , · · · , ξ j
+∈ RG
+
+(2)
+
+This objective function is similar to that of a conventional MF task,
+except the discrete constraint on the user/item embeddings. By
+additionally imposing balanced and de-correlated constraints, it
+could derive compact yet informative binary codes for both users
+and items.
+However, compared to real-valued vectors, CF with binary codes
+naturally suffers from low accuracy due to limited representation
+capability in each bit. Specifically, the r -dimensional real-valued
+vector space have infinite possibility to model users and items,
+while the number of unique binary codes in Hamming space is
+2r . An alternative way to resolve this issue is to use a longer code.
+Unfortunately, it will adversely hurt the generalization of the model
+especially in the sparse scenarios.
+
+Item 𝒋
+
+(G)
+
+bi , . . . , bi
+
+Overview
+
+In general, the proposed compositional coding framework assumes
+each user or item is represented by G components of r -dimensional
+binary codes (r is relatively small) and one G-dimensional sparse
+
+147
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+results is Ts , then the total cost for a user-item similarity search is
+
+bit and make it as independent as possible, we impose balanced
+partition and decorrelated constraints. In summary, learning the
+compositional codes for users and items can be formulated into the
+following optimization task:
+
+nnz(w) × Th + Ts ,
+
+where nnz(w) denotes the average number of non-zero values in
+component weight vector w ∈ RG , which is much smaller than G
+in our approach due to the sparsity of the user and item weights.
+Similarly, the cost by conventional hashing based CF models using
+(G × r )-bit binary codes is G × Th which can be higher than ours.
+Remark. The proposed compositional coding framework is
+rather general. When identical weight vectors are used, it is degraded to the binary codes of conventional hashing based CF methods. Compositional codes could also be regarded as real-valued
+latent vectors of CF model, if we adopt the identical binary codes
+for each component. In summary, compositional code is a flexible
+representation which could benefit from both the strong representation capability of real-valued vectors and the fast similarity search
+of binary codes.
+
+3.3
+
+min
+
+(k )
+
+
+(k ) 2
+
+balanced partition
+
+decorrelation
+
+k = 1, . . . , G .
+
+(5)
+
+(k )
+(k )
+where we denote B(k ) = [b1 , . . . , bm ]⊤ ∈ {±1}m×r and D(k ) =
+
+[d1 , . . . , dn ]⊤ ∈ {±1}n×r respectively as user and item binary
+codes in the k-th set of binary codes. The problem formulated
+in (5) is a mixed-binary-integer program which is a challenging
+task since it is generally NP-hard and involves a combinatorial
+search over O(2Gr (m+n) ). An alternative way is to impose auxiliary
+continuous variables X(k ) ∈ B and Y(k ) ∈ D for each set of binary
+codes, where B (k ) = {X(k) ∈ Rm×r |1m X(k) = 0, (X(k ) )⊤ X(k ) =
+mIr } and D (k ) = {Y(k ) ∈ R n×r |1n Y(k ) = 0, (Y(k ) )⊤ Y(k ) = nIr }.
+Then the balanced and de-correlated constraints can be softened
+by minX(k ) ∈B (k ) ∥B(k) − X(k) ∥F and minY(k ) ∈ D (k ) ∥D(k ) − Y(k ) ∥F ,
+respectively. Finally, we can solve problem (5) with respect to the
+k-the set of codes in a computationally tractable manner:
+(k )
+
+(k)
+
+min
+
+B(k ) ,D(k ) ,X(k ) ,Y(k )
+
+Õ 
+(i ,j)∈V
+
+Ri j −
+
+G
+Õ
+k =1
+
+(k )
+
+(k )
+
+
+(k ) 2
+
+w i j (bi )⊤ d j
+
++ α 1 ∥B(k ) − X(k ) ∥F + α 2 ∥D(k ) − Y(k ) ∥F
+s.t.
+
+B(k ) ∈ {±1}m×r , D(k ) ∈ {±1}n×r ,
+
+(6)
+
+where α 1 and α 2 are tuning parameters. Since tr((B(k ) )⊤ B(k ) ) =
+tr((X(k) )⊤ X(k ) ) = mr, and tr((D(k) )⊤ D(k ) ) = tr((Y(k ) )⊤ Y(k ) ) = nr,
+the above optimization task can be turned into the following
+
+(k )
+
+ 
+
+3
+1 − d (i, i t′ )2 1 d (i, i t′ ) < h ,
+4
+
+(k )
+
+w i j (bi )⊤ d j
+
+B(k ) ∈ {±1}m×r , D(k ) ∈ {±1}n×r ,
+
+proximation [9, 10], user weight ηi can be instantiated with an
+Epanechnikov kernel1 [25], which is formulated as:
+=
+
+G
+Õ
+k =1
+
+(i ,j )∈V
+
+In this section, we instantiate the compositional coding framework
+on Matrix Factorization (MF) models and term the proposed method
+as the Compositional Coding for Collaborative Filtering (CCCF).
+Note that the proposed compositional coding framework can be
+potentially applicable to other types of CF models beyond MF.
+Follow the intuition of compositional coding, we assume that
+there exists a distance function d that measures distances in the
+space of users (i = 1, . . . , m) or items (j = 1, . . . , n). The distance
+function leads to the notion of neighborhoods of user-user and itemitem pairs. Its assumption states that the rating of user-item pair
+(i, j) could be approximated particularly well in its neighbourhood.
+Thus, we identify G components surrounding K anchor points
+′ , j ′ ). Follow the setting of compositional matrix ap(i 1′ , j 1′ ), . . . , (iG
+G
+
+(k )
+
+Ri j −
+
+s.t. 1m B(k ) = 0, 1n D(k ) = 0, (B(k ) )⊤ B(k ) = mIr , (D(k ) )⊤ D(k ) = nIr
+|
+{z
+} |
+{z
+}
+
+Formulation
+
+ηi
+
+Õ 
+
+(4)
+min
+
+where h > 0 is a bandwidth parameter, 1[·] is the indicator function
+and d(·) is a distance function to measure the similarity between i
+and i t′ (we will discuss it in Section 3.6). A large value of h implies
+that ηi has a wide spread, which means most of the user component
+weights are non-zero. In contrast, a small h corresponds to narrow
+spread of ηi and most of the user components will be zero. Item
+(k)
+weight ξ j follows the analogous formulation. In this way, we could
+
+Õ
+
+B(k ) ,D(k ) ,X(k ) ,Y(k ) (i ,j)∈V
+
+(R i j −
+
+G
+Õ
+k =1
+
+w i j (bi )⊤ d j )2
+(k )
+
+(k )
+
+(k )
+
+− 2α 1 tr((B(k ) )⊤ X(k ) ) − 2α 2 tr((D(k ) )⊤ Y(k ) )
+s.t.
+
+1m X(k ) = 0, 1n X(k ) = 0, (Y(k ) )⊤ Y(k ) = mIr , (Y(k ) )⊤ Y(k ) = nIr
+B(k ) ∈ {±1}m×r , D(k ) ∈ {±1}n×r ,
+
+(7)
+
+which is the proposed learning model for CCCF. Note that we do
+not discard the binary constraints but directly optimize the binary
+codes of each component. Through joint optimization for the binary
+codes and the auxiliary real-valued variables, we can achieve nearly
+balanced and un-correlated binary codes. Next, we will introduce
+an efficient solution for the mixed-integer optimization problem in
+Eq. (7).
+
+(k )
+
+endow the weight vector w i j for user-item pair, which is defined
+as multiplication over user and item weight, with the sparsity. The
+method for selecting anchor points for each component is important
+as it may affect the values of component weights and further affect
+the generalization performance. A natural way is to uniformly
+sample them from the training set. In this work, we run k-means
+clustering with the user/item latent vectors and use the G centroids
+as anchor points.
+To learn the compositional codes, we adopt the squared loss to
+measure the reconstruction error as the standard MF method. For
+each set of binary codes, in order to maximize the entropy of each
+
+3.4
+
+Optimization
+
+We employ alternative optimization strategy to solve the above
+problem. Each iteration alternatively updates B(k ) , D(k) , X(k ) and
+Y(k ) . The details are given below.
+Learning B(k ) and D(k) : In this subproblem, we update B(k )
+with fixed D(k ) , X(k) and Y(k ) . Since the objective function in Eq.
+(7) is based on summing over users of each component independently, so we can update binary codes for each user and item in
+
+1 Similar to [9], we also tried uniform and triangular kernel, but the performance was
+worse than Epanechnikov kernel, in agreement with the theory of kernel smoothing
+[25].
+
+148
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+we have 1⊤ P(k ) b = 0 due to 1⊤ B̄(k ) = 0. Then we construct ma(k )
+(k )
+trices P̂b of size m × (r − r ′ ) and Q̂b of size r × (r − r ′ ) by
+
+parallel. Specifically, learning binary codes for user i with respect
+to component k is to solve the following optimization problem:
+
+(k )
+
+!
+
+(k )
+bi ∈{±1}r
+
+(bi )⊤
+
+employing a Gram-Schmidt process such that ( P̂(k ) )b⊤ P̂b = Ir −r ′ ,
+
+(w i j )2 d j (d j )⊤ bi
+
+Õ
+
+(k )
+
+min
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+[Pb
+
+j ∈Vi
+
+−2
+
+ Õ
+
+
+(k )
+(k )
+(k )
+(k )
+r̃ i j (d j )⊤ bi − 2α 1 (xi )⊤ bi ,
+
+(k)
+1]⊤ P̂b
+
+we obtain a closed-form update
+
+(8)
+
+where r˜i j = r i j − k̃ ,k w ik̃j (bk̃i )⊤ dk̃j is the residual of observed
+rating excluding the inner product of component k.
+Due to the discrete constraints, the optimization is generally
+NP-hard, we adopt the bitwise learning method called Discrete
+(k)
+Coordinate Descent [21, 22] to update bi . In particular, denoting
+(k)
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+
+biq ← sдn(O(−b̂ik , biq ))
+
+(k )
+
+(k )
+
+r̃ i j d jq −
+
+j ∈Vi
+
+Õ
+
+(w i j )2 (d j )⊤ bi d jq +
+(k )
+
+(k )
+
+(k ) (k )
+
+j ∈Vi
+
+Õ
+
+(k )
+
+(k )
+
+max t r (D(k ) (Y(k ) )⊤ ),
+Y(k )
+
+min
+
+√ (k ) (k ) (k )
+(k )
+Y(k ) ← n[Pd , P̂d ][Qd , Q̂d ]⊤ .
+(k )
+
+(k )
+
+(w i j )2 bi (bi )⊤ )d j
+
+Õ
+
+Õ
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+
+(k )
+
+r̃ i j (bi )⊤ )d j
+
+(k )
+
+Algorithm 1 The proposed algorithm for Compositional Coding
+for Collaborative Filtering (CCCF) .
+
+(k )
+
+− 2α 2 (y j )⊤ d j .
+
+i ∈Vj
+
+Input: R ∈ Rm×n
+Output: B(k ) ∈ {±1}r ×m , D(k ) ∈ {±1}r ×n
+Parameters: number of components G, code length r , regularization coefficient α 1, α 2 , bandwidth parameter h
+Initialize B(k ), D(k ) and X(k ), Y(k ) ∈ Rm×n by Eq. (13).
+while not converged do
+for k = 1, · · · , G parallel do
+Pick anchor points (i k′ , jk′ ).
+for u = 1, · · · , m do
+(k )
+Update bi according to (9)
+end for
+for i = 1, · · · , n do
+(k )
+Update dj according to (10).
+end for
+Update X(k ) and Y(k ) according to (11) and (12).
+end for
+end while
+
+(k )
+(k )
+(k )
+Denote d jq as the q-th bit of dj and dj q̄ as the rest codes exclud(k )
+(k )
+ing d jq , we update each bit of dj according to
+
+d jq ← sдn(O (−dˆjq , d jq ))
+(k )
+
+where dˆjq =
+(k )
+
+(k )
+
+(k )
+
+(k ) 2 (k ) ⊤ (k ) (k)
+(k)
+i ∈Vj (r˜i j − (w i j ) (bi q̄ ) d j q̄ )biq + α 2y jq .
+X(k) and Y(k) : When fixing B(k ) , learning X(k)
+
+(10)
+
+Í
+
+Learning
+be solved via optimizing the following objective function:
+max t r (B(k ) (X(k ) )⊤ ),
+X(k )
+
+could
+
+⊤ (k )
+1m
+X = 0, (X(k ) )⊤ X(k ) = mIr .
+
+It can be solved by the aid of SVD according to [17]. Let B̄(k) be
+(k )
+(k)
+1 Í B (k) .
+a column-wise zero-mean matrix, where B̄i j = Bi j − m
+i ij
+(k ) (k )
+
+(k )
+
+responding to zero singular values of the r × r matrix (D̄(k ) )⊤ D̄(k ) ,
+(k )
+and P̂d are the vectors obtained via the Gram-Schimidt process.
+We summarize the solution for CCCF in Algorithm 1.
+
+i ∈Vj
+
+− 2(
+
+(12)
+
+where each column of Pd and Qd is the left and right singular
+(k )
+vectors of D̄(k ) respectively. Q̂d are the left singular vectors cor-
+
+(k )
+
+biq + α 1 x iq ,
+
+j ∈Vi
+
+(d j )⊤ (
+
+⊤ (k )
+1n
+Y = 0, (Y(k ) )⊤ Y(k ) = nIr .
+
+We can obtain an analytic solution:
+
+
+which reduces the computational cost to O #iter (m + n)r 2 .
+Similarly, we could learn binary code for item j in component k
+by solving
+(k )
+d j ∈{±1}r
+
+(k )
+
+Then matrix P̂b can be obtained by the aforementioned Gram
+Schmidt orthogonalization. Note that it requires O r 2m to perform
+SVD, Gram-Schimdt orthogonalization and matrix multiplication.
+When D(k ) fixed, learning Y(k ) could be solved in a similar way:
+
+(9)
+
+Í
+(k )
+(k )
+(k )
+(k ) (k )
+(k ) (k )
+where b̂iq = j ∈Vi (r˜i j − (w i j )2 (dj q̄ )⊤ bi q̄ )d jq + α 1x iq , dj q̄ is
+the rest set of item codes excluding d jk and O(x, y) is a function
+that O(x, y) = x if x , 0 and O(x, y) = y otherwise. We iteratively
+update each bit until the procedure convergence. Note that the com
+putational complexity of updating B(k ) is O #iter (mnr 2 ) which is
+a critical efficiency bottleneck when m or n is large. To efficiently
+(k )
+(k )
+compute b̂iq , we rewrite b̂iq as
+Õ
+
+(k )
+
+Pb = B̄(k ) Qb (Σ(k ) )−1 .
+
+(k )
+
+(k )
+
+(11)
+
+which provides Qb , Q̂b , Σ(k ) , and we can obtain
+
+(k )
+
+binary code biq can be formulated as
+
+b̂iq =
+
+= 0. Now
+
+(k )
+
+DCD update biq while fixing bi q̄ . Thus, the updating rule for user
+
+(k )
+
+(k)
+1]⊤ Q̂b
+
+In practice, to compute such an optimal X(k ) , we perform the
+eigendecomposition over the small r × r matrix
+ (k ) 2
+
+0
+(k ) (k ) (Σ )
+(k ) (k )
+(k ) ⊤ (k )
+(B̄ ) B̄ = [Qb Q̂b ]
+[Qb Q̂b ]⊤,
+0
+0
+
+and bi q̄ as the rest codes excluding biq ,
+
+(k)
+
+(k )
+= Ir −r ′ , [Qb
+rule for X(k ) :
+
+√
+(k )
+(k )
+(k )
+(k )
+X(k ) ← m[Pb , P̂b ][Qb , Q̂b ]⊤ .
+
+j ∈Vi
+
+Í
+
+biq as the qth bit of bi
+
+=
+
+(k )
+0, and (Q̂b )⊤ Q̂b
+
+(k)
+
+Assuming B̄(k) = Pb Σb (Qb )⊤ as its SVD, where each column
+′
+′
+(k )
+(k )
+of Pb ∈ Rm×r and Qb ∈ Rr ×r represents the left and right
+singular vectors corresponding to r ′ non-zero singular values in
+(k)
+(k )
+the diagonal matrix Σb . Since B̄(k) and Qb have the same row,
+
+149
+
+Session 2B: Collaborative Filtering
+
+3.5
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+Initialization
+
+3.8
+
+min
+
+Õ 
+
+U(k ) ,V(k ) ,X(k ) ,Y(k ) (i , j)∈V
+
+Ri j −
+
+G
+Õ
+k =1
+
+(k )
+
+(k )
+
+
+(k ) 2
+
+w i j (ui )⊤ v j
+
+Fast Retrieval via Integer Weight Scaling
+
+Floating-point operations over user and item weight vectors invoke
+more CPU cycles and are usually much slower than integer computation. The cost of top-k recommendation would be remarkably
+lower when the scalars in the weight vectors are integers instead
+of floating numbers. An intuitive way is to adopt integer approximation via rounding the scalars in user and item weight vectors.
+However, if the weights are too small, it will incur large deviation.
+To tackle this problem, we scale the original scalars by multiplying each weight by e and then approximate them with integers in
+preprocessing,
+
+Note that the proposed optimization problem involves a mixedinteger non-convex problem, the initialization of model parameters
+plays an important role for fast convergence and for finding better
+local optimum solution. To achieve a good initialization in an efficient way, we essentially relax the binary constraints in Eq. (7) into
+the following optimization:
+(13)
+
+−2α 1 tr((B(k ) )⊤ X(k ) ) − 2α 2 tr((V(k ) )⊤ Y(k ) ) + α 3 ∥U(k ) ∥F2 + α 4 ∥V(k ) ∥F2
+
+n
+o
+(1)
+(G )
+η̂ i = ⌊e · η i ⌉, . . . , ⌊e · η i ⌉ ,
+
+s.t. 1m X(k ) = 0, 1n X(k ) = 0, (Y(k ) )⊤ Y(k ) = mIr , (Y(k ) )⊤ Y(k ) = nIr ,
+
+n
+o
+(1)
+(G)
+ξˆj = ⌊e · ξ j ⌉, . . . , ⌊e · ξ j ⌉ ,
+
+(k )
+
+where ⌊e · ηi ⌉ is a round function to obtain an integer approxi(k )
+
+mation with respect to e · ηi .
+
+We first initialize real-valued matrix
+and
+randomly
+and find the feasible solution for X(k ) and Y(k) according to the
+above learning method with respect to X(k ) and Y(k ) . Then the
+alternating optimization are conducted by updating U and V with
+traditional gradient descent method and updating X and Y with
+respect to the similar learning method. Once we obtain the solu(k) (k ) (k) (k )
+tion (U0 , V0 , X0 , Y0 ), we can initialize CCCF with respect to
+component k as:
+U(k )
+
+B
+
+(k )
+
+←
+
+(k )
+sgn(U0 ), D(k )
+
+←
+
+(k )
+sgn(V0 ), X(k )
+
+←
+
+V(k )
+
+(k )
+X0 , Y(k )
+
+←
+
+(k )
+Y0 .
+
+4
+
+RQ1: How does CCCF perform as compared to other state-of-thearts hashing based recommendation methods in terms of
+both accuracy and retrieval time?
+RQ2: How do different hyper-parameter settings (e.g., number of
+components, and code length) affect the accuracy of CCCF ?
+RQ3: How do the sparsity of component weight vectors (controlled
+by the bandwidth parameter h) and integer scaling (controlled by parameter e) affect both the accuracy and retrieval
+cost of CCCF? How to choose optimal values ?
+RQ4: Does the representation of compositional codes in CCCF
+enjoy a much stronger representation capability than the
+traditional binary codes in DCF given the same model size ?
+
+(14)
+
+The effectiveness of the proposed initialization will be discussed
+in Section 4.1 (illustrated in Figure 14).
+
+3.6
+
+Distance Function
+
+Previously we assume a general distance function d, which is defined to measure the distance between users or items so as to com(k )
+(k )
+pute the component weights w i and v j in Eq. (4). The metric
+can be constructed with side information, like users’ social link
+[28, 34] or using metric learning techniques [29]. However, many
+datasets do not include such data. In this work, we follow the idea
+of [9, 10] which factorizes the observed interaction matrix using
+MF and obtain two latent representation matrices U and V for users
+and items, respectively. Then the distance between two users can be
+computed by the cosine distance between the obtained latent rep
+
+4.1
+
+Experimental Settings
+
+4.1.1 Datasets and Settings. We run our experiments on three
+public datasets: Movielens 1M2 , Amazon and Yelp3 which are widely
+used in the literature. All of these ratings range from 0 to 5. Considering the severe sparsity of Yelp and Amazon original datasets, we
+followed the conventional filtering strategy [20] by removing users
+and items with less than 10 ratings. The statistics of the filtered
+datasets are shown in Table 1. For each user, we randomly sampled
+70% ratings as training data and the rest 30% for test. We repeated
+for 5 random splits and reported the averaged results.
+
+⟨u ,u ⟩
+
+resentations, which is formulated as d(ui , u j ) = arccos ∥u ∥i · ∥uj ∥ .
+i
+j
+The distance between two items can be computed in the same way.
+
+3.7
+
+EXPERIMENTS
+
+In order to validate the effectiveness and efficacy of the proposed
+CCCF method for recommender systems, we conduct an extensive
+set of experiments to examine different aspects of our method
+in comparison to state-of-the-art methods based on conventional
+binary coding. We aim to answer the following questions:
+
+Complexity
+
+The computational complexity of training CCCF is K times the complexity of learning each set of binary codes. It converges quickly in
+practice, which usually takes about 4 ∼ 5 iterations in our experiments. For each iteration, the computational cost for updating B(k )
+
+and D(k ) is O #iter (m + n)r 2 . In practice, #iter is usually 2 ∼ 5.
+
+The computational cost for updating X(k ) and Y(k) is O r 2m and
+2
+O r n), respectively. Suppose the entire algorithm requires T iterations for convergence, the overall time complexity for Algorithm 1
+is O(Tqr 2 (m + n)), where we found T empirically is no more than 5.
+In summary, CCCF is efficient and scalable because it scales linearly
+with the number of users and items.
+
+Dataset
+
+#Ratings
+
+#Items
+
+#Users
+
+#density
+
+Movielens 1M
+Yelp
+Amazon
+
+1,000,209
+696,865
+5,057,936
+
+3900
+25,677
+146,469
+
+6040
+25,815
+189,474
+
+4.2%
+0.11%
+0.02%
+
+Table 1: Summary of datasets in our experiments.
+
+2 http://grouplens.org/datasets/movielens
+3 http://www.yelp.com/dataset
+
+150
+
+challenge
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+4.1.2 Parameter Settings and Performance Metrics. For
+CCCF, we vary the number of components and the code length of
+each component in range {4, 8, 12, 16}. The hyper-parameters α and
+β are tuned within {10−4, 10−3, . . . , 102 }. Grid search is performed
+to choose the best parameters on the training split. We evaluate our
+proposed algorithms by Normalized Discounted Cumulative Gain
+(NDCG) [6], which is probably the most popular ranking metric
+for capturing the importance of retrieving good items at the top
+of ranked lists. The average NDCG at cut off [2, 4, 6, 8, 10] over
+all users is the final metric. A higher NDCG@K reflects a better
+accuracy of recommendation performance.
+
+even achieve remarkable superior performance using only 32 bits
+in comparison to the DCF using 128 bits on three datasets. This
+improvement indicates the impressive effectiveness of learning
+compositional codes.
+Second, between baseline methods, DCF consistently outperforms BCCF, while slightly underperforms DCMF. This is consistent
+with the findings in [30] that the performance of direct discrete optimization could surpass that of the two-stage methods. Besides, side
+information makes user codes and item codes more representative,
+which improves the recommendation performance.
+Moreover, it is worth mentioning that CCCF outperforms MF,
+which is a real-valued CF method, particularly on the Amazon and
+Yelp dataset. The reasons for this are two-fold. First, compositional
+structure of CCCF has a much stronger representation capability
+which could discover complex relationships among users and items.
+Second, the higher sparsity of the dataset makes MF easy to overfit,
+whereras the binarized and sparse parameters in CCCF could alleviate this issue. This finding again demonstrates the effectiveness
+of our method.
+
+4.1.3 Baseline Methods and Implementations. To validate
+the effectiveness of CCCF, we compare it with several state-of-theart real-valued CF methods and hashing-based CF methods:
+• MF: This is the classic Matrix Factorization based CF algorithm
+[8], which learns real-valued user and item latent vectors in
+Euclidean space.
+• BCCF: This is a two-stage binarized CF method [35] with a
+relaxation stage and a quantization stage. At these two stages,
+it successively solves MF with balanced code regularization and
+applies orthogonal rotation to obtain user codes and item codes.
+• DCF: This is the first method [30] directly tackles a discrete optimization problem for seeking informative and compact binary
+codes for users and items.
+• DCMF: This is the state-of-the-art binarized method [12] for
+CF with side information. It extends DCF by encoding the side
+features as the constraints for user codes and item codes.
+The CCCF algorithm empirically converges very fast and using
+the initialization generally helps as shown in Figure 3.
+6
+
+X 10
+
+4
+
+MovieLens 1M
+without init
+with init
+
+5
+
+0.8
+0.78
+0.74
+
+4
+
+0.72
+
+3.5
+
+without init
+with init
+
+0.7
+
+3
+0
+
+2
+
+4
+
+6
+
+8
+
+10
+
+Iteration
+
+12
+
+14
+
+16
+
+0.68
+0
+
+2
+
+4
+
+6
+
+8
+
+10
+
+Iteration
+
+12
+
+14
+
+16
+
+Speedup
+
+DCF
+Time
+
+Speedup
+
+4.2.2 Impact of Hyper-parameter G and r (RQ2). Our CCCF
+has two key parameters, the number of components G and code
+length r , to control the complexity and capacity of CCCF. Figure
+5(a) and 5(b) evaluate how they affect the recommendation performance under varied total bits and fixed total bits. In Figure 5(a), we
+vary the code length r from 4 to 16 and the component number
+G from 1 to 16. We can see that increasing G leads to continued
+improvements. When G is larger than 8, the improvement tends
+to become saturated as the number of components increases. In
+addition, a larger value of G would lead to relatively longer training
+time. Similar observations can be found from the results of hyperparameter r evaluation. In Figure 5(b), we fix the total bits rG in
+range {32, 64, 96, 128} and varies the component number G from 1
+to 32. It should be noted that when G = 1, CCCF model is identical
+to DCF model. As we gradually increase component number G, the
+recommendation performance grows since the real-valued component weight could enhance the representation capability. The
+best recommendation performance is achieved when G = 8 or 16.
+When G is larger than the optimal values, increasing G will hurt
+the performance. The main reason is that we fix the total bits rG, so
+
+Figure 3: Convergence of the overall objective values and
+NDCG@10 of CCCF with/without initialization on the
+Movielens 1M dataset. The use of the proposed initialization
+leads to faster convergence and better results.
+
+4.2
+
+MF
+Time
+
+Finally, Table 2 shows the total time cost (in seconds) taken by
+each method to generate the top-k item list of all items. Overall, the
+hashing based methods (DCF and CCCF) outperform real-valued
+methods (MF), indicating the great advantage of binarizing the realvalued parameters. Moreover, CCCF shows superior retrieval time
+compared to DCF while enjoying a better accuracy. Thus, CCCF is
+a suitable model for large-scale recommender systems where the
+retrieval time is restricted within a limited time quota.
+
+0.76
+
+4.5
+
+Time
+
+7.12
+49.66
+×6.97
+10.64
+×1.49
+831.34 5917.56 ×7.12
+1231.35 ×1.48
+184.48 1450.25 ×7.86
+264.65
+×1.43
+Table 2: Retrieval time (in seconds) of recommendation
+methods on three datasets, ’Speedup’ indicates the speedup
+(×) of CCCF (G = 8, r = 16) over baselines.
+
+MovieLens 1M
+
+0.82
+
+CCCF
+
+Movielens 1M
+Amazon
+Yelp
+
+NDCG@10
+
+Objective value
+
+5.5
+
+Dataset
+
+Experimental Results
+
+4.2.1 Comparisons with State-of-the-arts (RQ1). Figure 4
+shows the results of top-k recommendation with k setting from
+2 to 10. Note that the number of components G is fixed to 8 and
+the code length of each component varies in {4, 6, 8, 10, 12, 14, 16}.
+For fair comparison, the code length of DCF and the rank of MF
+are equal to the total bits of CCCF, which are equivalent to the
+summation of each component’s code length of CCCF (rG), so that
+the performance gain is not from increasing model complexity.
+From Figure 4, we can draw the following major observations:
+First of all, we observe that CCCF considerably outperforms
+BCCF, DCF and DCMF which are the state-of-the-art hashing based
+CF methods. The performance of CCCF and DCF continiously increase as we increase the code length. Surprisingly, CCCF can
+
+151
+
+Session 2B: Collaborative Filtering
+
+MovieLens1M bits = 64
+
+0.4
+0.3
+2
+
+4
+
+6
+
+8
+
+K
+
+0.4
+0.3
+2
+
+10
+
+4
+
+6
+
+K
+
+8
+
+4
+
+6
+
+8
+
+K
+
+0.5
+2
+
+Yelp bits = 32
+
+0.8
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.6
+
+10
+
+4
+
+6
+
+K
+
+8
+
+0.3
+2
+
+4
+
+6
+
+8
+
+K
+
+0.4
+
+10
+
+0.4
+2
+
+Amazon bits = 96
+
+4
+
+6
+
+K
+
+8
+
+6
+
+8
+
+K
+
+10
+
+Amazon bits = 128
+
+0.9
+
+0.7
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+4
+
+6
+
+8
+
+K
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.6
+0.5
+2
+
+10
+
+Yelp bits = 96
+
+4
+
+6
+
+8
+
+K
+
+10
+
+Yelp bits = 128
+
+0.8
+
+NDCG@K
+
+0.7
+
+0.6
+
+0.6
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.5
+0.4
+0.3
+2
+
+10
+
+4
+
+0.8
+
+0.5
+2
+
+10
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.5
+
+0.3
+2
+
+0.5
+
+10
+
+0.7
+
+NDCG@K
+
+NDCG@K
+
+0.4
+
+8
+
+K
+
+0.8
+
+0.6
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.5
+
+6
+
+0.6
+
+0.7
+
+0.6
+
+4
+
+0.7
+
+Yelp bits = 64
+
+0.8
+
+0.7
+
+0.3
+2
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.6
+
+0.8
+
+NDCG@K
+
+NDCG@K
+
+0.5
+2
+
+0.4
+
+0.9
+
+0.7
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.6
+
+0.7
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.5
+
+10
+
+0.8
+
+0.7
+
+0.6
+
+Amazon bits = 64
+
+0.9
+
+0.8
+
+NDCG@K
+
+0.5
+
+Amazon bits = 32
+
+0.9
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+NDCG@K
+
+0.5
+
+0.7
+
+0.6
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.8
+
+NDCG@K
+
+0.7
+
+0.6
+
+MovieLens1M bits = 128
+
+0.9
+
+0.8
+
+NDCG@K
+
+NDCG@K
+
+0.7
+
+MovieLens1M bits = 96
+
+0.9
+
+0.8
+
+NDCG@K
+
+0.9
+
+0.8
+
+NDCG@K
+
+MovieLens1M bits = 32
+
+0.9
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+4
+
+6
+
+8
+
+K
+
+CCCF
+MF
+DCMF
+DCF
+BCCF
+
+0.5
+0.4
+0.3
+2
+
+10
+
+4
+
+6
+
+8
+
+K
+
+10
+
+Figure 4: Item recommendation performance comparison of NDCG@K with respect to code length in bits.
+
+0.79
+4
+
+8
+
+12
+
+Number of Component
+
+16
+
+0.72
+
+r = 16
+r = 12
+r=8
+r=4
+
+0.68
+0.64
+1
+
+0.76
+
+4
+
+8
+
+12
+
+Number of Component
+
+0.73
+
+0.82
+
+bits = 128
+bits = 96
+bits = 64
+bits = 32
+
+0.79
+0.76
+1
+
+16
+
+NDCG@10
+
+r = 16
+r = 12
+r=8
+r=4
+
+Yelp
+
+0.79
+
+0.85
+
+NDCG@10
+
+0.82
+
+Amazon
+
+0.88
+
+0.76
+
+NDCG@10
+
+0.85
+
+0.76
+1
+
+Yelp
+
+0.8
+
+NDCG@10
+
+Amazon
+
+0.88
+
+4
+
+8
+
+16
+
+bits = 128
+bits = 96
+bits = 64
+bits = 32
+
+0.64
+1
+
+32
+
+Number of Component
+
+(a) Varied total bits (rG)
+
+0.7
+
+0.67
+4
+
+8
+
+16
+
+32
+
+Number of Component
+
+(b) Fixed total bits (rG)
+
+Figure 5: Performance of CCCF with respect to code length in bits (r) and number of components (G).
+Retrieval time(seconds)
+
+2400
+2000
+
+Amazon
+
+750
+
+EXACT
+IWS
+
+600
+
+1600
+
+300
+
+800
+
+150
+
+400
+0
+0
+
+Yelp
+EXACT
+IWS
+
+450
+
+1200
+
+4.2.3 Impact of sparsity of component weight and integer
+weight scaling (RQ3). To demonstrate the effectiveness of the
+integer weight scaling in accuracy and retrieval time , we run two
+versions of CCCF: EXACT and IWS. EXACT does not adopt the
+proposed integer weight scaling strategy. IWS uses the integer
+weight scaling described in Section 3.8. Figure 6 summarizes the
+speedup of the two versions of CCCF. The retrieval cost is not
+sensitive to the integer scaling parameter e and we set e to 100. We
+can see the gap between the versions is consistent over Amazon
+and Yelp dataset. The low cost of IWS validates the effectiveness
+of the integer scaling which replaces the floating-point operations
+with the fast integer computation.
+Figure 7 shows the impact of hyper-parameter e on the accuracy
+of CCCF. We can find that when e is smaller than 100, the increase
+of e leads to gradual improvements. When e is larger than 100,
+further increasing its value cannot improve the performance. This
+indicates that IWS is relatively insensitive when e is sufficiently
+large. We thus suggest to set e to 100.
+
+Retrieval time(seconds)
+
+that larger values of G lead to smaller values of r . This will reduce
+the learning space of CCCF since the component weight is calculated by a predefined distance function which does not consider
+the rating information.
+
+4
+
+8
+
+12
+
+16
+
+r
+
+20
+
+24
+
+0
+0
+
+4
+
+8
+
+12
+
+16
+
+r
+
+20
+
+24
+
+Figure 6: Retrieval cost of the naive version and IWS version.
+MovieLens1M
+
+0.83
+0.82
+0.8
+
+0.79
+0.78
+
+Exact
+IWS
+
+0.77
+0.76
+5
+
+Yelp
+
+NDCG@10
+
+NDCG@10
+
+0.81
+
+0.77
+0.76
+0.75
+0.74
+0.73
+0.72
+0.71
+0.7
+0.69
+5
+
+10
+
+25
+
+e
+
+50
+
+100
+
+1000
+
+Exact
+IWS
+
+10
+
+25
+
+e
+
+50
+
+100
+
+1000
+
+Figure 7: Performance of CCCF with different e values.
+To reveal the impact of sparsity of component weight in accuracy
+and retrieval cost, we vary the bandwidth hyperparameter h from
+0.5 to 1. It is obvious that decreasing the value of h will increasing
+the sparsity of component weights. Figure 8 shows the accuracy
+and retrieval cost of CCCF for different h. First, we can see that the
+
+152
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+retrieval cost of CCCF is continuously reduced as we decrease the
+values of h since high sparsity lead to fast computation. Second, we
+observe that the best recomendation performance is achieved when
+h = 0.7 ∼ 0.8. When h is smaller than 0.7 ∼ 0.8, increasing the
+sparsity will make CCCF robust to overfitting. However, when the
+sparsity level is quite high, the CCF model might not be informative
+enough for prediction and thus suffer performance degradation.
+
+0.4
+
+0.3
+
+0.8
+
+0.2
+
+0.79
+
+0.6
+
+0.7
+
+h
+
+0.8
+
+0.9
+
+1
+
+MovieLens1M
+
+0.5
+
+0.77
+
+Sparsity
+
+10
+
+0.3
+
+8
+
+0.2
+
+6
+
+0.1
+
+4
+
+Sparsity
+Retrieval time
+
+0
+0.5
+
+0.6
+
+0.7
+
+h
+
+0.8
+
+0.9
+
+1
+
+0.74
+
+0.1
+0
+0.5
+
+12
+
+0.4
+
+0.75
+
+0.2
+
+0.73
+
+Sparsity
+NDCG@10
+0.6
+
+0.7
+
+h
+
+0.8
+
+0.9
+
+1
+
+Yelp
+
+0.5
+
+260
+
+0.3
+
+220
+
+0.2
+
+180
+
+0.1
+
+2
+
+0
+0.5
+
+0.72
+
+300
+
+0.4
+
+Sparsity
+
+0
+0.5
+
+0.76
+
+0.3
+
+0.78
+
+Sparsity
+NDCG@10
+
+Retrieval time(seconds)
+
+0.1
+
+0.77
+
+140
+
+Sparsity
+Retrieval time
+0.6
+
+0.7
+
+h
+
+NDCG@10
+
+0.81
+
+Yelp
+
+0.8
+
+0.9
+
+1
+
+Retrieval time(seconds)
+
+0.5
+
+Sparsity
+
+Sparsity
+
+0.4
+
+0.82
+
+NDCG@10
+
+MovieLens1M
+
+0.5
+
+5
+
+100
+
+Figure 8: Item recommendation performance and retrieval
+cost of CCCF with different h values (controlling the sparsity
+of user/item component weights).
+
+4.2.4 Item Embeddings Visualization (RQ4). The key advantage of compositional codes is the stronger representational
+capability in comparison to binary codes. Therefore we visualize
+the learned item embeddings of the movielens 1M dataset where
+items are indicated as movies. We use the item representations
+learned by DCF and CCCF as the input to the visualization tool tSNE [19]. As a result, each movie is mapped into a two-dimensional
+vector. Then we can visualize each item embedding as a point on
+a two dimensional space. For items which are labelled as different
+genres, we adopt different colors on the corresponding points. Thus,
+a good visualization result is that the points of the same color are
+closer to each other. The visualization result is shown in Figure
+9. We can find that the result of DCF is unsatisfactory since the
+points belonging to different categories are mixed with each other.
+For CCCF, we can observed clear clusters of different categories.
+This again validates the advantage of much stronger representation
+power of the compositional codes over traditional binary codes.
+DCF
+
+20
+
+5
+
+0
+
+0
+
+-10
+
+-5
+-20
+
+-10
+
+0
+
+10
+
+20
+
+30
+
+-10
+
+-30
+
+-20
+
+-10
+
+0
+
+10
+
+20
+
+30
+
+CONCLUSION AND FUTURE WORK
+
+This work contributes a novel and much more effective framework
+called Compositional Coding for Collaborative Filtering (CCCF).
+The idea is to represent each user/item by multiple components
+of binary codes together with a sparse weight vector, where each
+element of the weight vector encodes the importance of the corresponding component of binary codes to the user/item. In contrast to
+standard binary codes, compositional codes significantly enriches
+the representation capability without sacrificing retrieval efficiency.
+To this end, CCCF can enjoy both the merits of effectiveness and
+efficiency in recommendation. Extensive experiments demonstrate
+that CCCF not only outperforms existing hashing-based binary
+code learning algorithms in terms of recommendation accuracy,
+but also achieves considerable speedup of retrieval efficiency over
+the state-of-the-art binary coding approaches. In future, we will
+apply compositional coding framework to other recommendation
+models, especially for the more generic feature-based models like
+Factorization Machines. In addition, we are interested in employing CCCF on the recently developed neural CF models to further
+advance the performance of item recommendation.
+
+10
+
+10
+
+-20
+-30
+
+6
+
+CCCF
+
+15
+
+RELATED WORK
+
+As a pioneer work, Locality-Sensitive Hashing has been adopted for
+generating hash codes for Google News readers based on their click
+history [4]. Following this work, random projection was applied for
+mapping learned user/item embeddings from matrix factorization
+into the Hamming space to obtain binary codes for users and items
+[7]. Similar to the idea of projection, Zhou et al. [35] generated
+binary codes from rotated continuous user/item representations by
+running Iterative Quantization. In order to derive more compact
+binary codes, the de-correlated constraint over different binary
+codes was imposed on user/item continuous representations and
+then rounded them to produce binary codes [18]. The relevant work
+could be summarized as two independent stages: relaxed learning
+of user/item representations with some specific constraints and subsequent bianry quantization. However, such two-stage approaches
+suffer from a large quantization loss according to [30], so direct
+optimization of matrix factorization with discrete constraints was
+proposed. To derive compact yet informative binary codes, the balanced and de-correlated constraints were further imposed [30]. In
+order to incorporate content information from users and items,
+content-aware matrix factorization and factorization machine with
+binary constraints was further proposed [12, 16]. For dealing with
+social information, a discrete social recommendation model was
+proposed in [15].
+Recently, the idea of compositional codes has been explored in
+the compression of feature embedding [1, 23, 24], which has become
+more and more important in order to deploy large models to small
+mobile devices. In general, they composed the embedding vectors
+using a small set of basis vectors. The selection of basis vectors
+was governed by the hash code of the original symbols. In this
+way, compositional coding approaches could maximize the storage
+efficiency by eliminating the redundancy inherent in representing
+similar symbols with independent embeddings. In contrast, this
+work employs compositional codes to address the inner product
+similarity search problem in recommender systems.
+
+40
+
+Figure 9: Visualization of Moivelens 1M dataset. Each point
+indicates one item embedding (movie). The color of a point
+indicates the genre of the movie.
+
+153
+
+Session 2B: Collaborative Filtering
+
+SIGIR ’19, July 21–25, 2019, Paris, France
+
+ACKNOWLEDGMENTS
+
+[16] Han Liu, Xiangnan He, Fuli Feng, Liqiang Nie, Rui Liu, and Hanwang Zhang.
+2018. Discrete Factorization Machines for Fast Feature-based Recommendation.
+arXiv preprint arXiv:1805.02232 (2018).
+[17] Wei Liu, Cun Mu, Sanjiv Kumar, and Shih-Fu Chang. 2014. Discrete graph hashing.
+In Advances in Neural Information Processing Systems. 3419–3427.
+[18] Xianglong Liu, Junfeng He, Cheng Deng, and Bo Lang. 2014. Collaborative
+hashing. In Proceedings of the IEEE conference on computer vision and pattern
+recognition. 2139–2146.
+[19] Laurens van der Maaten and Geoffrey Hinton. 2008. Visualizing data using t-SNE.
+Journal of machine learning research 9, Nov (2008), 2579–2605.
+[20] Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, and Lars Schmidt-Thieme.
+2009. BPR: Bayesian personalized ranking from implicit feedback. In Proceedings
+of the twenty-fifth conference on uncertainty in artificial intelligence. AUAI Press,
+452–461.
+[21] Fumin Shen, Yadong Mu, Yang Yang, Wei Liu, Li Liu, Jingkuan Song, and Heng Tao
+Shen. 2017. Classification by Retrieval: Binarizing Data and Classifier. (2017).
+[22] Fumin Shen, Chunhua Shen, Wei Liu, and Heng Tao Shen. 2015. Supervised
+discrete hashing. In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition. 37–45.
+[23] Raphael Shu and Hideki Nakayama. 2017. Compressing Word Embeddings via
+Deep Compositional Code Learning. arXiv preprint arXiv:1711.01068 (2017).
+[24] Dan Tito Svenstrup, Jonas Hansen, and Ole Winther. 2017. Hash embeddings
+for efficient word representations. In Advances in Neural Information Processing
+Systems. 4928–4936.
+[25] Matt P Wand and M Chris Jones. 1994. Kernel smoothing. Chapman and Hall/CRC.
+[26] Jun Wang, Sanjiv Kumar, and Shih-Fu Chang. 2012. Semi-supervised hashing for
+large-scale search. IEEE Transactions on Pattern Analysis and Machine Intelligence
+34, 12 (2012), 2393–2406.
+[27] Xin Wang, Steven CH Hoi, Chenghao Liu, and Martin Ester. 2017. Interactive social recommendation. In Proceedings of the 2017 ACM on Conference on Information
+and Knowledge Management. ACM, 357–366.
+[28] Xin Wang, Wei Lu, Martin Ester, Can Wang, and Chun Chen. 2016. Social
+recommendation with strong and weak ties. In Proceedings of the 25th ACM
+International on Conference on Information and Knowledge Management. ACM,
+5–14.
+[29] Eric P Xing, Michael I Jordan, Stuart J Russell, and Andrew Y Ng. 2003. Distance
+metric learning with application to clustering with side-information. In Advances
+in neural information processing systems. 521–528.
+[30] Hanwang Zhang, Fumin Shen, Wei Liu, Xiangnan He, Huanbo Luan, and TatSeng Chua. 2016. Discrete collaborative filtering. In Proceedings of the 39th
+International ACM SIGIR conference on Research and Development in Information
+Retrieval. ACM, 325–334.
+[31] Yan Zhang, Defu Lian, and Guowu Yang. 2017. Discrete Personalized Ranking
+for Fast Collaborative Filtering from Implicit Feedback.. In AAAI. 1669–1675.
+[32] Yongfeng Zhang, Min Zhang, Yiqun Liu, and Shaoping Ma. 2013. Improve collaborative filtering through bordered block diagonal form matrices. In Proceedings
+of the 36th international ACM SIGIR conference on Research and development in
+information retrieval. ACM, 313–322.
+[33] Zhiwei Zhang, Qifan Wang, Lingyun Ruan, and Luo Si. 2014. Preference preserving hashing for efficient recommendation. In Proceedings of the 37th international
+ACM SIGIR conference on Research & development in information retrieval. ACM,
+183–192.
+[34] Huan Zhao, Quanming Yao, James T Kwok, and Dik Lun Lee. 2017. Collaborative Filtering with Social Local Models. In Proceedings of the 16th International
+Conference on Data Mining. 645–654.
+[35] Ke Zhou and Hongyuan Zha. 2012. Learning binary codes for collaborative
+filtering. In Proceedings of the 18th ACM SIGKDD international conference on
+Knowledge discovery and data mining. ACM, 498–506.
+
+This research is supported by the National Research Foundation
+Singapore under its AI Singapore Programme [AISG-RP-2018-001].
+Xin Wang is supported by China Postdoctoral Science Foundation
+No. BX201700136.
+
+REFERENCES
+[1] Ting Chen, Martin Renqiang Min, and Yizhou Sun. 2018. Learning K-way Ddimensional Discrete Codes for Compact Embedding Representations. arXiv
+preprint arXiv:1806.09464 (2018).
+[2] Zhiyong Cheng, Ying Ding, Lei Zhu, and Mohan Kankanhalli. 2018. Aspect-aware
+latent factor model: Rating prediction with ratings and reviews. In Proceedings of
+the 2018 World Wide Web Conference on World Wide Web. International World
+Wide Web Conferences Steering Committee, 639–648.
+[3] Zhiyong Cheng, Jialie Shen, Lei Zhu, Mohan S Kankanhalli, and Liqiang Nie.
+2017. Exploiting Music Play Sequence for Music Recommendation.. In IJCAI,
+Vol. 17. 3654–3660.
+[4] Abhinandan S Das, Mayur Datar, Ashutosh Garg, and Shyam Rajaram. 2007.
+Google news personalization: scalable online collaborative filtering. In Proceedings of the 16th international conference on World Wide Web. ACM, 271–280.
+[5] Johan Håstad. 2001. Some optimal inapproximability results. Journal of the ACM
+(JACM) 48, 4 (2001), 798–859.
+[6] Kalervo Järvelin and Jaana Kekäläinen. 2000. IR evaluation methods for retrieving
+highly relevant documents. In Proceedings of the 23rd annual international ACM
+SIGIR conference on Research and development in information retrieval. ACM,
+41–48.
+[7] Alexandros Karatzoglou, Alex Smola, and Markus Weimer. 2010. Collaborative
+filtering on a budget. In Proceedings of the Thirteenth International Conference on
+Artificial Intelligence and Statistics. 389–396.
+[8] Yehuda Koren, Robert Bell, and Chris Volinsky. 2009. Matrix factorization techniques for recommender systems. Computer 8 (2009), 30–37.
+[9] Joonseok Lee, Samy Bengio, Seungyeon Kim, Guy Lebanon, and Yoram Singer.
+2014. Local collaborative ranking. In Proceedings of the 23rd international conference on World wide web. ACM, 85–96.
+[10] Joonseok Lee, Seungyeon Kim, Guy Lebanon, and Yoram Singer. 2013. Local
+low-rank matrix approximation. In International Conference on Machine Learning.
+82–90.
+[11] Jing Li, Pengjie Ren, Zhumin Chen, Zhaochun Ren, Tao Lian, and Jun Ma. 2017.
+Neural attentive session-based recommendation. In Proceedings of the 2017 ACM
+on Conference on Information and Knowledge Management. ACM, 1419–1428.
+[12] Defu Lian, Rui Liu, Yong Ge, Kai Zheng, Xing Xie, and Longbing Cao. 2017.
+Discrete Content-aware Matrix Factorization. In Proceedings of the 23rd ACM
+SIGKDD International Conference on Knowledge Discovery and Data Mining. ACM,
+325–334.
+[13] Chenghao Liu, Steven CH Hoi, Peilin Zhao, Jianling Sun, and Ee-Peng Lim.
+2016. Online adaptive passive-aggressive methods for non-negative matrix
+factorization and its applications. In Proceedings of the 25th ACM International on
+Conference on Information and Knowledge Management. ACM, 1161–1170.
+[14] Chenghao Liu, Tao Jin, Steven CH Hoi, Peilin Zhao, and Jianling Sun. 2017.
+Collaborative topic regression for online recommender systems: an online and
+Bayesian approach. Machine Learning 106, 5 (2017), 651–670.
+[15] Chenghao Liu, Xin Wang, Tao Lu, Wenwu Zhu, Jianling Sun, and Steven CH
+Hoi. 2019. Discrete Social Recommendation. In Thirty-Third AAAI Conference on
+Artificial Intelligence.
+
+154
+
+

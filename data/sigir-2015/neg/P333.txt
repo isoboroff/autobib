@@ -1,0 +1,1770 @@
+Efficient and Scalable MetaFeature-based Document
+Classification using Massively Parallel Computing
+Sérgio Canuto, and Marcos André
+Gonçalves
+
+Wisllay Santos, Thierson Rosa, and
+Wellington Martins
+
+Dept. of Computer Science, Federal University
+of Minas Gerais
+Belo Horizonte, Brazil
+
+Instituto de Informática, Universidade Federal de
+Goiás
+Goiânia, Brazil
+
+wisllaysantos@inf.ufg.br,
+thierson@inf.ufg.br,
+wellington@inf.ufg.br
+
+sergiodaniel@dcc.ufmg.br,
+mgoncalv@dcc.ufmg.br
+
+ABSTRACT
+
+The processing of large amounts of data efficiently is critical for Information Retrieval (IR) and, as this amount of
+data grows, storing, indexing and searching costs rise up altogether with penalties in response time. Parallel computing
+may represent an efficient solution for enhancing modern IR
+systems but the requirements of designing new parallel algorithms for modern platforms such as manycore Graphical
+Processing Units (GPUs) have hampered the exploitation of
+this opportunity by the IR community.
+In particular, similarity search is at the heart of many IR
+systems. It scores queries against documents, presenting the
+highest scoring documents to the user in ranked order. The
+kNN algorithm is commonly used for this function, retrieving the most similar k documents for each query. Another
+very common application domain for kNN is Automatic Document Classification (ADC). In this case, the kNN algorithm
+is used to automatically map (classify) a new document d to
+a set of predefined classes given a set of labeled (training)
+documents, based on the similarities between d and each of
+the training docoments. kNN has been shown to produce
+competitive results in several datasets [17]. The speedup of
+this type of algorithm, using some efficient parallel strategies, mainly in applications in which it is repetitively applied
+as the core of other applications, opens huge opportunities.
+One recent application which uses kNN intensively is the
+generation of meta-level features (or simply meta-features)
+for ADC [24]. Such meta-features capture local and global
+information about the likelihood of a document to belong
+to a class, which can then be exploited by a different classifier (e.g. SVM). More specifically, meta-features capture:
+(i) the similarity value between a test example and the nearest neighbor in each considered class, and (2) the similarity
+value of the test example with the classes’ centroids 1 . As
+shown in [24] and in our experiments, the use of metafeatures can substantially improve the effectiveness of ADC
+algorithms.
+However, the generation of meta-features is very costly in
+terms of both, memory consumption and runtime. In order
+to generate them, there is the need to constantly call the
+kNN algorithm. kNN, however, is known to produce poor
+performance (execution time) in classification tasks in comparison to other (non-lazy) supervised methods, normally
+being not the best choice to deal with on-the-fly classifica-
+
+The unprecedented growth of available data nowadays has
+stimulated the development of new methods for organizing
+and extracting useful knowledge from this immense amount
+of data. Automatic Document Classification (ADC) is one
+of such methods, that uses machine learning techniques to
+build models capable of automatically associating documents
+to well-defined semantic classes. ADC is the basis of many
+important applications such as language identification, sentiment analysis, recommender systems, spam filtering, among
+others. Recently, the use of meta-features has been shown to
+substantially improve the effectiveness of ADC algorithms.
+In particular, the use of meta-features that make a combined use of local information (through kNN-based features)
+and global information (through category centroids) has produced promising results. However, the generation of these
+meta-features is very costly in terms of both, memory consumption and runtime since there is the need to constantly
+call the kNN algorithm. We take advantage of the current
+manycore GPU architecture and present a massively parallel version of the kNN algorithm for highly dimensional and
+sparse datasets (which is the case for ADC). Our experimental results show that we can obtain speedup gains of up
+to 15x while reducing memory consumption in more than
+5000x when compared to a state-of-the-art parallel baseline. This opens up the possibility of applying meta-features
+based classification in large collections of documents, that
+would otherwise take too much time or require the use of an
+expensive computational platform.
+
+Keywords
+Document Classification; Meta-features; Parallelism
+
+1.
+
+INTRODUCTION
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than
+ACM must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from Permissions@acm.org.
+SIGIR ’15 August 09 - 13, 2015, Santiago, Chile
+Copyright 2015 ACM 978-1-4503-3621-5/15/08 ...$15.00.
+DOI: http://dx.doi.org/10.1145/2766462.2767743.
+
+1
+Notice that this also has to be applied to all training documents in an offline procedure.
+
+333
+
+tions. Classification using kNN-based meta-features inherits
+this poor performance, since we need to generate meta-level
+features for both, all training, and each new test sample before actual classification. For textual datasets (with large
+vocabularies), the performance problem is hardened, since
+the kNN algorithm will have to run on high dimensional
+data. In this scenario, kNN often requires large portions
+of memory to represent all the training data and intensive
+computation to calculate the similarity between points. In
+fact, as we shall see the generation of meta-features is not
+feasible using previous meta-feature generators [7, 24] for
+the larger datasets we experimented with.
+In this paper we present a new GPU-based implementation of kNN specially designed for high-dimensional and
+sparse datasets (which is the case for ADC), allowing a very
+fast and much more scalable meta-feature generation which
+allows one to apply this technique in large collections much
+faster. Some of the most interesting characteristics of our approach, compared to other state-of-the-art GPU-based proposals, include:
+
+Meta-features derived from ensembles exploit the probability distribution over all classes generated by each of the
+individual classifiers composing the ensemble [22]. In [3]
+other ensemble-based meta-features were also used, including: the entropies of the class probability distributions and
+the maximum probability returned by each classifier. This
+scheme was found to perform better than using only probability distributions.
+Clustering techniques may also be used to derive metafeatures. In this case, the feature space is augmented using
+clusters derived from a previous clustering step considering
+both the labeled and unlabeled data [16, 11]. The idea is
+that clusters represent higher level “concepts” in the feature
+space, and the features derived from the clusters indicate
+the similarity of each example to these concepts. In [16]
+the largest n clusters are chosen as representatives of the
+major concepts. Each cluster c contributes with a set o
+meta-features like, for instance, binary feature indicating if
+c is the closest of the n clusters to the example, the similarity of the example to the cluster’s centroid, among others.
+In [11] the number of clusters is chosen to be equal to the
+predefined number of classes and each cluster corresponds
+to an additional meta-feature.
+Recently, [7] reported good results by designing metafeatures that make a combined use of local information (through
+kNN-based features) and global information (through category centroids) in the training set. Despite the fact that
+these meta-features are not created based on an ensemble of
+classifiers, they differ from the previously presented metafeatures derived from clusters because they explicitly capture information from the labeled set.
+Although the kNN algorithm can be applied broadly, it
+has some shortcomings. For large datasets (n) and high
+dimensional space (d), its complexity O(nd) can easily become prohibitive. Moreover, if m successive queries are to
+be performed, the complexity further increases to O(mnd).
+Recently, some proposals have been presented to accelerate
+the kNN algorithm via a highly mutithreaded GPU-based
+approach. The first, and most cited, GPU-based kNN implementation was proposed by Garcia et al. [5]. They used
+the brute force approach and reported speedups of up to two
+orders of magnitude when compared to a brute force CPUbased implementation. Their implementation assumes that
+multiple queries are performed and computes and stores a
+complete distance matrix, what makes it impracticable for
+large data (over 65,536 documents).
+Following Garcia’s et al. work, Kuang and Zhao [10] implemented their own optimized matrix operations for calculating the distances, and used radix sort to find the top-k
+elements. Liang et al. [14] took advantage of CUDA Streams
+to overlap computation and communication (CPU/GPU)
+when dealing with several queries, and thus decrease the
+GPU memory requirements. The distances were computed
+in blocks and later merged first locally and then globally to
+find the top-k elements. However, such works can still be
+considered brute-force. Sismanis et al. [20] concentrated on
+the sorting phase of the brute-force kNN and provided an
+extensive comparison among parallel truncated sorts. They
+conclude that the truncated biotonic sort (TBiS) produces
+the best results.
+Our proposal differs from the above mentioned work in
+many aspects. First, it exploits a very efficient GPU implementation of inverted indexes which supports an exact kNN
+
+• most solutions use a brute-force approach (i.e., compare the query document to all training documents)
+which demands too much memory while we exploit inverted indexes along with an efficient implementation
+to cope with GPU memory limitations;
+• in order to scale, some solutions sacrifice effectiveness
+using an approximated kNN solution (e.g. localitysensitive hashing - LSH) while our proposal is an exact kNN solution which exploits state-of-the-art GPU
+sorting methods;
+• most proposals achieve good results only when considering many queries (i.e., multiple document classification) in order to produce good speedups while our
+solution obtains improvements even when dealing with
+a single query (document); we achieve this by an effective load balacing approach within the GPU;
+• some solutions require a multi-GPU approach to deal
+with large datasets while ours deals with large datasets
+using a single GPU.
+Our experimental results show that we can obtain speedup
+gains of up to 140x and 15x while reducing memory consumption in more than 8000x and 5000x when compared to
+a standard sequential implementation and to a state-of-theart parallel baseline, respectively.
+This paper is organized as follows. Section 2 covers related work. Section 3 introduces the use of meta-feature
+in ADC. Section 4 provides a brief introduction to parallelism in GPU. Section 5 describes our GPU-based implementation, specially designed for highly dimensional, sparse
+data. Section 6 presents an analysis of the complexity of
+the proposed solution. Section 7 presents our experimental
+evaluation while Section 8 concludes the paper.
+
+2.
+
+RELATED WORK
+
+Several meta-features have been proposed to improve the
+effectiveness of machine learning methods. They can be
+based on ensemble of classifiers [3, 22], derived from clustering methods [11, 16] or from the instance-based kNN
+method [7, 24].
+
+334
+
+solution without relying in brute-force. This also allows our
+solution to save a lot of memory space since the inverted
+index corresponds to a sparse representation of the data. In
+the distance calculation step, we resort to a smart load balancing among threads to increase the parallelism. And in
+the sorting step, we exploit a GPU-based sorting procedure,
+which was shown to be superior to other partial sorting algorithms[20], in combination with a CPU merge operation
+based on a priority queue.
+
+3.
+
+getting faster, but instead are getting wider, with an ever increasing number of cores. This has forced a renewed interest
+in parallelism as the only way to increase performance.
+The high computational power and affordability of GPUs
+has led to a growing number of researchers making use of
+GPUs to handle massive amounts of data. While multicore
+CPUs are optimized for single-threaded performance, GPUs
+are optimized for throughput and a massive multi-threaded
+parallelism. As a result, the GPUs deliver much better energy efficiency and achieves higher peak performance for
+throughput workloads. However, GPUs have a different architecture and memory organization and to fully exploit its
+capabilities it is necessary considerable parallelism (tens of
+thousands of threads) and an adequate use of its hardware
+resources. This imposes some constraints in terms of designing appropriate algorithms, requiring the design of novel
+solutions and new implementation approaches. However, a
+few research groups and companies have faced this challenge
+with promising results in Database Scalability, Document
+Clustering, Learning to Rank, Big Data Analytics and Interactive Visualization [1, 21, 19, 15, 8].
+The GPU consists of a M-SIMD machine, that is, a Multiple SIMD (Single Instruction Multiple Data) processor.
+Each SIMD unit is known as a streaming multiprocessor
+(SM) and contains streaming processor (SP) cores. At any
+given clock cycle, each SP executes the same instruction, but
+operates on different data. The GPU supports thousands of
+light-weight concurrent threads and, unlike the CPU threads,
+the overhead of creation and switching is negligible. The
+threads on each SM are organized into thread groups that
+share computation resources such as registers. A thread
+group is divided into multiple schedule units, called warps,
+that are dynamically scheduled on the SM. Because of the
+SIMD nature of the SP’s execution units, if threads in a
+schedule unit must perform different operations, such as going through branches, these operations will be executed serially as opposed to in parallel. Additionally, if a thread stalls
+on a memory operation, the entire warp will be stalled until
+the memory access is done. In this case the SM selects another ready warp and switches to that one. The GPU global
+memory is typically measured in gigabytes of capacity. It is
+an off-chip memory and has both a high bandwidth and a
+high access latency. To hide the high latency of this memory, it is important to have more threads than the number
+of SPs and to have threads in a warp accessing consecutive
+memory addresses that can be easily coalesced. The GPU
+also provides a fast on-chip shared memory which is accessible by all SPs of a SM. The size of this memory is small
+but it has a low latency and it can be used as a softwarecontrolled cache. Moving data from the CPU to the GPU
+and vice versa is done through a PCIExpress connection.
+The GPU programming model requires that part of the
+application runs on the CPU while the computationallyintensive part is accelerated by the GPU. The programmer
+has to modify his application to take the compute-intensive
+kernels and map them to the GPU. A GPU program exposes
+parallelism through a data-parallel SPMD (Single Program
+Multiple Data) kernel function. During implementation, the
+programmer can configure the number of threads to be used.
+Threads execute data parallel computations of the kernel
+and are organized in groups called thread blocks, which in
+turn are organized into a grid structure. When a kernel is
+launched, the blocks within a grid are distributed on idle
+
+USE OF META-FEATURES FOR ADC
+
+In here, we formally introduce the meta-features whose
+kNN-based calculation we intend to speed up and scale with
+our proposed massively parallel approach.
+Let X and C denote the input (feature) and output (class)
+spaces, respectively. Let Dtrain = {(xi , ci ) ∈ X × C}|n
+i=1 be
+the training set. Recall that the main goal of supervised
+classification is to learn a mapping function h : X 7→ C which
+is general enough to accurately classify examples x0 6∈ Dtrain .
+The kNN-based meta-level features proposed in [7], are
+designed to replace the original input space X with a new
+informative and compact input space M. Therefore, each
+vector of meta-features mf ∈ M is expressed as the concatenation of the sub-vectors below, which are defined for each
+example xf ∈ X and category cj ∈ C for j = 1, 2, . . . , |C| as:
+• ~v~xcos
+= [cos(~
+xij , x~f )]: A k-dimensional vector produced
+f
+by considering the k nearest neighbors of class cj to
+the target vector xf , i.e., , ~
+xij is the ith (i ≤ k) nearest
+neighbor to ~
+xf , and cos(~
+xij , x~f ) is the cosine similarity
+between them. Thus, k meta-features are generated to
+represent xf .
+• ~v~xLf1 = [d1 (~
+xij , x~f )]: A k-dimensional vector whose elements d1 (~
+xij , ~
+xf ) denote the L1 distance between ~
+xf
+and the ith nearest class cj neighbor of ~
+xf (i.e.,
+d1 (~
+xij , ~
+xf ) = ||~
+xij − ~
+xf ||1 ).
+xij , x~f )]: A k-dimensional vector whose el• ~vxL~f2 = [d2 (~
+ements d2 (~
+xij , x~f ) denote the L2 distance between ~
+xf
+and the ith nearest class cj neighbor of x~f (i.e.,
+d2 (~
+xij , x~f ) = ||~
+xij − x~f ||2 ).
+• ~vxcent
+= [d2 (~
+xj , x~f ), cos(~
+xj , x~f )]: A 2-dimensional vec~f
+tor where ~
+xj is the cj centroid (i.e., vector average of
+all training examples of the class cj ).
+Considering k neighbors, the number of features in vector
+xf is (3k + 2) per category, and the total of (3k + 2)|C|
+for all categories. The size of this meta-level feature set
+is much smaller than that typically found in ADC tasks,
+while explicitly capturing class discriminative information
+from the labeled set.
+
+4.
+
+PARALLELISM AND THE GPU
+
+In the last few years, the focus on processor architectures
+has moved from increasing clock rate to increasing parallelism. Rather than increasing the speed of its individual
+processor cores, traditional CPUs are now virtually all multicore processors. In a similar fashion, manycore architectures
+like GPUs have concentrated on using simpler and slower
+cores, but in much larger counts, in the order of thousands
+of cores. The general perception is that processors are not
+
+335
+
+SMs. Threads of a block are divided into warps, the schedule unit used by the SMs, leaving for the GPU to decide
+in which order and when to execute each warp. Threads
+that belong to different blocks cannot communicate explicitly and have to rely on the global memory to share their
+results. Threads within a thread block are executed by the
+SPs of a single SM and can communicate through the SM
+shared memory. Furthermore, each thread inside a block
+has its own registers and private local memory and uses a
+global thread block index, and a local thread index within a
+thread block, to uniquely identify its data.
+
+Algorithm 1: CreateInvetedIndex(E)
+input : term-document pairs in E[ 0 . . |E| − 1 ].
+output: df , index, norms, invertedIndex.
+1
+2
+3
+4
+5
+6
+7
+
+5.
+
+8
+
+GPU-BASED GENERATION OF METAFEATURES
+
+9
+10
+
+The proposed parallel implementation, called GPU-based
+Textual kNN (GT-kNN), greatly improves the k nearest
+neighbors search in textual datasets. The solution efficiently
+implements an inverted index in the GPU, by using a parallel counting operation followed by a parallel prefix-sum calculation, taking advantage of Zipf’s law, which states that
+in a textual corpus, few terms are common, while many of
+them are rare. This makes the inverted index a good choice
+for saving space and avoiding unnecessary calculations. At
+query time, this inverted index is used to quickly find the
+documents sharing terms with the query document. This
+is made by constructing a query index which is used for a
+load balancing strategy to evenly distribute the distance calculations among the GPU’s threads. Finally, the k nearest
+neighbors are determined through the use of a truncated
+bitonic sort to avoid sorting all computed distances. Next
+we present a detailed description of these steps.
+
+5.1
+
+11
+
+12
+13
+14
+
+array of integers df [ 0 . . |V| − 1 ] // document-frequency
+array, initialized with zeros.
+array of integers index[ 0 . . |V| − 1 ].
+array of floats norms[ 0 . . |Dtrain − 1| ].
+invertedIndex[ 0 . . |E| − 1 ] // the inverted index
+Count the occurrences of each term in parallel on the
+input and accumulates in df .
+Perform an exclusive parallel prefix sum on df and stores
+the result in index.
+Access in parallel the pairs in E, with each processor
+performing the following tasks:
+begin
+Compute the tf-idf value of each pair.
+Accumulate the square of the tf-idf value of a pair
+(t, d) in norms[d].
+Store in invertedIndex the entries corresponding
+to pairs in E, according to index.
+end
+Compute in parallel the square root of the values in array
+norms.
+Return the arrays: count, index, norms and
+invertedIndex.
+
+for a five documents collection where only five terms are
+used. If we take t2 as an example, the index array indicates
+that its inverted document list (d2 , d4 ) starts at position 3 of
+the invertedindex array and finishes at position 4 (5 minus
+1).
+
+Creating the Inverted Index
+
+The inverted index is created in the GPU memory, assuming the training dataset fits in memory and is static. Let V
+be the vocabulary of the training dataset, that is the set of
+distinct terms of the training set. The input data is the set
+E of distinct term-documents (t, d), pairs occurring in the
+original training dataset, with t ∈ V and d ∈ Dtrain . Each
+pair (t, d) ∈ E is initially associated with a term frequency
+tf , which is the number of times the term t occurs in the
+document d. An array of size |E| is used to store the inverted
+index. Once the set E has been moved to the GPU memory,
+each pair in it is examined in parallel, so that each time a
+term is visited the number of documents where it appears
+(document frequency - df ) is incremented and stored in the
+array df of size |V|. A parallel prefix-sum is executed, using
+the CUDPP library [18], on the df array by mapping each element to the sum of all terms before it and storing the results
+in the index array. Thus, each element of the index array
+points to the position of the corresponding first element in
+the invertedIndex, where all (t, d) pairs will be stored ordered by term. Finally, the pairs (t, d) are processed in parallel and the frequency-inverse document frequency tf -idf (t, d)
+for each pair is computed and included together with the
+documents identification in the invertedIndex array, using
+the pointers provided by the index array. Also during this
+parallel processing, the value of the norm for each training
+document, which is used in the calculus of the cosine or Euclidean distance, is computed and stored in the norms array.
+Algorithm 1 depicts the inverted index creation process.
+Figure 1 illustrates each step of the inverted index creation
+
+d1
+
+t1
+
+t3
+
+d2
+
+t2
+
+t5
+
+d3
+
+t1
+
+d4
+
+t2
+
+d5
+
+t1
+
+t4
+
+E (entries)
+7
+8
+2 3 4
+5
+6
+9
+0
+1
+d1 d1 d1 d2 d2 d3 d4 d5 d5 d5
+t1 t3 t4 t2 t5 t1 t2 t1 t3 t5
+Count number of terms
+
+2
+0
+3 4
+1
+t1 t2 t3 t4 t5
+3
+1 2
+2
+2
+df
+t3
+
+t5
+
+Document Collection
+
+Compute prefix sum
+
+2
+0
+3 4
+1
+t1 t2 t3 t4 t5
+0
+7 8
+3
+5
+index
+0
+t1
+
+d1
+
+2
+
+1
+t1
+
+d3
+
+t1
+
+d5
+
+3
+t2
+
+d2
+
+4
+t2
+
+d4
+
+Point to 1st positions
+7
+8
+6
+9
+t3 t4 t5 t5
+d
+d2 d5
+d1 d5
+1
+
+5
+t3
+
+invertedIndex
+
+Figure 1: Creating the inverted index
+
+5.2
+
+Calculating the distances
+
+Once the inverted index has been created, it is now possible to calculate the distances between a given query document q and the documents in Dtrain . The distances computation can take advantage of the inverted index model,
+because only the distances between query q and those documents in Dtrain that have terms in common with q have to
+be computed. These documents correspond to the elements
+of the invertedIndex pointed to by the entries of the index
+array corresponding to the terms occurring in the query q.
+The obvious solution to compute the distances is to distribute the terms of query q evenly among the processors and
+let each processor p access the inverted lists corresponding
+to terms allocated to it. However, the distribution of terms
+
+336
+
+in documents of text collections is known to follow approximately the Zipf Law. This means that few terms occur in
+large amount of documents and most of terms occur in only
+few documents. Consequently, the sizes of the inverted list
+also vary according to te Zipf Law, thus distributing the
+work load according to the terms of q could cause a great
+imbalance of the work among the processors.
+In this paper besides using an inverted index to boost the
+computation of the distances, we also propose a load balance
+method to distribute the documents evenly among the processors so that each processor computes approximately the
+same number of distances. In order to facilitate the explanation of this method, suppose that we concatenate all the
+inverted lists corresponding to terms in q in a logical vector
+Eq = [ 0 . . |Eq | − 1 ], where |Eq | is the sum of the sizes of all
+inverted lists of terms in q. Considering the example in Fig.
+1 and supposing that q is composed by the terms t1 , t3 and
+t4 , the logical vector Eq would be formed by the following
+pairs of the inverted index: Eq = [(t1 , d1 ), (t1 , d3 ), (t1 , d5 ),
+(t3 , d1 ), (t3 , d5 ), (t4 , d1 )] and |Eq | equals to six.
+Given a set of processors P = {p0 , · · · p|P|−1 }, the load
+balance method should allocate elements of Eq in intervals of approximately the same size, that is, each processor pi ∈ P should process elements of Eq in the interval
+|E |
+|E |
+[id |P|q e, min((i + 1)d |P|q e − 1, |Eq | − 1)]. Consider de example stated above, and suppose that the set of processors
+is P = {p0 , p1 , p2 }. Thus elements of Eq with indices in the
+interval [0, 1] would be assigned to p0 , indices in [2, 3] would
+be processed by p1 and indices in [4, 5] would be processed
+by p2 .
+Since each processor knows the interval of the indices of
+the logical vector Eq it has to process, all that is necessary to
+execute the load balancing is a mapping of the logical indices
+of Eq to the appropriate indices in the inverted index (array invertedIndex). In the case of the example associated
+to Fig. 1, the following mappings between logical indices
+and indices of the invertedIndex array must be performed:
+0 → 0, 1 → 1, 2 → 2, 3 → 5, 4 → 6 and 5 → 7. Each
+processor executes the mapping for the indices in the interval corresponding to it and finds the corresponding elements
+in the invertedIndex array for which it has to compute the
+distances to the query.
+Let Vq ⊂ V be the vocabulary of the query document
+d. The mapping proposed in this paper uses three auxiliary arrays: dfq [ 0 . . |Vq | − 1 ], startq [ 0 . . |Vq | − 1 ]] and
+indexq [ 0 . . |Vq | − 1 ]. The arrays dfq and startq are obtained
+together by copying in parallel df [ti ] to dfq [ti ] and index[ti ]
+to startq [ti ], respectively, for each term ti in the query q.
+Once the dfq is obtained, an inclusive parallel prefix sum on
+dfq is performed and the results are stored in indexq .
+Algorithm 2 shows the pseudo-code for the parallel computation of the distances between documents in the training
+set and the query document. In lines 4-7 the arrays dfq and
+startq are obtained. In line 8 the array indexq is obtained
+by applying a parallel prefix sum on array dfq . Next, each
+processor executes a mapping of each position x in the interval of indices of Eq associated to it to the appropriate
+position of the invertedIndex. This mapping is described in
+lines 10-17 of the algorithm. Then, the mapped entries of
+the inverted index are used to compute the distances between each document associated with these entries and the
+query.
+Figure 2 illustrates each step of Algorithm 2 for a query
+
+Algorithm 2: DistanceCalculation(invertedIndex, q)
+input : invertedIndex, df , index, query q[ 0 . . |Vq | − 1 ].
+output: distance array dist[ 0 . . |Dtrain | − 1 ] initialized
+according to the distance function used.
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+
+11
+12
+13
+14
+15
+16
+17
+18
+
+19
+20
+
+array of integers dfq [ 0 . . |Vq | − 1 ] initialized with zeros
+array of integers indexq [ 0 . . |Vq | − 1 ]
+array of integers startq [ 0 . . |Vq | − 1 ]
+for each term ti ∈ q, in parallel do
+dfq [i] = df [ti ];
+startq [i] = index[ti ];
+end
+Perform an inclusive parallel prefix sum on dfq and stores
+the results in indexq
+foreach processor pi ∈ P do
+|Eq |
+|Eq |
+for x ∈ [id |P|
+e, min((i + 1)d |P|
+e − 1, |Eq | − 1)] do
+// Map position x to the correct position
+indInvP os of the invertedIndex
+pos = min(i : indexq [i] > x);
+if pos = 0 then
+p = 0; of f set = x;
+else
+p = indexq [pos − 1]; of f set = x − p;
+end
+indInvP os = startq [pos] + of f set
+uses q[pos] and invertedIndex[indInvP os] in the
+partial computation of the distance between q and
+the document associated to
+invertedIndex[indInvP os]
+end
+end
+
+q
+2
+0
+3 4
+1
+t1 t2 t3 t4 t5
+0
+7 8
+3
+5
+index
+0
+
+t1
+
+0
+
+t3
+
+2
+
+1
+5
+
+t4
+
+7
+startq
+
+t1
+
+t3
+
+t4
+query
+
+Parallel copy
+
+2
+0
+3 4
+1
+t1 t2 t3 t4 t5
+3
+1 2
+2
+2
+df
+
+2
+0
+1
+t1 t3 t4
+3
+2
+1
+dfq
+
+2
+0
+1
+t1 t3 t4
+3
+5
+6
+indexq
+
+2 3
+5
+0
+4
+1
+t1 t1 t1 t3 t3 t4
+Logical array
+d1 d3 d5 d1 d5 d1 Eq
+7
+8
+2 3
+5
+6
+9
+0
+4
+1
+t1 t1 t1 t2 t2 t3 t3 t4 t5 t5
+d1 d3 d5 d2 d4 d1 d5 d1 d2 d5
+invertedIndex
+
+Figure 2: Example of the execution of Algorithm 2 for a
+query with three terms.
+
+containing three terms, t1 , t3 and t4 , using the same collection presented in the example of Figure 1. Initially, the
+arrays dfq and startq are obtained by copying in parallel entries respectively from arrays df and index, corresponding to
+the three query terms. Next a parallel prefix sum is applied
+to array dfq and the indexq array is obtained. Finally the
+Figure shows the mapping of each position of the logical array Eq into the corresponding positions of the invertedIndex
+array.
+
+5.3
+
+Finding the k Nearest Neighbors
+With the distances computed, it is necessary to obtain
+the k closest documents. This can be accomplished by mak-
+
+337
+
+ing use of a partial sorting algorithm on the array containing the distances, which is of size |Dtrain |. For this, we implemented a parallel version of the Truncated Bitonic Sort
+(TBiS), which was shown to be superior to other partial
+sorting algorithms in this context [20]. One advantage of the
+parallel TBiS is data independence. At each step, the algorithm distributes elements equally among the GPU’s threads
+avoiding synchronizations as well as memory access conflicts.
+Although the partial bitonic sort is O(|Dtrain | log2 k), worse
+than the best known algorithm which is O(|Dtrain | log k), for
+a small k the ratio of log k becomes almost negligible. In the
+case of ADC using kNN, the value of k is usually not greater
+than 50. Our parallel TBiS implementation also uses a reduction strategy, allowing each GPU block to act independently from each other on a partition of array containing the
+computed distances. Results are then merged in the CPU
+using a priority queue.
+
+6.
+
+document frequency of this term is
+
+|E|
+P|V| 1
+
+≈
+
+|E|
+.
+ln |V|
+
+This
+
+i=1 i
+
+value represents an upper bound for lengths of the document frequency of each term in q. Thus, in the worst case,
+we have that |Eq | ≈ |Vq | ln|E|
+. According to Heaps Law, the
+|V|
+size of vocabulary is |V| = k|W |β , where k is a constant,
+usually in the range 10-100, W is the set formed by all occurrences of all terms in the collection, and β is another
+constant in the range 0.4-0.6. The size of W can be taken
+as an upper bound for the size of the input pairs E. Thus
+|
+|W |
+) = O(|Vq |).
+) = O(|Vq | |W |β|Wlog
+|Eq | = O(|Vq | log (k|W
+|β )
+β k
+β
+We conclude that and each processor pi executes the map|Vq |
+ping of O( |P|
+) positions.
+Now we analyze the time to compute the mapping of a single position (lines 11-17 of Algorithm 2). The computing of
+variable pos in line 11 can be performed in time O(log |Vq |)
+because values in array dfq are disposed in ascending order and a binary search can be used to find the minimum
+index required. All the remaining operations (lines 12-18)
+are computed in constant time (O(1)). The processing of
+each mapped pair of the inverted index, as part of the computation of the distance between q and the corresponding
+document in the pair, is also done in constant time. Thus,
+the execution time of one iteration of inner loop (lines 10-18)
+is O(log |Vq |) + O(1) = O(log |Vq |). Finally the partial sort
+of the distances is computed in time O(|Dtrain | log k). Consequently, the overall execution time of Algorithm 2 corre|Vq |
+|Vq |
+|Vq |
+) + O( |P|
+log |Vq |) + O( |P|
+)(O(log |Vq |)+
+sponds to O( |P|
+
+ANALYSIS OF THE SOLUTION
+
+In this section we analyze the amount of time and memory used to construct the index and to compute the k nearest neighbors for a given query document q. The first step
+of the construction of the inverted index is to obtain the
+df array (line 5 of the Algorithm 1). During this step,
+the set of input pairs E is read in parallel by all processors in P and for each term the corresponding document
+|E|
+). The parcounter is incremented. This takes time O( |P|
+allel prefix sum algorithm applied to array df to obtain the
+|V|
+index takes time O( |P|
+log |V|) [18]. Next, the computation of tf -idf , the computation of accumulated square of
+tf -idf (to compose the norms of the documents), and the
+insertion of pairs in the invertedIndex (lines 9-11) are done
+by accessing elements of E in parallel, thus taking time
+|E|
+). Finally the square roots of the norms are computed
+O( |P|
+
+|V |
+
+q
+O(|Dtrain | log k) = O( |P|
+)(O(log |Vq |) + O(|Dtrain | log k).
+The work of Garcia et al.[5] processes many query documents in parallel, however, each query q is compared to every
+document in the training set. Besides, the query and each
+document are represented as arrays of sizes |V|. Thus, the
+processing time of query q is O(|V||Dtrain |)+O(|Dtrain | log k).
+When Comparing the speedup of our solution over the
+Garcia’s algorithm we do not take into consideration the
+time to sort the array of distances, since this task ads the
+same computing time in both solution. As consequence the
+O(|V||Dtrain |)
+. If we take |V| as upspeedup achieved is
+|Vq |
+
+train |
+in time O( |D|P|
+). The total time of the index construction
+
+|E|
+|V|
+|E|
+train |
+is O( |P|
+) + O( |P|
+log |V|) + O( |P|
+) + O( |D|P|
+). Since in real
+text collections |E| > |Dtrain | > |V|, we conclude that the
+|E|
+time complexity of the index construction is O( |P|
+).
+The computation of the distances between each training
+document and the query document q starts by obtaining the
+arrays dfq and startq (lines 4-7 of Algorithm 2). This step
+is executed in parallel by all processors in P. Thus the two
+|Vq |
+). The computation of
+arrays are computed in time O( |P|
+array indexq is the result of the use of the parallel prefix
+|Vq |
+sum on array dfq , thus it is done in time O( |P|
+log |Vq |).
+
+O( |P| )(O(log |Vq |)
+
+per bound for |Vq |, we have that the speedup obtained is:
+speedup = O(
+
+|Dtrain ||P|
+)
+log |V|
+
+If we consider that number of processors is constant (in
+one GPU), and that, according to Heaps Law the number
+of new words in vocabulary V does not grow much as the
+collection size increases, we have that, the speedup increases
+proportionally to the number of documents in the collection.
+Considering memory space requirements, the proposed solution consumes 2|E| units of memory to store arrays E and
+invertedIndex, consumes 2|V| units to store arrays df and
+index, consumes O(|Vq |) space to store the related-to-query
+arrays (dfq , startq , and indexq ) and O(|Dtrain |) space to
+store the array containing the norms of the documents and
+the array containing the distances. Thus, the space complexity of the solution is O(|E|)+O(|V|)+O(|Vq |)+O(|Dtrain |) =
+O(|E|) + O(|Dtrain |).
+The solution presented by Garcia et al. [5] uses a matrix
+with dimensions |V||Dtrain | to store the training set and an
+array of size |V| to store the query q. Thus the space complexity of their solution is O(|V||Dtrain |) + O(|Dtrain |). The
+
+|E |
+
+Each processor pi ∈ P executes the mapping of |P|q positions of the logical array Eq . It is possible to estimate
+the value of |Eq | in terms of the sizes of V and Vq . Remember that the logical array Eq represents the concatenation of all inverted lists of terms in the query document
+q, that is, |Vq | inverted lists. Considering that the training collection follows the Zipf Law, we have that the probability of the occurrence of a term t with rank k is given
+k−s
+, where s is the value of the exponent characby P|V|
+1
+i=1 is
+
+terizing the distribution. The term with greatest probability is the term with rank 1. Thus the expected document
+|E|
+frequency of this term is given by P|V|
+. If we use the
+1
+i=1 is
+
+classic version of Zipf’s law, the exponent s is 1, then the
+
+338
+
+ratio between the space used by Garcia’s solution and ours
+train |
+). This corresponds to a mesure of the
+solution is O( |V||D
+(|E|)
+sparsity of the matrix storing the training set in Garcia’s solution.
+
+7.
+
+EXPERIMENTAL EVALUATION
+
+7.1
+
+Experimental Setup
+
+In order to evaluate the meta-feature strategies, we consider six real-world textual datasets, namely, 20 Newsgroups,
+Four Universities, Reuters, ACM Digital Library, MEDLINE
+and RCV1 datasets. For all datasets, we performed a traditional preprocessing task: we removed stopwords, using the
+standard SMART list, and applied a simple feature selection
+by removing terms with low “document frequency (DF)”2 .
+Regarding term weighting, we used TFIDF for both, SVM
+and kNN. All datasets are single-label. In particular, in the
+case of RCV1, the original dataset is multi-label with the
+multi-label cases needing special treatment, such as score
+thresholding, etc. (see [13] for details). As our current focus
+is on single-label tasks, to allow a fair comparison among the
+other datasets (which are also single-label) and all baselines
+(which also focus on single-label tasks), we decided to transform all multi-label cases into single-label ones. In order to
+do this fairly, we randomly selected, among all documents
+with more than one label, a single label to be attached to
+that document. This procedure was applied in about 20% of
+the documents of RCV1 which happened to be multi-label.
+More details about the datasets are shown in Table 1.
+Dataset
+
+Classes
+
+# attrib
+
+# docs
+
+Density
+
+Size
+
+4UNI
+
+7
+
+40,194
+
+8,274
+
+140.325
+
+14MB
+
+20NG
+
+20
+
+61,049
+
+18,766
+
+130.780
+
+30MB
+
+ACM
+
+11
+
+59,990
+
+24,897
+
+38.805
+
+8.5MB
+
+REUT90
+
+90
+
+19,589
+
+13,327
+
+78.164
+
+13MB
+
+MED
+
+7
+
+803,358
+
+861,454
+
+31.805
+
+327MB
+
+RCV1Uni
+
+103
+
+134,932
+
+804,427
+
+79.133
+
+884MB
+
+Table 1:
+
+General information on the datasets.
+
+All experiments were run on a Intel R i7-870, running at
+2.93GHz, with 16Gb RAM. The GPU experiments were run
+on a NVIDIA Tesla K40, with 12Gb RAM. In order to consider the costs of all data transfers in our efficiency experiments, we report the wall times on a dedicated machine so
+as to rule out external factors, like high load caused by other
+processes. To compare the average results on our crossvalidation experiments, we assess the statistical significance
+of our results with a paired t-test with 95% confidence and
+Bonferroni correction to account for multiple tests. This test
+assures that the best results, marked in bold, are statistically superior to others.
+We compare the computation time to generate meta-features
+using three different algorithms: (1) GTkNN, our GPUbased implementation of kNN3 ; (2) BF-CUDA, a brute
+force kNN implementation using CUDA proposed by Garcia et al. [5]; and (3) ANN, a C++ library that supports
+2
+We removed all terms that occur in less than six documents
+(i.e., DF<6).
+3
+Source code is available under GNU Public License (GPL)
+at http://purl.oclc.org/NET/gtknn/.
+
+339
+
+exact and approximate nearest neighbor searching4 . We use
+the ANN exact version, since it was used in the previous
+meta-feature works [7, 24]. We chose BF-CUDA because it
+is the main representative of the GPU-based brute force approach. However, the other implementations mentioned in
+Section 2 (some not available for download) also work with a
+complete distance matrix and would produce similar results.
+We also conducted controlled experiments to evaluate the
+effectiveness of classifiers learned with three different sets of
+features. The names and the descriptions of each set of features are given as follows: (1) Bag of Words, a set containing only the original features, i.e, TF-IDF weights of the document’s terms; (2) Meta-features, a set of meta-features
+proposed recently in literature (state-of-art meta-features)
+and described in Section 3; and (3) Bag + Meta-features,
+the combination of the above sets. The effectiveness of the
+features were compared using two standard text categorization measures: micro averaged F1 (MicroF1 ) and macro averaged F1 (MacroF1 ), which capture distinct aspects of the
+ADC task [13, 23]. To evaluate the performance of different groups of features, we adopted the LIBLINEAR [4]
+implementation of the SVM classifier, which received as input either the original space of features (Bag of Words), the
+Meta-features we generate to represent the original space, or
+the combination Bag + Meta-features. The regularization
+parameter was chosen by using 5-fold cross-validation in the
+training set. For the size of neighborhood used for generating the kNN-based meta-features, we adopted k = 30 in all
+experiments, since it was empirically demonstrated as the
+best parameter for text classification [2, 9, 23].
+We would like to point out that some of the results obtained in some datasets with and without the meta-features
+may differ from the ones reported in other works for the
+same datasets (e.g., [6, 12]). Such discrepancies may be due
+to several factors such as differences in dataset preparation5 ,
+the use of different splits of the datasets (e.g., some datasets
+have “default splits” such as REUT and RCV16 ), the application of some score thresholding, such as SCUT and PCUT,
+which, besides being an important step for multi-label problems, also affects classification performance by minimizing
+class imbalance effects, among other factors. We would
+like to stress that we ran all alternatives under the same
+conditions in all datasets, using the best traditional feature weighting scheme, using standardized and well-accepted
+cross-validation procedures that optimize parameters for each
+of alternatives, and applying the proper statistical tools for
+the analysis of the results. Our datasets are available for
+result replication and testing of new configurations.
+
+7.2
+7.2.1
+
+Experimental Results
+Effectiveness
+
+We start by demonstrating the effectiveness of the metafeatures. As shown in Table 2, in most datasets, the use
+of the traditional bag-of-words was statistically worse than
+meta-features, justifying meta-features as a replacement for
+4
+
+http://www.cs.umd.edu/~mount/ANN/
+For instance, some works do exploit complex feature
+weighting schemes or feature selection mechanisms that do
+favor some algorithms in detriment to others.
+6
+We believe that running experiments only in the default
+splits is not the best experimental procedure as it does not
+allow a proper statistical treatment of the results.
+5
+
+Meta-features
+
+Bag of Words
+
+Dataset
+
+SVM
+M icF1
+
+M icF1
+
+M acF1
+
+4UNI
+20NG
+
+62.50 ± 2.27
+89.26 ± 0.23
+
+76.52 ± 1.44
+89.59 ± 0.33
+
+54.55 ± 1.64
+87.08 ± 0.33
+
+70.18 ± 0.77
+87.34 ± 0.45
+
+52.34 ± 1.77
+83.89 ± 0.72
+
+68.25 ± 1.61
+84.40 ± 0.96
+
+ACM
+REUT90
+MED
+
+63.83 ± 2.05
+38.96 ± 1.04
+74.33 ± 0.17
+
+76.03 ± 0.27
+77.13 ± 1.04
+83.55 ± 0.07
+
+53.62 ± 1.12
+29.13 ± 2.03
+75.15 ± 0.18
+
+67.61 ± 0.53
+65.92 ± 0.78
+85.65 ± 0.07
+
+57.11 ± 1.64
+30.01 ± 1.03
+58.66 ± 0.50
+
+70.71 ± 0.42
+65.64 ± 1.68
+86.05 ± 0.30
+
+RCV1Uni
+
+55.77 ± 0.92
+
+77.41 ± 0.21
+
+55.32 ± 0.66
+
+78.28 ± 0.12
+
+46.32 ± 0.72
+
+68.23 ± 0.16
+
+Table 2:
+
+MicroF1 and MacroF1 of different sets of features.
+
+4UNI
+20NG
+ACM
+
+Meta-features
+M acF1
+M icF1
+62.50 ± 2.27
+76.52 ± 1.44
+89.26 ± 0.23
+89.59 ± 0.33
+63.83 ± 2.05
+76.03 ± 0.27
+
+Bag + Meta-features
+M acF1
+M icF1
+62.93 ± 2.03
+75.38 ± 1.76
+90.11 ± 0.30
+90.36 ± 0.43
+63.58 ± 1.15
+76.77 ± 0.24
+
+REUT90
+MED
+RCV1Uni
+
+38.96 ± 1.04
+74.33 ± 0.17
+55.77 ± 0.92
+
+37.36 ± 1.31
+79.90 ± 0.20
+57.21 ± 0.32
+
+Dataset
+
+Table 3:
+
+M acF1
+
+kNN
+M icF1
+
+M acF1
+
+77.13 ± 1.04
+83.55 ± 0.07
+77.41 ± 0.21
+
+74.98 ± 0.71
+87.43 ± 0.08
+78.92 ± 0.16
+
+MicroF1 and MacroF1 of the meta-features and the combination of meta-features and bag-of-words.
+
+Dataset
+4UNI
+20NG
+ACM
+REUT90
+MED
+RCV1Uni
+
+GTkNN
+40 ± 1
+187 ± 4
+112 ± 3
+625 ± 12
+4637 ± 43
+33884 ± 111
+
+Execution Time
+BF-CUDA
+ANN
+259 ± 46
+1590 ± 29
+2004 ± 17
+10947 ± 1323
+1760 ± 91
+13589 ± 1539
+2242 ± 5
+3024 ± 303
+*
+*
+*
+*
+
+Speedup
+BF-CUDA
+ANN
+6.4
+39.6
+10.7
+68.7
+15.7
+141.3
+3.6
+4.8
+*
+*
+*
+*
+
+Table 4:
+
+Average time in seconds (and 95% confidence interval) to generate meta-features using different kNN strategies.
+GTkNN is significantly better than others and makes the generation of meta-features possible to MED and RCV1Uni.
+
+the original high dimensional feature space, as demonstrated
+in previous work. Most of the results of SVM on the original
+space (bag-of-words) are superior or tied with kNN.
+The only datasets in which the effectiveness of meta-features
+was not better than that of bag-of-words were MED and
+RCV1Uni. We hypothesize that it is due to the fact that
+these datasets have a large training dataset, which allows the
+classification method (SVM) to deal better with the highly
+dimensional data, since there is enough training examples
+to learn discriminative patterns from more dimensions.
+Although bag-of-words achieved good results in MED and
+RCV1Uni, the combination Bag + Meta-features proposed
+in this work achieved the best results all datasets but REUT90,
+as shown in Table 3. This demonstrates the complementarity between the Bag and Meta-features in these datasets.
+REUT90 was the only case in which bag + meta-features
+was worse than the meta-features alone. Since this dataset
+has only a few training examples per class, the inclusion of
+more noisy features (from the bag-of-words) only makes it
+more difficult to find an effective SVM model.
+
+7.2.2
+
+Computational Time to Generate Meta-features
+
+Table 4 shows the average time to generate meta-features
+for a batch of test examples using ours and the baseline’s
+kNN implementations. Since we use a 5-fold cross validation,
+we measure the time to generate meta-features for all the
+examples in the batch of examples in each test fold. Notice
+that the time to generate meta-features is practically the
+average time to classify a fold, since the time to classify the
+
+340
+
+test examples with the SVM implementation is negligible.
+As can be seen in Table 4, the generation of meta-features
+using GTkNN shows significant speedups in relation to the
+other kNN implementations. In particular, the speedups for
+the small datasets range from 4.8 to 141.3 in relation to the
+ANN implementation, used in previous works to generate
+meta-features. This high speedup was somewhat expected,
+since the ANN do not explore parallelism to compute the
+distances. However, even when compared to the parallel
+BF-CUDA implementation[5], GTkNN was able to achieve
+speedups ranging from 3.6 to 15.7. This was possible mainly
+because BF-CUDA does not optimize the distance calculations to deal with the low density of terms present in textual
+documents nor tries to balance the load among threads.
+GTkNN produced the best speedups in 4UNI, 20NG and
+ACM, but it obtained a lower speedup in REUT90. This
+may be due to the fact that REUT90 has a large number of
+classes and only a few documents in each class. Since the
+meta-features are generated one class at a time, we could
+not explore the parallelism in its full potential. For example,
+if there are only 10 training documents in a class, we can
+only perform at most 10 simultaneous distance calculations,
+leaving most CUDA cores idle.
+GTkNN was the only implementation able to generate
+meta-features for the larger datasets: MED and RCV1Uni.
+In fact, ANN and BF-CUDA are extremely slow in this context. Figure 3 shows the time to generate meta-features for
+a single test example considering a sample size of 100 up
+to 2000 documents in MED. Since this dataset has more
+
+4UNI
+
+Time to Generate meta-features
+GTkNN
+BF-CUDA
+ANN
+0.012 ± 0.003
+0.316 ± 0.001
+0.534 ± 0.233
+
+Speedup
+BF-CUDA
+ANN
+26.3
+45.3
+
+20NG
+
+0.033 ± 0.007
+
+1.112 ± 0.002
+
+1.974 ± 0.642
+
+33.7
+
+59.8
+
+ACM
+
+0.016 ± 0.002
+
+1.012 ± 0.003
+
+2.084 ± 0.769
+
+63.2
+
+130.2
+
+REUT90
+MED
+RCV1Uni
+
+0.139 ± 0.028
+0.027 ± 0.002
+0.191 ± 0.023
+
+1.369 ± 0.001
+*
+*
+
+0.524 ± 0.156
+*
+*
+
+9.8
+*
+*
+
+3.8
+*
+*
+
+Dataset
+
+Table 5:
+
+Average execution time in seconds (and standard deviations) to classify each test example.
+
+processed, the meta-feature generation using the BF-CUDA
+implementation is considerably slowed down.
+
+BF-CUDA
+ANN
+GTkNN
+
+2.5
+
+7.2.3
+Seconds
+
+2
+
+1.5
+
+1
+
+0.5
+
+0
+200
+
+400
+
+Memory Consumption
+
+For textual datasets, the traditional data representation
+using a D x V matrix with D training documents and V
+features (the vocabulary of the collection) is not a good
+choice as the density of words in each document is very low.
+The proposed GTkNN approach represents textual data in
+a very compact way by exploiting an efficient in-memory
+GPU-based implementation of an inverted index, allowing
+us to store only the word statistics of each document.
+Table 6 shows the memory consumption figures required
+to generate meta-features using the three kNN implementations. The numbers correspond to the peak memory consumption during the meta-feature generation process. An
+estimate of memory consumption, based on the allocation of
+data structures, was made for the ANN and BF-CUDA implementations with MED and RCV1Uni, since these implementations are not capable of processing these large datasets.
+
+600 800 1000 1200 1400 1600 1800 2000
+Number of training samples
+
+Figure 3:
+
+Time to generate meta-features for one example
+with different sample sizes from the MED dataset. GTkNN
+keeps very low execution time (up to 0.005 seconds). The
+other two approaches slow down dramatically as the training
+dataset grows in size.
+
+4UNI
+20NG
+ACM
+REUT90
+
+Memory Consumption
+GTkNN
+BF-CUDA
+ANN
+92
+1697
+945
+93
+1257
+395
+90
+2541
+2487
+90
+909
+494
+
+MED
+RCV1Uni
+
+339
+120
+
+Dataset
+
+than 800,000 features, even a small fraction of it (e.g. 2000
+documents - 0.3%) requires a significant time (2.5 and 1.5
+seconds for ANN and BF-CUDA respectively) to generate
+meta-features. On the contrary, GTkNN takes no more than
+0.005 seconds to generate the meta-features. This discrepancy is expected since the calculations involved to deal with
+such high dimensions (greater than 800,000) are huge. The
+sequential nature of ANN and the lack of support for data
+sparsity make both ANN and BF-CUDA less competitive in
+this situation.
+The average time to generate meta-features for a single
+test example is presented in Table 5. In this experiment, we
+use a leave-one-out methodology, where only one example
+is chosen as a test example, leaving all others as training
+examples. GTkNN never takes more than 0.2 seconds to
+generate meta-features to a test example. It makes possible
+to classify examples on-the-fly even using very big training
+datasets. The most costly examples are in REUT90 and
+RCV1Uni due the fact that GTkNN cannot fully explore
+the parallelism with multiple classes on the current implementation, as described before.
+Although the ANN speedups are similar in Tables 5 and
+4, we notice that the BF-CUDA speedups in Table 5 are
+much higher than the ones previously presented in Table
+4. This happens because the BF-CUDA implementation
+is optimized to perform multiple queries in parallel, which
+matches the needs for generating meta-features to multiple
+examples. However, when a single test example has to be
+
+Table 6:
+
+1859104
+43245
+
+2857048
+69328
+
+Memory consuption in Megabytes.
+
+Our GTkNN implementation stands out way ahead of the
+competition when it comes to memory usage. The most
+impressive memory reduction occurs in MED. Although the
+second largest dataset, MED has only a few classes. Since
+our meta-feature generation strategy is performed one class
+at a time, a great number of documents has to be processed
+for each class. Thus MED consumes the largest amount of
+memory (339 MB) for our implementation, but the baselines
+ANN and BF-CUDA consume more than 5,000x and 8,000x
+this space respectively for the same dataset. We can also
+obtain a large memory demand reduction in RCV1, but not
+as expressive as in MED due to its large number of classes.
+In general, for all kNN implementations, the peak memory
+usage depends on the class with most training examples.
+
+8.
+
+CONCLUSION
+
+The use of meta-features in automatic document classification has permitted important improvements in the efficiency of classification algorithms. One of these metafeature approaches is based on intensive use of the kNN algorithm, in order to exploit local information regarding the
+
+341
+
+neighborhood of training documents. However, intensive use
+of kNN, combined with the high dimensionality and sparsity of textual data, make this a challenging computational
+task. We have presented a very fast and scalable GPU-based
+approach for computing kNN-based meta-feature document
+classification. Different from other GPU-based kNN implementations, we avoid comparing the query document with
+all training documents. Instead we build an inverted index
+in the GPU that is used to quickly find the documents sharing terms with the query document. Although the index
+does not allow a regular and predictable access to the data,
+we use a load balancing strategy to evenly distributed the
+computation among thousand threads in the GPU. After
+calculating the distances, we again use a massive number of
+threads to select the k smallest distance by implementing
+a truncated bitonic sort in the GPU followed by a merge
+operation in the CPU. We tested our approach in a very
+memory-demanding and time consuming task which requires
+intensive and recurrent execution of kNN. Our results show
+very significant gains in speedup and memory consumption
+when compared to our baselines. In fact, running our baselines in the largest datasets demonstrated to be unfeasible,
+stressing the value of our contribution. And even in scenarios where the dataset is too big for our implementation (a
+single GPU), our approach can easily be extended by spiting
+the dataset, executing the kNN in each part, and merging
+the partial results. Thus, meta-feature based classification
+can be applied in huge collections of documents, taking a reasonable time and without requiring expensive machines. As
+future work, we intend to approach other tasks and exploit
+Multi-GPU platforms to improve even further our solutions.
+
+9.
+
+[9]
+
+[10]
+[11]
+
+[12]
+
+[13]
+
+[14]
+
+[15]
+
+[16]
+
+[17]
+[18]
+
+ACKNOWLEDGMENTS
+
+This work was partially supported by CNPq, CAPES,
+FAPEMIG, INWEB and FAPEG. We thank NVIDIA Corporation for equipment donations.
+
+[19]
+
+[20]
+
+10.
+
+REFERENCES
+
+[1] Y.-S. Chang, R.-K. Sheu, S.-M. Yuan, and J.-J. Hsu.
+Scaling database performance on gpus. Information
+Systems Frontiers, 14(4):909–924, 2012.
+[2] H. Chen and T. K. Ho. Evaluation of decision forests
+on text categorization. In Proc. SPIE Conf. Document
+Recognition and Retrieval, pages 191–199, 2000.
+[3] S. Dzeroski and B. Zenko. Is combining classifiers with
+stacking better than selecting the best one? Machine
+Learning, 54(3):255–273, 2004.
+[4] R.-E. Fan, K.-W. Chang, C.-J. Hsieh, X.-R. Wang,
+and C.-J. Lin. LIBLINEAR: A library for large linear
+classification. JMLR, 9:1871–1874, 2008.
+[5] V. Garcia, E. Debreuve, and M. Barlaud. Fast k
+nearest neighbor search using gpu. In CVPR
+Workshops, pages 1–6, 2008.
+[6] S. Godbole and S. Sarawagi. Discriminative methods
+for multi-labeled classification. In Proc. PAKDD,
+pages 22–30, 2004.
+[7] S. Gopal and Y. Yang. Multilabel classification with
+meta-level features. In Proc. SIGIR, pages 315–322,
+2010.
+[8] T. Graham. A gpu database for real-time big data
+analytics and interactive visualization - (map-d). In
+
+[21]
+
+[22]
+[23]
+[24]
+
+342
+
+NVIDIA GTC-GPU Technology Conference-2014,
+2014.
+T. Joachims. Text categorization with suport vector
+machines: Learning with many relevant features. In
+Proc. ECML, pages 137–142, 1998.
+Q. Kuang and L. Zhao. L.: A practical gpu based knn
+algorithm. In In Proc. ISCSCT), pages 151–155, 2009.
+A. Kyriakopoulou and T. Kalamboukis. Using
+clustering to enhance text classification. In Proc.
+SIGIR, pages 805–806, 2007.
+M. Lan, C.-L. Tan, and H.-B. Low. Proposing a new
+term weighting scheme for text categorization. In
+Proc. AAAI, pages 763–768, 2006.
+D. D. Lewis, Y. Yang, T. G. Rose, and F. Li. Rcv1: A
+new benchmark collection for text categorization
+research. JMLR., 5:361–397, 2004.
+S. Liang, C. Wang, Y. Liu, and L. Jian. Cuknn: A
+parallel implementation of k-nearest neighbor on
+cuda-enabled gpu. In IEEE YC-ICT’09., pages
+415–418, 2009.
+O. Netzer. Getting big data done on a gpu-based
+database - (sqream). In NVIDIA GTC-GPU
+Technology Conference-2014, 2014.
+B. Raskutti, H. L. Ferrá, and A. Kowalczyk. Using
+unlabelled data for text classification through addition
+of cluster parameters. In Proc ICML, pages 514–521,
+2002.
+F. Sebastiani. Machine learning in automated text
+categorization. ACM Comput. Surv., 34(1):1–47, 2002.
+S. Sengupta, M. Harris, M. Garland, and J. D. Owens.
+Efficient parallel scan algorithms for many-core gpus.
+Sci. Comp. with Multicore and Acc., pages 413–442,
+2011.
+A. Shchekalev. Using gpus to accelerate learning to
+rank - (yandex). In NVIDIA GTC-GPU Technology
+Conference-2014, 2014.
+N. Sismanis, N. Pitsianis, and X. Sun. Parallel search
+of k-nearest neighbors with synchronous operations. In
+HPEC, pages 1–6. IEEE, 2012.
+B. E. Teitler, J. Sankaranarayanan, H. Samet, and
+M. D. Adelfio. Online document clustering using gpus.
+In New Trends in Databases and Information Systems,
+pages 245–254. Springer, 2014.
+K. M. Ting and I. H. Witten. Issues in stacked
+generalization. J. Artif. Int. Res., 10(1):271–289, 1999.
+Y. Yang. An evaluation of statistical approaches to
+text categorization. Inf. Ret., 1:69–90, 1999.
+Y. Yang and S. Gopal. Multilabel classification with
+meta-level features in a learning-to-rank framework.
+Mach. Learn., 88:47–68, 2012.
+
+

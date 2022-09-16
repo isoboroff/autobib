@@ -1,0 +1,1587 @@
+Acquisition of Instance Attributes via Labeled and Related
+Instances
+Enrique Alfonseca
+
+Marius Paşca
+
+Enrique Robledo-Arnuncio
+
+Google Inc.
+110 Brandschenkestrasse
+Zurich, Switzerland
+
+Google Inc.
+1600 Amphitheatre Parkway
+Mountain View, California
+
+Google Inc.
+110 Brandschenkestrasse
+Zurich, Switzerland
+
+ealfonseca@google.com
+
+mars@google.com
+
+ABSTRACT
+
+textual data sources have become available at lower computational costs, either directly as document collections or
+indirectly through the search interfaces of the larger Web
+search engines, information extraction has seen a shift towards large-scale acquisition of open-domain information [8].
+In this framework, information at mainly three levels of
+granularity is extracted from text, with weak or no supervision: classes (having a label, e.g., painkillers), class elements or instances (e.g., vicodin, oxycontin); and relations
+among instances (e.g., france-capital-paris) or classes (e.g.,
+countries-capital-cities).
+Among other types of relations targeted by various extraction methods, attributes (e.g., side eﬀects and maximum dose) have emerged as one of the more popular types,
+as they capture properties of their respective classes (e.g.,
+painkillers), and thus serve as building blocks in many knowledge bases. Consequently, a variety of attribute extraction
+methods mine textual data sources ranging from unstructured [23] or structured [26, 4] text within Web documents,
+to human-compiled encyclopedia [25, 7] and Web search
+query logs [17, 16], attempting to extract, for a given class,
+a ranked list of attributes that is as comprehensive and accurate as possible.
+Contributions: This paper introduces a method that acquires instance relatedness information, and applies it for
+attribute extraction, in order to produce ranked lists of attributes of higher coverage and accuracy than current state
+of the art. The algorithm proposed is general enough that
+can be plugged to any generic attribute acquisition algorithm to increase precision and coverage. We explore this
+method, based on the identiﬁcation of attributes of individual instances (vicodin), in contrast to most previous work
+on attribute extraction [23, 16], why acquire attributes of
+classes (e.g., painkillers). Thus, since a large majority of
+popular search queries are precisely instances of various kinds,
+the method operates over an input vocabulary (i.e., instances
+rather than classes) that better approximates the overall
+composition of the sets of millions of search queries submitted daily to Web search engines.
+Instance relatedness is approximated through two types
+of data: pairwise distributional similarities [13], quantifying
+the extent to which any two instances occur in similar contexts in text; and labeled classes of instances, capturing the
+class labels (e.g., painkillers, prescription drugs, medications
+and substances) applicable to various instances (vicodin). It
+produces a signiﬁcant improvement over either learning the
+attributes for class labels, and over learning the attributes
+for instances without propagation.
+
+This paper presents a method for increasing the quality
+of automatically extracted instance attributes by exploiting weakly-supervised and unsupervised instance relatedness
+data. This data consist of (a) class labels for instances and
+(b) distributional similarity scores. The method organizes
+the text-derived data into a graph, and automatically propagates attributes among related instances, through random
+walks over the graph. Experiments on various graph topologies illustrate the advantage of the method over both the
+original attribute lists and a per-class attribute extractor,
+both in terms of the number of attributes extracted per instance and the accuracy of top ranked attributes.
+
+Categories and Subject Descriptors
+I.2.7 [Artificial Intelligence]: Natural Language Processing; H.3.1 [Information Storage and Retrieval]: Content Analysis and Indexing; H.3.3 [Information Storage
+and Retrieval]: Information Search and Retrieval
+
+General Terms
+Algorithms, Experimentation
+
+Keywords
+Information extraction, instance attributes, unstructured text,
+distributional similarities, labeled instances
+
+1.
+
+era@google.com
+
+INTRODUCTION
+
+Motivation: Due in part to the quantitative limitations of
+the then-available textual data sources, early work on information extraction focuses on training supervised systems
+on small to medium-sized document collections, requiring
+relatively expensive manual annotations of data [5]. Some
+authors investigate the possibility of obtaining manual annotations more easily, through the creation of manual or
+semi-automatic annotations [6]. But as larger amounts of
+
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies are
+not made or distributed for profit or commercial advantage and that copies
+bear this notice and the full citation on the first page. To copy otherwise, to
+republish, to post on servers or to redistribute to lists, requires prior specific
+permission and/or a fee.
+SIGIR’10, July 19–23, 2010, Geneva, Switzerland.
+Copyright 2010 ACM 978-1-60558-896-4/10/07 ...$10.00.
+
+58
+
+side eﬀects, mechanism of action, cost, therapeutic range)
+capturing the most prominent properties of the instance.
+Ideally, the resulting set would be complete (perfect coverage), and contain only relevant attributes (perfect precision). In practice, the task of attribute extraction can be approximated by the acquisition of a ranked list of attributes
+[a1 , a2 , a3 , ..., aN ], such that as many relevant attributes as
+possible are among the top items in the ranked list.
+The task of instance attribute extraction is related to,
+and more diﬃcult than, the task of class attribute extraction. Indeed, although both tasks generate ranked lists of attributes, the former does so for an individual instance (e.g.,
+cloxacillin), whereas the latter works for a class of instances
+(e.g., antibiotics or penicillins). Since a class of instances
+is often available as input in the form of a set of instances
+(e.g., {ampicillin, oxacillin, cloxacillin, benzylpenicillin}) associated with a corresponding class label (e.g., penicillins),
+class attribute extraction methods [17] enjoy access to significantly more input data (i.e., a set of instances instead of a
+single instance), which allows them to mitigate the negative
+impact of data sparseness on the extraction outcome, by acquiring attributes of a class (e.g., car manufacturers), based
+on associations with some of the more popular instances of
+the class (e.g., jaguar, audi, toyota, chevrolet), even if a few
+of the input instances (e.g., tesla}) of the class may be absent from the underlying source of textual data from which
+attributes must be extracted;
+Since instance attribute extraction is equivalent to class
+attribute extraction where the class contains only one element (the instance itself), none of the above positive properties hold in the case of instance attribute extraction. In
+particular, data sparseness may strongly aﬀect the quality
+and coverage of the ranked lists of attributes extracted for
+long-tail instances, that is, instances that occur relatively
+infrequently in the underlying textual data source. Concretely, a previous method operating over query logs [17]
+extracts the following ranked lists as attributes for the respective instances: [solubility, analytical methods, inventor,
+dossier development, last patent, adverse eﬀects] for bicalutamide; [map, opening] for agua caliente casino; and [] (i.e.,
+the empty list) for ct scan. Clearly, the extracted lists suﬀer
+from occasional less-than-optimal extractions (e.g., dossier
+development for bicalutamide), but more importantly from
+occasionally too few or no elements in the lists, which suggests a low coverage.
+
+Applications: The special role played by attributes, among
+other types of relations, is documented in earlier work on
+language and knowledge representation [20, 9]. It inspired
+the subsequent development of text mining methods [14]
+aiming at constructing knowledge bases automatically. In
+Web search, the availability of instance attributes is useful
+for applications such as search result ranking and suggestion
+of related queries [2], and has also been identiﬁed to be a
+useful resource in generating product recommendations [19].
+
+2.
+
+PREVIOUS WORK
+
+Previous work on attribute extraction uses a variety of
+textual data sources for mining attributes. Taking advantage of structured and semi-structured text, the method presented in [26] submits list-seeking queries to general-purpose
+Web search engines, and analyzes retrieved documents to
+identify common structural (HTML) patterns around class
+labels given as input, and potential attributes. Similarly,
+layout and other HTML tags serve as clues to acquire attributes from either domain-speciﬁc documents such as those
+from product and auction Web sites [24] or from arbitrary
+documents, optionally relying on the presence of explicit
+itemized lists or tables [4]. As an alternative to Web documents, articles within online encyclopedia can also be exploited as sources of structured text for attribute extraction,
+as illustrated by previous work using infoboxes and category
+labels [22, 15, 25, 7] associated with Wikipedia articles.
+Working with unstructured text within Web documents,
+the method described in [23] applies manually-created lexicosyntactic patterns to document sentences in order to extract
+candidate attributes, given various class labels as input.
+The candidate attributes are ranked using several frequency
+statistics. If the documents are domain-speciﬁc, such as documents containing product reviews, additional heuristicallymotivated ﬁlters and scoring metrics can be used to extract
+and rank the attributes [21]. In [2], the extraction is guided
+by a small set of seed instances and attributes rather than
+manually-created patterns, with the purpose of generating
+training data and extract new pairs of instances and attributes from text. The set of seeds is acquired automatically in [19], thus further reducing the overhead associated
+to the preparation of the input data, while exploiting words
+and part-of-speech labels as features during extraction. Web
+search queries have also been considered as a textual data
+source for attribute extraction, using lexico-syntactic patterns [17] or seed attributes [16] to guide the extraction.
+Virtually all existing methods for attribute extraction produce ranked list of attributes for each input item (i.e., class
+label or, more rarely, class instance). Therefore, the method
+presented in this paper is generally applicable. It acts as
+a wrapper that takes as input the output from an existing
+method, propagating attributes across related instances to
+improve recall, while re-ranking top attributes to improve
+precision.
+
+3.
+
+3.2 Role of Related Instances
+The operational advantage of class attribute extraction
+over instance attribute extraction stems from its ability to
+aggregate attributes of the class, from the attributes extracted for individual instances of the class. In order to
+emulate a similar behavior in instance attribute extraction,
+one would need a set of instances as input, which are simply
+not available. However, given the input instance, a rough
+approximation of a set of instances could be generated dynamically, based on access to a large resource of instance
+relatedness data. In that case, instance attribute extraction
+becomes equivalent to aggregating attributes of the instance,
+from the attributes extracted for other instances that are
+strongly related to it, based on the following observation:
+Hypothesis 1: Let i1 and i2 be two instances. The more
+strongly related i1 and i2 are semantically, the more likely
+it is for them to share common attributes.
+
+RELATED INSTANCES IN ATTRIBUTE
+EXTRACTION
+
+3.1 Instance Attribute Extraction
+Given an instance (e.g., cloxacillin as element of the set
+antibiotics), the goal of instance attribute extraction is the
+automatic acquisition of the set of relevant attributes (e.g.,
+
+59
+
+3.3 Sources of Instance Relatedness Data
+
+GFED
+@ABC
+a0 o
+[
+
+?>=<
+89:;
+i0
+qq 'S 7Z
+q
+q
+( >
+pc
+p01 qqq 
+00
+qq 
+* F pi00
+q
+q
+
+q
+M
+
++
+S X
+qx qq p02 
+\ 89:;
+?>=<
+GFED
+@ABC
+a1
+c
+
+
+= 0
+
+Y22
+.
+
+
+22 p03
+0 pc01
+
+i
+22
+2 p10
+
+4
+  22
+
+p
+2
+6
+GFED
+@ABC
+a2
+22 p10
+04
+
+8
+<] <
+
+;
+<< 222
+pc
+<<p 22
+10i
+=
+p01
+<<11 2
+@
+
+<< 22
+B
+< 2
+?>=<
+GFED
+@ABC
+0 89:;
+a3 M
+c1
+
+f MM p12 <<< 22
+c
+MMM
+<< 22
+
+ p11
+MMM <<22
+ pi x
+p13 MMM <<2
+11
+2
+~
+M
+
+MM< ~
+k q
+f
+GFED
+@ABC
+?>=<
+89:;
+p
+b
+o
+a4
+i1
+
+Two types of relatedness data are explored in this paper
+for the purpose of attribute extraction: IsA pairs and distributional similarities.
+Distributional similarities are a technique for calculating
+similarities among words or phrases [12]. They capture the
+extent to which the textual contexts in which phrases occur
+are similar, with the intuition that phrases that occur in similar contexts tend to have similar meanings. Distributional
+similarities scale well to large text collections, since their
+acquisition can be done through parallel implementations,
+yet they perform well against more expensive, knowledgebased similarity metrics [1]. Distributional similarities are
+assumed to be available, as pairs of similar phrases with an
+associated similarity score (e.g., cloxacillin and erythromycin
+with a score of 0.36; or cloxacillin and alcohol with a score
+of 0.05).
+In addition to distributional similarities, IsA pairs are assumed to be available as weighted pairs of a class instance
+and an associated class label (e.g., audi and car manufacturers; or cloxacillin and antibiotics). IsA pairs indirectly capture instance relatedness, since any two instances involved
+in IsA pairs with the same class (e.g., audi and nissan, as
+distinct instances of the class car manufacturers) are related
+to each other.
+
+4.
+
+p00
+
+p14
+
+Figure 1: Graph for the transitions from instances to instances via class labels (i, a and c are instance, attribute,
+and class label nodes, respectively)
+
+is governed by the distribution pc (·), following the dotted
+edges in Figure 1.
+2. From a class label (e.g., c0 ), execute a random step to
+move to an instance of that class (e.g., i0 ). The probability
+is given by pi (·), following the dashed edges.
+3. From an instance (e.g., i0 ), execute a random step to an
+attribute (e.g., a0 ), using the probability distribution p(·),
+following the solid edges.
+This random walk process deﬁnes, for each original instance ij , a set of reachable attributes, and the probability
+of reaching each of them from ij . These attributes can be
+ranked by this probability.
+Note that, if the input data does not contain any class label at all for any instance, no ranked list of attributes can be
+returned for that instance. This can be avoided by adding,
+for each instance i, a pseudo-class label ci representing a
+class that only contains that instance. In this way, for instances without any class label at all no propagation will be
+done, but they will at least retain their original ranked list
+of attributes.
+Injecting Distributional Similarities: The second type
+of information used to propagate attributes across instances
+are distributional similarities, used to identify related instances. Given an instance ij and its list of similar instances:
+
+ATTRIBUTE PROPAGATION METHOD
+
+Graph Representation: Given an instance ij and some
+extraction method, let
+Aj = [(a0 , wj0 ), (a1 , wj1 ), (a2 , wj2 ), ..., (a|A| , wj|A| )]
+be the weighted list of attributes extracted by the method
+for the instance ij , where A is the set of all attributes of
+all instances. One can deﬁne a probability of transitioning
+from instance ij to attribute ak by normalizing the weights
+to sum up to 1:
+wjk
+pjk = P|A|
+l=0 wjl
+and represent the instances and attributes as a bipartite
+graph, with weighted edges from instance nodes to attribute
+nodes.
+Injecting Class Labels: The availability of IsA pairs allows for the extension of the instance-attribute graph, by
+adding a layer for the class labels. Given an instance ij , let
+Cj = [(c0 , wj0 ), (c1 , wj1 ), (c2 , wj2 ), ..., (c|C| , wj|C| )]
+be the weighted list of the class labels of the instance, where
+C is the set of all class labels. The normalization of the
+weights produces a class-label probability distribution pcjm ,
+where cm is a class label of the instance ij . In the scenario
+of a random walk across the graph representation, this probability distribution would provide, for each instance ij , the
+probability of transitioning to a class label cm . Conversely,
+the aggregation and normalization of the weights by class label rather than instance produces a probability distribution
+pimj , indicating the probability of transitioning from a class
+label cm to an instance ij within the graph, as illustrated in
+Figure 1. The resulting graph can be used to propagate attributes across instances of the same class, using a three-step
+random walk process:
+1. From an instance (e.g., i0 ), execute a random step to
+one of its class labels (e.g., c0 ). The probability of each step
+
+Ij = [(i0 , wj0 ), (i1 , wj1 ), (i2 , wj2 ), ..., (i|I| , wj|I| )]
+where I is the set of all instances, the graph can be extended
+by again normalizing the weights, and adding edges to the
+graph corresponding to transitions from each instance ij to
+similar instances. The resulting graph is depicted in Figure 2. In this case, the propagation would be deﬁned by a
+two-step random walk, ﬁrst transitioning from an instance
+to similar instances and then transitioning to attributes. Using distributional similarities the similarity of any instance
+with itself will always be 1.0, value which will be normalized
+together with other the similary scores.
+Injecting Class Labels and Distributional Similarities: Figure 3 shows an example of a graph topology that
+
+60
+
+ps
+00
+
+GFED
+@ABC
+a0 o
+[
+
+ps
+00
+
+p00
+
+89:;
+?>=<
+q i0 V
+q
+q
+q 
+p01 qqq 
+q 
+q
+q
+
+
+qq
+qx qq p02 
+GFED
+@ABC
+a1
+
+
+Y22
+
+
+22 p03
+
+22
+  22
+22 p10
+GFED
+@ABC
+a2
+ps
+01
+22 p04
+<] <
+<< 22
+<<p 22
+<<11 2
+
+<< 22
+< 2
+GFED
+@ABC
+a3 M
+f MM p12 <<< 22
+MMM
+< 2
+MMM <<<222
+p13 MMM <<2
+MMM<2
+
+GFED
+@ABC
+89:;
+?>=<
+a4 o
+i1
+p14
+J
+
+GFED
+@ABC
+a0 o
+[
+
+p00
+
+89:;
+?>=<
+i0
+rr U 3Y d J
+r
+r
+pc
+r
+p01 r
+
+00
+5 LN
+PQ
+rrr 
+6
+r
+pi00
+S
+r
+
+UVX
+$
+8
+rx rr p02 
+Z [ \ ^ 89:;
+?>=<
+GFED
+@ABC
+a1
+
+:
+8 c0
+
+X11
+
+<
+11 p03
+> pic01
+11
+@p10
+
+
+ 11
+B
+p10
+
+1
+s
+s
+GFED
+@ABC
+a2
+p01
+p10
+D
+;] ; 111 p04
+F 
+;; 1
+H
+c
+p
+1
+10
+;;p11 1
+J
+i
+p
+01
+;; 11
+K
+~
+
+M
+;; 11
+|
+/ 89:;
+?>=<
+GFED
+@ABC
+;
+a3 L p
+c1
+1
+;
+z
+f LL 12 ; 1
+1
+;
+LLL
+t
+x pc
+1
+;
+r
+11
+LL ;;11
+v
+np
+t
+p13 LLL ;;1
+pi11 k m
+1
+L
+
+LL; qx s
+hi
+GFED
+@ABC
+89:;
+?>=<
+_o ` b c e f
+a4 o
+i
+1
+p14
+J
+
+ps
+10
+
+ps
+11
+
+ps
+11
+
+Figure 2: Graph for the transitions from instances to
+distributionally similar instances (i and a are instance
+and attribute nodes respectively)
+
+Figure 3: Graph including all possible transitions (i,
+a and c are instance, attribute, and class label nodes,
+respectively)
+
+includes both class labels and distributionally similar instances. The outgoing probabilities for every node are normalized so their sum is 1.
+Using this graph topology, the propagation is a two-step
+algorithm. In the ﬁrst step, the algorithm calculates, for
+each instance, the probability of transitioning to any instance in the dataset either by following the self-loop, by
+randomly walking in two steps through the class labels, or
+by stepping randomly to a distributionally similar instance.
+Next, the algorithm calculates the probability of transitioning to any of the attributes. These probabilities are used
+to rank the attributes, and thus generate a ranked list of
+attributes as output, for each instance.
+
+5.
+
+cillins, penicillinase-resistant penicillins, spectrum antibiotics,
+semisynthetic penicillins,..] for cloxacillin.
+Parameters for Distributional Similarities: When applied to the collection of Web documents, the pipeline for
+extracting distributional similarities described in [1], which
+scales to millions of instances and billions of Web documents,
+and identiﬁes pairwise similarity scores among all instances
+involved in any IsA pairs. Following standard settings [12],
+the similarity score between two instances is the cosine between their vectors of context windows, where a window
+consists of three words to the left and three words to the
+right of each occurrence, within Web documents, of the two
+instances respectively.
+Parameters for Initial Instance Attributes: The extraction method introduced in [17] applies a few patterns
+(e.g., the A of I, or I’s A, or A of I) to queries within
+query logs, where I is an instance from the IsA pairs, and
+A is a candidate attribute. For each instance, the method
+extracts ranked lists containing zero, one or more attributes,
+along with frequency-based scores.
+Parameters for Graph Representation: As described in
+the previous section, the complete version of the graph representation of the instances, attributes and class labels contains three types of nodes: instance, attribute and class label
+nodes. An instance node is created for each instance from
+the IsA pairs. For eﬃciency, at most 250 of the attributes
+extracted initially for each instance are used to populate
+attribute nodes and the associated instance-attribute edges
+in the graph; and distributional similarities below 0.001 are
+discarded. Even if they were kept, due to the low weights
+associated to the attributes and the similar queries below
+those thresholds, it would not have a notable impact on the
+relative ranking of attributes.
+
+EXPERIMENTAL SETTING
+
+Textual Data Sources: The acquisition of instance attributes relies on unstructured text available within Web
+documents and search queries. The collection of queries is a
+random sample of fully-anonymized queries in English submitted by Web users in 2006. The sample contains about
+50 million unique queries. Each query is accompanied by
+its frequency of occurrence in the logs. The document collection consists of around 200 million documents in English,
+as available on the Web in 2009. The textual portion of the
+documents is cleaned of html, tokenized, split into sentences
+and part-of-speech tagged using the TnT tagger [3].
+Parameters for IsA Pairs: Pairs of a class label (e.g., antibiotics) and a class instance (e.g., cloxacillin), along with
+associated frequency-based scores, are extracted from the
+collection of Web documents by applying a few IsA extraction patterns selected from [11], as described in [18]. The
+pairs are organized as ranked lists of class labels per class instance, e.g., [antibiotics, resistant penicillins, lactams, peni-
+
+61
+
+aaa, ac compressors, acheron, acrocyanosis, adelaide cbd,
+african population, agua caliente casino, al hirschfeld,
+alessandro nesta, american fascism, american society for horticultural science, ancient babylonia, angioplasty, annapolis
+harbor, antarctic region, arlene martel, arrabiata sauce, artiﬁcial intelligence, bangla music, baquba, bb gun, berkshire
+hathaway, bicalutamide, blue jay, boulder colorado, brittle
+star, capsicum, carbonate, carotid arteries, chester arthur,
+christian songs, cloxacillin, cobol, communicable diseases,
+contemporary art, cortex, ct scan, digital fortress, eartha
+kitt, eating disorders, ﬁle sharing, ﬁnal fantasy vii, forensics,
+habbo hotel, halogens, halophytes, ho chi minh trail, icici
+prudential, jane fonda, juan carlos, karlsruhe, kidney stones,
+lipoma, loss of appetite, lucky ali, majorca, martin frobisher,
+mexico city, pancho villa, phosphorus, playing cards, prednisone, right to vote, robotics, rouen, scientiﬁc revolution,
+self-esteem, spandex, strattera, u.s., vida guerra, visual basic, web hosting, windsurﬁng, wlan
+
+Run
+Sn Cy
+Sy Cn
+Sy Cy
+
+Node Type
+A
+I
+C
+0.49 2.12 3.50
+0.49 2.12
+0
+0.49 2.12 3.50
+
+I-C
+19
+0
+19
+
+Edge Type
+I-I I-A
+0
+3
+16.50
+3
+16.50
+3
+
+Table 2: Number of graph nodes and number of edges
+of various types, in millions (A=attribute; I=instance;
+C=class label)
+
+Table 1: Set of 75 target instances, used in the evalua-
+
+Label
+vital
+
+Value
+1.0
+
+okay
+
+0.5
+
+wrong
+
+0.0
+
+tion of instance attribute extraction
+
+Examples of Attributes
+capsicum: calorie count
+cloxacillin: side eﬀects
+lucky ali: album songs
+jane fonda: musical theatre contributions
+mexico city: cathedral
+robotics: three laws
+acheron: kingdom
+berkshire hathaway: tax exclusion
+contemporary art: urban institute
+
+Table 3: Correctness labels for the manual assessment
+of attributes
+
+Target Instances: In order to assemble a set of instances
+whose attributes are evaluated for accuracy and relative coverage, the set of all instances from the graph is partitioned
+according to the number of attributes extracted initially for
+each instance. The partitions contain all instances with: 0
+attributes; 1 to 5 attributes; 6 to 20 attributes; 21 to 50
+attributes; and more than 51 attributes, respectively. From
+each partition, a random sample of 60 instances is automatically selected. The sample is further inspected manually,
+in order to eliminate instances for which human annotators
+would likely need a long time to become familiar with the
+instance and its meanings, before they can assign correctness labels to the attributes extracted for the instance. The
+only purpose of the manual selection step is to keep the
+costs associated with the subsequent, manual evaluation of
+attributes within reasonable limits. To remove any possible bias towards instances with more or better attributes,
+the extracted attributes, if any, remain invisible during the
+selection of instances. For example, the instance it (which,
+among other meanings, is as an acronym for information
+technology) is discarded due to extreme ambiguity. Conversely, agua caliente casino is retained, since it is relatively
+less diﬃcult to notice that it refers to a particular casino.
+The manual selection of 15 instances, from the random sample of each of the 5 partitions, results in an evaluation set
+containing 75 target instances, as shown in Table 1.
+While the comprehensiveness of any attribute extraction
+experiments increases with the the number of target instances used for evaluation, the time intensive nature of
+manual accuracy judgments often required in the evaluation
+of information extraction systems [8] sets a practical limit
+to the size of the test set. With this in mind, we choose
+what we feel to be a large enough size for our test set (75
+instances with 4,833 attributes in total) to ensure varied experimentation on several dimensions.
+Experimental Runs: The experiments consist of four different runs: Sn Cn , Sy Cn , Sn Cy and Sy Cy , where S stands
+for transitions from instances to distributionally similar instances, C stands for transitions from instances to class labels, and y/n indicate whether the respective transitions are
+included in the graph topology (y) or not (n). The ﬁrst run,
+Sn Cn , corresponds to using the ranked lists of attributes
+initially extracted from text, without any propagation.
+
+6. EVALUATION RESULTS
+6.1 Quantitative Results
+IsA Pairs: The IsA pairs, extracted according to the patterns from [18] from the document collection, cover a total of
+2.12 million of the instances that each have two or more class
+labels, with an average of 19.72 class labels per instance.
+This set of 2.12 million instances was used for propagation
+via class labels.
+Distributional Similarities: The distributional similarities, for the set of 2.12 million instances that have two more
+class labels, capture one or more similar instances for 13% of
+them. For the ones that have at least one similar instance,
+an average of 9 similar instances are returned.
+Initial Instance Attributes: The initial set of instance
+attributes, extracted according to [17] from the collection of
+search queries, is available in the form of ranked lists containing zero, one or more attributes. There is one (possibly
+empty) ranked list for each of the 2.12 million instances. The
+extracted ranked lists contain 0 attributes for 1.63 million
+instances; 1 to 5 attributes for 315,052 instances; 6 to 20 attributes for 56,721 instances; 21 to 50 attributes for 13,902
+instances; and more than 50 attributes for 9,249 instances.
+Graph Representation: Table 2 shows the number of
+nodes and edges of various types, for the three runs that
+apply propagation for extracting attributes.
+
+6.2 Qualitative Results
+Evaluation Procedure: The measurement of recall requires knowledge of the complete set of items (in our case,
+attributes) to be extracted. Unfortunately, this number is
+often unavailable in information extraction tasks in general [10], and attribute extraction in particular. Indeed, the
+manual enumeration of all attributes of each target instance,
+to measure recall, is unfeasible. Therefore, the evaluation
+focuses on the assessment of attribute accuracy.
+To remove any bias towards higher-ranked attributes during the assessment of instance attributes, the top 50 attributes within the ranked lists of attributes produced by
+each run to be evaluated are sorted alphabetically into a
+
+62
+
+Instance: habbo hotel
+
+Instance: acheron
+0.8
+
+0.8
+SnCn
+SyCn
+SnCy
+SyCy
+
+Precision
+
+0.4
+
+0.2
+
+0.6
+
+Precision
+
+0.6
+
+0.6
+
+Precision
+
+Instance: spandex
+
+0.8
+SnCn
+SyCn
+SnCy
+SyCy
+
+0.4
+
+0.2
+
+0.4
+
+0.2
+SnCn
+SyCn
+SnCy
+SyCy
+
+0
+
+0
+0
+
+10
+
+20
+
+30
+
+40
+
+50
+
+0
+0
+
+10
+
+20
+
+Rank
+
+30
+
+40
+
+50
+
+0
+
+20
+
+30
+
+40
+
+50
+
+Rank
+
+Instance: Average-Instance
+
+Instance: Average-Instance
+
+0.8
+
+0.8
+SnCn
+SyCn
+SnCy
+SyCy
+
+SnCn
+SyCn
+SnCy
+SyCy
+0.6
+
+Precision
+
+0.6
+
+Precision
+
+10
+
+Rank
+
+0.4
+
+0.2
+
+0.4
+
+0.2
+
+0
+
+0
+0
+
+10
+
+20
+
+30
+
+40
+
+50
+
+0
+
+Rank
+
+10
+
+20
+
+30
+
+40
+
+50
+
+Rank
+
+Figure 4: Accuracy of the ranked lists of attributes extracted by various runs for a few target instances (top graphs);
+as an average over all instances (bottom left graph); and as average over every instance that has at least one distributionally similar instance (bottom right graph)
+accurate as Sy Cy . In other words, propagation based on
+distributionally similar instances (Sy Cn ) gives a signiﬁcant
+improvement over the baseline Sn Cn , and propagation based
+on class labels rather than distributionally similar instances
+(Sn Cy ) gives an even larger improvement. In order to discover whether these results are due to the fact that class
+labels are more reliable or whether it is because class labels
+are available for more instances, The bottom right graph
+in Figure 4 shows the precision of the experimental runs
+over the subset of instances that have at least one distributionally similar instance. This subset contains exactly 50
+of the 75 target instances. The results indicate that class
+labels and distributional similarities (as well as their combination), when available, lead to similar improvements when
+both types of relatedness data are available.
+Table 4 provides a more detailed view on the accuracy
+of the extracted attributes, for various subsets of target
+instances obtained according to the number of initial attributes (i.e., extracted in run Sn Cn ) for the respective instances. For example, rows with an attribute count “[1,5]”
+refer to instances that have one through ﬁve attributes in run
+Sn Cn . For this range, the baseline Sn Cn is outperformed by
+the three propagation-based runs at all ranks, with precision
+scores of 0.22 at rank 5 and 0.02 at rank 50 for Sn Cn , vs. 0.60
+at rank 5 and 0.38 at rank 50 for Sy Cy , (ﬁfth and eigth rows
+of the table). The table indicates that: 1) with few exceptions, Sy Cn , Sn Cy and Sy Cy outperform Sn Cn for all ranges,
+with Sn Cy and Sy Cy giving the best results; 2) Sy Cn , Sn Cy
+and Sy Cy produce more accurate attributes than Sn Cn even
+for the range [51,∞), which indicates that the attribute reranking caused by the propagation is better than the initial
+attribute ranking given by Sn Cn ; and 3) attribute propagation is quite resistant to sparseness of initial attributes, as
+illustrated by precision scores of, e.g., Sy Cy that are com-
+
+merged list. Each attribute of the merged list is manually
+assigned a correctness label within its respective instance.
+In accordance with previously introduced methodology, an
+attribute is vital if it must be present in an ideal list of
+attributes of the instance (e.g., side eﬀects for cloxacillin);
+okay if it provides useful but non-essential information; and
+wrong if it is incorrect [16]. Thus, a correctness label is
+manually assigned to a total of 4,833 attributes extracted
+for the 75 target instances, in a process that conﬁrms that
+evaluation of information extraction methods can be quite
+time consuming. Two computational linguists performed
+the evaluation, with each of the attributes rated by the two
+of them. The inter-annotator agreement of 88.79%, resulting
+in a Kappa score of 0.85, indicating substantial agreement.
+To compute the precision score over a ranked list of attributes, the correctness labels are converted to numeric values (vital to 1, okay to 0.5 and wrong to 0), as shown in Table 3. Precision at some rank N in the list is thus measured
+as the sum of the assigned values of the ﬁrst N attributes,
+divided by N .
+Accuracy of Instance Attributes: Figure 4 plots precision values for ranks 1 through 50, for each of the four
+experimental runs. The ﬁrst three graphs in the ﬁgure show
+the precision over three individual target instances. Several conclusions can be drawn from these. First, the quality of the attributes extracted by a given run varies among
+instances. For instance, the attributes extracted for the instance spandex are better than for habbo hotel. Second, the
+experimental runs have variable levels of accuracy. The bottom left graph in Figure 4 shows the average precision over
+all target instances. Although none of the runs outperforms
+the others on each and every target instance, on average,
+Sy Cy performs the best and Sn Cn (i.e., the baseline) the
+worst, with Sy Cn placed in-between and Sn Cy almost as
+
+63
+
+Instance
+
+angioplasty
+
+bicalutamide
+
+Run
+
+Sn Cn
+Sy Cn
+Sn Cy
+
+Attributes
+Precision
+@5
+@10
+0.00 0.00
+1.00 0.75
+1.00 0.95
+
+Sy Cy
+Per-class
+
+1.00
+1.00
+
+0.75
+0.90
+
+Sn Cn
+Sy Cn
+Sn Cy
+
+0.60
+0.60
+0.60
+
+0.40
+0.40
+0.80
+
+Sy Cy
+
+0.60
+
+0.80
+
+Per-class
+
+0.40
+
+0.40
+
+Top Ten Attributes
+none extracted
+[history, types, complications, risks, deﬁnition, cost, pictures, symptoms, center, side eﬀects]
+[complications, cost, history, types, risks, purpose, deﬁnition, pictures, side eﬀects, advantages]
+[history, complications, types, cost, risks, deﬁnition, pictures, side eﬀects, symptoms, center]
+[types, history, pictures, cost, principles, pros and cons, map, deﬁnition, diﬀerent types,
+methods]
+[solubility, analytical methods, inventor, dossier development, last patent, adverse eﬀects]
+[solubility, analytical methods, inventor, dossier development, last patent, adverse eﬀects]
+[solubility, analytical methods, inventor, last patent, dossier development, adverse eﬀects,
+side eﬀects, pharmacology, eﬀects, pharmacokinetics]
+[solubility, analytical methods, inventor, last patent, dossier development, adverse eﬀects,
+side eﬀects, pharmacology, eﬀects, pharmacokinetics]
+[symptoms, causes, side eﬀects, types, eﬀects, pathophysiology, treatment, american journal,
+deﬁnition, signs and symptoms]
+
+Table 5: Ranked lists of attributes extracted by various runs for a sample of target instances
+Att.
+Count
+[0,0]
+
+[1,5]
+
+[6,20]
+
+[21,50]
+
+[51,∞)
+
+[0,∞)
+(entire
+set)
+
+Run
+Sn Cn
+Sy Cn
+Sn Cy
+Sy Cy
+Sn Cn
+Sy Cn
+Sn Cy
+Sy Cy
+Sn Cn
+Sy Cn
+Sn Cy
+Sy Cy
+Sn Cn
+Sy Cn
+Sn Cy
+Sy Cy
+Sn Cn
+Sy Cn
+Sn Cy
+Sy Cy
+Sn Cn
+(Rel)
+(Err)
+Sy Cn
+(Rel)
+(Err)
+Sn Cy
+(Rel)
+(Err)
+Sy Cy
+(Rel)
+(Err)
+Perclass
+
+@5
+0.00
+0.61
+0.80
+0.77
+0.22
+0.24
+0.60
+0.60
+0.61
+0.63
+0.64
+0.64
+0.67
+0.71
+0.69
+0.71
+0.68
+0.72
+0.75
+0.77
+0.44
+0%
+-0%
+0.58
+31%
+-25%
+0.69
+57%
+-45%
+0.69
+57%
+-45%
+0.52
+
+@10
+0.00
+0.57
+0.76
+0.74
+0.11
+0.13
+0.54
+0.53
+0.54
+0.60
+0.66
+0.63
+0.71
+0.73
+0.71
+0.72
+0.66
+0.71
+0.70
+0.71
+0.41
+0%
+-0%
+0.54
+32%
+-22%
+0.67
+63%
+-44%
+0.66
+61%
+-42%
+0.50
+
+Precision
+@20
+@30
+0.00
+0.00
+0.52
+0.50
+0.65
+0.64
+0.66
+0.65
+0.05
+0.04
+0.09
+0.08
+0.43
+0.40
+0.43
+0.40
+0.33
+0.22
+0.49
+0.44
+0.55
+0.53
+0.58
+0.54
+0.68
+0.60
+0.70
+0.66
+0.68
+0.64
+0.68
+0.64
+0.65
+0.64
+0.66
+0.63
+0.68
+0.65
+0.67
+0.66
+0.34
+0.30
+0%
+0%
+-0%
+-0%
+0.49
+0.46
+44%
+53%
+-23%
+-23%
+0.59
+0.57
+74%
+90%
+-38%
+-39%
+0.60
+0.58
+76%
+93%
+-39%
+-40%
+0.47
+0.44
+
+@40
+0.00
+0.46
+0.62
+0.61
+0.03
+0.07
+0.38
+0.39
+0.16
+0.40
+0.51
+0.52
+0.51
+0.60
+0.61
+0.62
+0.63
+0.62
+0.62
+0.63
+0.27
+0%
+-0%
+0.43
+59%
+-22%
+0.55
+104%
+-38%
+0.55
+104%
+-38%
+0.43
+
+instances, and therefore they correspond to points on the
+curves from the last graph of Figure 4. Also shown in the
+table are the relative increases (Rel) and the reduction in the
+error rates (Err) at various ranks, for each of Sy Cn , Sn Cy
+or Sy Cy , on one hand, relative to Sn Cn , on the other hand.
+Per-class attributes: For a comparison, we have used the
+procedure in [17] as another baseline. This is a per-class extraction procedure that works, from the same input data as
+the per-instance attribute extraction (Sn Cn ) in the following way: ﬁrst, from the IsA data, each instance is associated
+with its highest-ranking class label. For every class label, it
+looks for attributeness-denoting lexicosemantic patterns in
+the query logs (e.g. X of Y ) involving any element in the
+class. The extracted attributes are ranked by frequency in
+the whole class, and assigned, equally, to all the class elements. There are more than one million class labels, to ensure that they are ﬁne-grained enough that only very closely
+related instances belong to the same class.
+The last row in Table 4 shows the results using this method.
+The scores consistently improve over the per-instance attribute extraction (Sn Cn ). This is mainly due to the sparse
+data aﬀecting Sn Cn : the fact that the instances are grouped
+together and all their attributes are shared allows the perclass extraction to collect at least 50 attributes for 98% of
+the instances. On the other hand, since all the instances in
+the same class have the same relative weight, attributes that
+are vital only to some members of the class may receive a
+high standing for all of them. Some examples are king for
+u.s., or senator for countries that do not have a Senate. Using the graph structure this is partially avoided because (a)
+each instance has the highest distributional similarity with
+itself, and (b) every instance share all its class labels with
+itself. Therefore, the per-instance original attributes tend
+to end up higher in the ﬁnal lists after the propagation.
+Examples: Table 5 shows the top items in the ranked lists
+of attributes extracted for a few of the 75 target instances.
+For angioplasty and bicalutamide, Sn Cn extracts 0 and 6
+attributes respectively. The other three runs extract more
+instances via propagation, with the exception of Sy Cn for the
+instance bicalutamide. The per-class procedure does well for
+angioplasty, but bicalutamide shows some drawbacks of this
+procedure: although its class label is correctly identiﬁed in
+the IsA data (antiandrogens), this class mistakenly contains
+a couple of sicknesses, which pollute the list of attributes.
+
+@50
+0.00
+0.46
+0.60
+0.59
+0.02
+0.06
+0.37
+0.38
+0.13
+0.38
+0.50
+0.50
+0.42
+0.57
+0.60
+0.60
+0.61
+0.61
+0.62
+0.62
+0.24
+0%
+-0%
+0.41
+71%
+-22%
+0.53
+121%
+-38%
+0.54
+125%
+-39%
+0.42
+
+Table 4: Precision scores at various ranks, as an average over subsets of the evaluation set of instances,
+where a subset contains the instances whose number of
+attributes extracted by the experimental run Sn Cn falls
+into a particular count range (Rel=increase relative to
+Sn Cn ; Err=error reduction relative to Sn Cn ). In each
+solid-line block in the table, the highest value and those
+that are indistinguishable at 95% confidence are bolded
+
+petitive for the range [0,0], where sparseness is extreme (no
+initial attributes) vs. the range [51,∞), where sparseness
+over the top 50 attributes is non-existent.
+In the lower part of Table 4, for the range [0,∞), the
+precision scores are computed over the entire set of target
+
+64
+
+7.
+
+CONCLUSIONS
+
+Data sparseness is a problem aﬀecting the precision and
+coverage of open-domain information extraction tasks. Instance attribute extraction is not an exception. Data capturing the degree to which various instances may be related to
+one another is useful in re-ranking and expanding attributes
+extracted from text with standard techniques. The injection of instance relatedness data into a graph representing
+the initially extracted instance attributes, allows for relevant
+attributes to be propagated across related instances. The resulting ranked lists of attributes have higher accuracy levels
+than previous results. When both class labels and distributionally similar instances are available, the improvements
+using the two methods are comparable. Current work investigates the utility of distributional similarities among class
+labels, as signals during propagation.
+
+[12]
+
+[13]
+
+[14]
+
+[15]
+
+[16]
+
+8.
+
+REFERENCES
+
+[1] E. Agirre, E. Alfonseca, K. Hall, J. Kravalova,
+M. Paşca, and A. Soroa. A Study on Similarity and
+Relatedness Using Distributional and WordNet-based
+Approaches. In Proceedings of NAACL-2009, pages
+19–27, 2009.
+[2] K. Bellare, P. Talukdar, G. Kumaran, F. Pereira,
+M. Liberman, A. McCallum, and M. Dredze.
+Lightly-Supervised Attribute Extraction. In NIPS
+Workshop on Machine Learning for Web Search, 2007.
+[3] T. Brants. TnT - a statistical part of speech tagger. In
+Proceedings of the 6th Conference on Applied Natural
+Language Processing (ANLP-00), pages 224–231,
+Seattle, Washington, 2000.
+[4] M. Cafarella, A. Halevy, D. Wang, and Y. Zhang.
+Webtables: Exploring the Power of Tables on the Eeb.
+Proceedings of the VLDB Endowment archive,
+1(1):538–549, 2008.
+[5] N. Chinchor. Overview of MUC-7/MET-2. In
+Proceedings of the Seventh Message Understanding
+Conference (MUC-7), volume 1, 1998.
+[6] T. Chklovski and Y. Gil. An Analysis of Knowledge
+Collected from Volunteer Contributors. In Proceedings
+of the National Conference on Artiﬁcial Intelligence,
+page 564, 2005.
+[7] G. Cui, Q. Lu, W. Li, and Y. Chen. Automatic
+Acquisition of Attributes for Ontology Construction.
+In Proceedings of the 22nd International Conference
+on Computer Processing of Oriental Languages.
+Language Technology for the Knowledge-based
+Economy, pages 248–259, 2009.
+[8] O. Etzioni, M. Banko, S. Soderland, and S. Weld.
+Open Information Extraction from the Web.
+Communications of the ACM, 51(12), December 2008.
+[9] N. Guarino. Concepts, Attributes and Arbitrary
+Relations. Data and Knowledge Engineering,
+8:249–261, 1992.
+[10] T. Hasegawa, S. Sekine, and R. Grishman. Discovering
+relations among named entities from large corpora. In
+Proceedings of the 42nd Annual Meeting of the
+Association for Computational Linguistics (ACL-04),
+pages 415–422, Barcelona, Spain, 2004.
+[11] M. Hearst. Automatic acquisition of hyponyms from
+large text corpora. In Proceedings of the 14th
+
+[17]
+
+[18]
+
+[19]
+
+[20]
+[21]
+
+[22]
+
+[23]
+
+[24]
+
+[25]
+
+[26]
+
+65
+
+International Conference on Computational
+Linguistics, pages 539–545, Nantes, France, 1992.
+L. Lee. Measures of Distributional Similarity. In
+Proceedings of the 37th annual meeting of the
+Association for Computational Linguistics, pages
+25–32, 1999.
+D. Lin and P. Pantel. Concept Discovery from Text.
+In Proceedings of COLING, volume 2, pages 577–583,
+2002.
+R. Mooney and R. Bunescu. Mining knowledge from
+text using information extraction. SIGKDD
+Explorations, 7(1):3–10, 2005.
+V. Nastase and M. Strube. Decoding wikipedia
+categories for knowledge acquisition. In Proceedings of
+the 23rd National Conference on Artiﬁcial Intelligence
+(AAAI-08), pages 1219–1224, Chicago, Illinois, 2008.
+M. Paşca. Organizing and searching the World Wide
+Web of facts - step two: Harnessing the wisdom of the
+crowds. In Proceedings of the 16th World Wide Web
+Conference (WWW-07), pages 101–110, 2007.
+M. Paşca and B. Van Durme. What you seek is what
+you get: Extraction of class attributes from query logs.
+In Proceedings of IJCAI-07, pages 2832–2837, 2007.
+M. Paşca and B. Van Durme. Weakly-supervised
+acquisition of open-domain classes and class attributes
+from web documents and query logs. In Proceedings of
+the 46th Annual Meeting of the Association for
+Computational Linguistics (ACL-08), pages 19–27,
+Columbus, Ohio, 2008.
+K. Probst, R. Ghani, M. Krema, A. Fano, and Y. Liu.
+Semi-Supervised Learning of Attribute-Value Pairs
+from Product Descriptions. IJCAI-07, 2007.
+J. Pustejovsky. The Generative Lexicon: a Theory of
+Computational Lexical Semantics, 1991.
+S. Raju, P. Pingali, and V. Varma. An Unsupervised
+Approach to Product Attribute Extraction. In
+Proceedings of the 31th European Conference on IR
+Research on Advances in Information Retrieval, pages
+796–800, 2009.
+F. Suchanek, G. Kasneci, and G. Weikum. Yago: a
+core of semantic knowledge unifying WordNet and
+Wikipedia. In Proceedings of WWW-2007, pages
+697–706, 2007.
+K. Tokunaga, J. Kazama, and K. Torisawa. Automatic
+discovery of attribute words from Web documents. In
+Proceedings of the 2nd International Joint Conference
+on Natural Language Processing (IJCNLP-05), pages
+106–118, 2005.
+T. Wong and W. Lam. An Unsupervised Method for
+Joint Information Extraction and Feature Mining
+Across Diﬀerent Web Sites. Data & Knowledge
+Engineering, 68(1):107–125, 2009.
+F. Wu, R. Hoﬀmann, and D. Weld. Information
+extraction from Wikipedia: Moving down the long
+tail. In Proceedings of the 14th ACM SIGKDD
+Conference on Knowledge Discovery and Data Mining
+(KDD-08), pages 731–739, 2008.
+N. Yoshinaga and K. Torisawa. Open-Domain
+Attribute-Value Acquisition from Semi-Structured
+Texts. In Proceedings of the Workshop on Ontolex,
+pages 55–66, 2007.
+
+

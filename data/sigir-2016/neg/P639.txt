@@ -1,0 +1,1740 @@
+Improved Caching Techniques for
+Large-Scale Image Hosting Services
+Xiao Bai
+
+B. Barla Cambazoglu
+
+xbai@yahoo-inc.com
+
+barla@berkantbarlacambazoglu.com
+
+Yahoo Research
+Sunnyvale, USA
+
+Independent Researcher
+Barcelona, Spain
+
+ABSTRACT
+
+Yahoo Inc.
+San Francisco, USA
+
+archie@yahoo-inc.com
+
+in the data center(s) and hosts at least one copy of all available images. Cache proxies are located in di↵erent geographical regions and have relatively smaller storage systems that
+host images requested by the clients in their region.1 Finally,
+edge caches are general-purpose storage systems located at
+the network entry points of the image hosting service and
+may store images as well as other kinds of files.
+The data centers, cache proxies, and edge caches form
+parts of a storage system hierarchy that is distributed over
+the network. When a client of the hosting service requests
+a particular image, the request is first tried to be resolved
+by looking up the image in the closest edge cache in the
+network. If the requested image is not found in the edge
+cache, the request is forwarded to the regional cache proxy
+responsible for the client’s region. If the requested image is
+found in the regional cache proxy, the image is served by the
+cache. If the requested image itself is not available, it may
+still be possible to obtain and serve the image by resizing
+a higher resolution version of the image previously cached
+in the proxy [9]. If both attempts fail (i.e., a cache miss),
+the request is finally forwarded to a data center, which is
+guaranteed to have the requested image, and the image is
+served by the backend image storage in that data center.
+When designing and constructing cache hierarchies like
+the one mentioned above, an important optimization objective is to minimize the miss rate of regional caches.2 This is
+usually achieved by storing, in the respective regional cache,
+images that are frequently and/or recently requested by the
+clients of a particular region. Reducing the miss rate of regional caches relieves the request workload of the backend
+storage systems in data centers. Moreover, due to the close
+proximity of such caches to the clients, considerable reduction can be achieved in the serving latency if more images
+are served by these caches. This, in turn, may make a positive impact on users’ engagement with the image hosting
+service, especially when the user-perceived response latency
+values (in case of no regional caches) are beyond the range
+tolerable by the users. In practice, the financial cost of constructing these regional caches often forms a constraint for
+image hosting companies. Therefore, a regional cache can
+have storage capacity (memory and disk) that is sufficient
+to cache only a limited portion of the image collection.
+Our paper investigates the static caching problem in geographically distributed image hosting services. Despite the
+
+Commercial image serving systems, such as Flickr and Facebook, rely on large image caches to avoid the retrieval of requested images from the costly backend image store, as much
+as possible. Such systems serve the same image in di↵erent
+resolutions and, thus, in di↵erent sizes to di↵erent clients,
+depending on the properties of the clients’ devices. The requested resolutions of images can be cached individually, as
+in the traditional caches, reducing the backend workload.
+However, a potentially better approach is to store relatively
+high-resolution images in the cache and resize them during
+the retrieval to obtain lower-resolution images. Having this
+kind of on-the-fly image resizing capability enables image
+serving systems to deploy more sophisticated caching policies and improve their serving performance further.
+In this paper, we formalize the static caching problem in
+image serving systems which provide on-the-fly image resizing functionality in their edge caches or regional caches.
+We propose two gain-based caching policies that construct
+a static, fixed-capacity cache to reduce the average serving
+time of images. The basic idea in the proposed policies is
+to identify the best resolution(s) of images to be cached so
+that the average serving time for future image retrieval requests is reduced. We conduct extensive experiments using
+real-life data access logs obtained from Flickr. We show
+that one of the proposed caching policies reduces the average response time of the service by up to 4.2% with respect
+to the best-performing baseline that mainly relies on the
+access frequency information to make the caching decisions.
+This improvement implies about 25% reduction in cache size
+under similar serving time constraints.
+
+1.
+
+Archie Russell
+
+INTRODUCTION
+
+Commercial image hosting services (e.g., Flickr, Facebook) rely on image serving systems that are geographically
+distributed in nature. A typical image serving system involves at least one data center, some cache proxies, and a
+number of edge caches. The main storage system is located
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than
+ACM must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+
+1
+Here, the client may refer to a real user, a crawling bot, or
+some automated software.
+2
+In the rest of the paper, we refer to cache proxies and edge
+caches together as regional caches.
+
+SIGIR ’16, July 17-21, 2016, Pisa, Italy
+c 2016 ACM. ISBN 978-1-4503-4069-4/16/07. . . $15.00
+DOI: http://dx.doi.org/10.1145/2911451.2911513
+
+639
+
+Regional Cache
+
+dynamic nature of the request streams, previous research [1]
+has revealed that static caches, which serve highly frequent
+requests, play an important role in building e↵ective caching
+systems with high hit rates. Small dynamic caches usually
+lead to lower hit rates than static caches of similar size, and
+a combined static/dynamic cache always has its dynamic
+part built on top of its static part.3 In this work, we particularly focus on static caching, which is a more fundamental
+problem than dynamic caching. Adding a dynamic cache
+to serve images that are not found in the static cache is
+complementary to our problem.
+The objective in our static caching problem is to select
+images to be stored in a fixed-capacity regional cache (in an
+o✏ine manner) such that the average response time for future image retrieval requests is minimized. This particular
+caching problem is slightly di↵erent from the static caching
+problem in similar domains (e.g., page caching in web proxies or result caching in web search engines) because the same
+image is often stored in many di↵erent resolutions.4 As a
+result, a cache hit does not necessarily lead to similar response time as in web search, rendering the cache hit rate
+not an ideal optimization target. In our case, it is possible to
+serve a retrieval request by generating the requested image
+after resizing one of its higher resolution versions previously
+stored in the cache [9]. Hence, a cache hit may be possible
+even if the requested resolution of the image is not found
+in the cache. As we will discuss, this di↵erence leads to a
+slightly more complex cost model when caching images.
+The contributions of this paper are as follows. We first
+provide a system model and a cost model, both guided by
+real-life observations, for the static caching problem in largescale image hosting services. We then provide a formal definition for the static image caching problem where the optimization objective is to minimize the average serving time of
+the image hosting system under a cache capacity constraint.
+As a solution for this problem, we provide some frequencybased heuristics and propose two gain-based heuristics that
+aim to reduce the average serving time. We conduct extensive experiments using real-life access logs obtained from
+Flickr. Under the same cache capacity constraint, the average response time achieved by one of the proposed heuristics
+is up to 4.2% less than that of the best-performing baseline.
+This is equivalent to a cache size reduction of 25% under
+similar serving time constraints.
+The rest of the paper is organized as follows. In Section 2,
+we formally define the static caching problem that we investigate after presenting a realistic system model and a cost
+model. In Section 3, we provide some heuristic solutions for
+the problem. The experimental setting and results are presented in Sections 4 and 5, respectively. The related work is
+surveyed in Section 6. We conclude the paper in Section 7.
+
+2.
+2.1
+
+Image Resizer
+
+j
+
+Ii
+
+k
+
+Ii
+
+Client
+
+j
+
+Ii
+
+j
+
+Ii
+Request for I
+
+Data Center
+
+j
+i
+
+Image Store
+
+j
+
+Image Cache
+
+Ii
+
+Figure 1: Architecture of an image serving system.
+Every logical image Ii in the collection is available in exactly
+m di↵erent resolutions {Ii1 , . . . , Iim } (referred to as physical
+images). We denote by S(Iij ) the size of a physical image Iij
+(in bytes). For convenience, we assume that S(Iik ) > S(Iij )
+if and only if k > j, for all i.
+Without loss of generality, we consider an abstract serving
+architecture composed of a single data center D and a single
+regional cache R. Data center D stores at least one copy of
+all physical images in the collection. Regional cache R can
+store a much smaller and fixed subset R of physical images.
+As we will discuss in Section 2.3, the selection of images to
+be stored on R forms the focus of our static caching problem.
+We illustrate the system architecture in Fig. 1.
+The client requests are redirected to one of the nearby
+regional caches (e.g., using the IP addresses) in a quasideterministic way to ensure low network latency. Therefore,
+each regional cache has its own stream of requests and the
+related images to manage. Moreover, regional caches do not
+communicate with each other due to their high geographical
+(and network) distance. Communicating with a single data
+center or several data centers only a↵ects the cost of fetching an image from the backend as we will discuss shortly.
+Therefore, using this abstract serving architecture does not
+a↵ect the design of caching policy.
+A request issued by some client c to retrieve a physical
+image Iij is resolved in the following order.
+– Physical cache hit: The request first reaches regional
+cache R. If Iij exists in R, it can be immediately
+served to client c by regional cache R (the green edge
+in Fig. 1).
+– Logical cache hit: Occasionally, Iij does not exist in R,
+but a higher resolution physical image Iik , such that
+j < k  m, may exist in R. In that case, Iik is resized
+on-the-fly by the image resizer that is co-located with
+the cache servers to obtain Iij , which is then served to
+client c by regional cache R (the blue edges in Fig. 1).
+
+STATIC IMAGE CACHING
+
+– Cache miss: If both attempts fail, the request for Iij
+is forwarded to the backend image store in data center
+D. Iij is then transferred over the network from data
+center D to regional cache R and then served to client
+c (the red edges in Fig. 1).
+
+System Model
+
+We assume an image collection {I1 , . . . , In } containing n
+images each with a unique id (referred to as logical images).
+
+2.2
+
+3
+In general, the items in a static cache are updated periodically, e.g., on a daily basis, and those in a dynamic cache
+may be updated upon a cache miss.
+4
+This is mainly because client devices di↵er in terms of their
+resolution (e.g., a desktop computer versus a mobile phone).
+
+Cost Model
+
+Given a regional cache R with its image collection R and
+a physical image Iij , we compute the end-to-end response
+latency, T (R, Iij ), as
+
+640
+
+8
+j
+< TPCH (Ii ),
+j
+j k
+T (R, Ii ) =
+(I , I ),
+T
+: LCH ji i
+TCM (Ii ),
+
+without violating the cache capacity constraint
+X
+
+Iij
+Iij
+
+2 R;
+2
+/ R, 9k, j < k  m, Iik 2 R;
+otherwise.
+(1)
+
+j
+Ii 2R⇤
+
+Tread (Iij )
+
+3.
+
+(2)
+
+where
+denotes the time to read image
+from the
+memory or disk (depending on where the image is stored
+in the cache) and TRc (Iij ) denotes the time to send image
+Iij from regional cache R to client c. Both times are positively correlated with the size of image Iij . TRc (Iij ) is also
+correlated with the distance between R and c.
+For a logical cache hit, the latency is computed as
+
+3.1
+
+f 0 (Ii ) =
+
+(4)
+
+Problem Definition
+
+T (R, I) =
+
+j
+
+f (Iij ) ⇥ T (R, Iij )
+.
+P
+f (Iij )
+j
+I 2I
+
+Ii 2I
+
+(5)
+
+i
+
+The objective of our static image caching problem is to
+fill a fixed-capacity static cache with a selected subset R⇤
+of images so that the average response latency is minimized
+for a given sequence I of image retrieval requests. More
+formally, the objective is to find
+R⇤ = argmin T (R, I)
+
+f 0 (Iij ),
+
+(8)
+
+where f 0 (Iij ) denotes the past request frequency of physical
+image Iij . We next present three frequency-based heuristics.
+Largest requested (LR). Logical images are sorted in
+decreasing order of their past frequency values (f 0 (Ii )) and
+we iterate on images in this order. For each logical image
+Ii that is currently under consideration, we select its largest
+physical image that was requested at least once in the past,
+i.e., we cache a single physical image Iik such that f 0 (Iik ) 1
+S(Iij ), for all Iij , where 1  j  m.5 This
+and S(Iik )
+heuristic aims to increase the logical cache hit rate at the
+expense of more aggressive cache space consumption at each
+caching decision.
+Most requested (MR). Similar to LR, logical images are
+considered in decreasing order of their past frequency values. For each logical image currently being considered, we
+select the most frequently requested physical image associated with that logical image, i.e., we cache a single physf 0 (Iij ), for all Iij , where
+ical image Iik such that f 0 (Iik )
+1  j  m. This heuristic aims to increase the physical
+cache hit rate while preserving high logical cache hit rates for
+physical images with lower resolutions (i.e., smaller sizes).
+Most requested per byte (MRPB). Physical images are
+sorted in decreasing order of their size-normalized past frequency values (f 0 (Iij )/S(Iij )) and are admitted to the cache
+in this order. Normalizing frequency values with image sizes
+enables more efficient use of available cache space. Similar
+heuristics were previously used in other problem contexts,
+such as posting list caching [1], result caching [7, 14], and
+document replication [6, 10] for web search engines.
+
+We are given a sequence I of image retrieval requests. We
+denote by f (Iij ) the frequency of requests in I for physical
+image Iij . Given a statically cached image collection R, the
+average response latency for serving the requests in I can
+be computed as
+P
+
+j=m
+X
+j=1
+
+where Tread (Iij ) denotes the time it takes to read image Iij
+from the disk (of the backend image store), and TDR (Iij )
+denotes the time to transfer image Iij from data center D to
+regional cache R over the network.
+We note that this cost model assumes that conversion
+from Iik to Iij is time-wise cheaper than fetching Iij from the
+backend image store in data center D, i.e., logical cache hits
+are always cheaper than cache misses. In practice, however,
+there may be cases where it is more beneficial to retrieve Iij
+from data center D instead of resizing at regional cache R
+(especially when the resolution di↵erence between Iik and Iij
+is too large). In Section 4.4, we provide more detail for the
+computation of the costs given in Eqs. (2), (3), and (4).
+
+2.3
+
+Frequency-Based Heuristics
+
+In this line of heuristics, the greedy choice property relies
+on the frequency with which images will be requested from
+the image hosting service. Since the future request frequency
+of an image is unknown, it is estimated using the image’s
+observed request frequency in a past time period. As in most
+other static caching problems, the fundamental assumption
+here is that the past and future request frequencies of images
+are highly correlated. We denote by f 0 (Ii ) the past request
+frequency of a logical image Ii and compute it as
+
+(3)
+
+where Tresize (Iik , Iij ) denotes the time required to obtain the
+requested image Iij by resizing a higher resolution image Iik
+available in R. This cost increases with both S(Iik ) and
+S(Iij ). We note that, if there are multiple images that have
+higher resolution than Iij , we always use the one that leads
+to the least time for resizing, i.e., the one closest to Iij in
+terms of resolution.
+Finally, for a cache miss, the latency is computed as
+TCM (Iij ) = Tread (Iij ) + TDR (Iij ) + TRc (Iij ),
+
+STATIC CACHING HEURISTICS
+
+In this section, we introduce some heuristic solutions for
+the problem given in Section 2.3. All of the presented heuristics are greedy in nature. The basic idea behind them is to
+sort logical or physical images according to a greedy choice
+property and select images to be cached in that sorted order. The selection of images continues as long as the cache
+capacity constraint given in Eq. (7) is not violated. The
+heuristics di↵er mainly in the way they define the greedy
+choice property. Herein, we present the heuristics under two
+headings: frequency-based and gain-based heuristics.
+
+Iij
+
+TLCH (Iij , Iik ) = Tread (Iik ) + Tresize (Iik , Iij ) + TRc (Iij ),
+
+(7)
+
+where C denotes the storage capacity of the cache (in bytes).
+
+Here, TPCH , TLCH , and TCM denote the response latency in
+the case of a physical cache hit, a logical cache hit, and a
+cache miss, respectively.
+In the case of a physical cache hit, the latency is simply
+computed as
+TPCH (Iij ) = Tread (Iij ) + TRc (Iij ),
+
+S(Iij )  C,
+
+(6)
+
+5
+
+R
+
+641
+
+The ties are broken arbitrarily.
+
+3.2
+
+Gain-Based Heuristic
+
+Algorithm 1 Gain-based caching heuristic (LGPB)
+
+In this line of heuristics, instead of mainly relying on
+the observed request frequency of images, the greedy choice
+property prefers to select images that can ensure low response time, which is more inline with the objective of the
+static image caching problem defined in Section 2.3. Herein,
+we propose two gain-based heuristics. We note that di↵erent
+gain-based heuristics were proposed before in the context of
+web search result caching [7, 14].
+Largest gain per byte (LGPB). When making caching
+decisions, this heuristic prefers images that are expected to
+bring the largest reduction in response time over all image
+requests. Given a set R of statically cached images and a
+physical image Iij , we can estimate the total response time
+gain, G(R, Iij ), achieved by caching Iij as
+G(R, Iij ) =
+
+m
+X
+
+k=1
+
+f 0 (Iik ) ⇥ (T (R, Iik )
+
+T (R [ {Iij }, Iik )).
+
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+9.
+10.
+11.
+
+12.
+13.
+14.
+
+(9)
+
+15.
+16.
+17.
+
+Here, we essentially compute the expected response time
+gain by only considering logical image Ii . This is because
+caching physical image Iij may a↵ect only the response time
+of requests for physical images (Iik , for 1  k  m) associated with logical image Ii . The response times of requests
+for other physical images remain the same as none of those
+images can be obtained by resizing Iij . However, caching a
+physical image Iij may a↵ect the response time gains estimated for other physical images associated with logical image Ii . To be more specific, when the set R of cached images
+does not contain any physical image associated with logical
+image Ii , the estimated response time gain for caching image
+Iik for image Iij (j < k) is TCM (Iij ) TLCH (Iij , Iik ) (Eq. (1)).
+Once image Ii` (` > k) is cached in R, the estimated response time gain of caching image Iik for image Iij becomes
+TLCH (Iij , Ii` ) TLCH (Iij , Iik ). Therefore, we compute the response time gain for each image in an iterative way, considering physical images previously estimated to have higher priority (i.e., those with larger estimated response time gains)
+for the corresponding logical image.
+Similar to MRPB, the LGPB heuristic selects the images in
+decreasing order of their estimated response time gains normalized by the image size (G(R, Iij )/S(Iij )) to enable more
+efficient use of the available cache space. The pseudo-code
+given in Algorithm 1 shows how the LGPB heuristic updates
+the estimated response time gain for each image and how
+it selects the images admitted to the cache. For every logical image Ii , we first compute the size-normalized response
+time gain for each of the physical images associated with Ii
+(Lines 3–10) and assign the largest gain to the corresponding image Iij (Lines 11–14). Ri denotes the set of physical
+images that have been estimated to have high priority to be
+added to the cache for logical image Ii . We then recompute
+the response time gains for every image Iik , where 1  k  m
+and k 6= j, given that Iij has been added to Ri (by repeating Lines 6–15). We keep assigning the largest (updated)
+response time gain to the corresponding image and recomputing the gain values for the rest of images whose gain
+values have not been assigned yet. We continue this process
+until a gain value is assigned to each of the physical images
+associated with the logical image (by repeating Lines 3–16).
+The size-normalized response time gains for m physical
+images associated with a logical image can be computed by
+1)
+updates. Therefore, the overall comperforming m⇥(m
+2
+plexity to compute the response time gain for all n logical
+
+18.
+19.
+
+Input: Image collection {I1 , ..., In }
+Output: Set R⇤ of images to be placed in the cache
+for each logical image Ii in {I1 , ..., In } do
+cacheCandidates
+;
+imageCandidates
+{Ii1 , ..., Iim }
+while imageCandidates 6= ; do
+timeGains
+;
+for each physical image Iij in imageCandidates do
+timeGains
+timeGains [ { hIij , G(Ri , Iij )/S(Iij )i}
+end for
+⇤
+⇤
+⇤
+get image Iij having the highest G(Ri , Iij )/S(Iij ) in
+timeGains
+⇤
+Ri
+Ri [ {Iij }
+⇤
+
+imageCandidates
+imageCandidates \ {Iij }
+cacheCandidates
+⇤
+⇤
+⇤
+cacheCandidates [ { hIij , G(Ri , Iij )/S(Iij )i}
+end while
+end for
+sort the images in cacheCandidates in decreasing order of
+G(Ri , Iij )/S(Iij )
+P
+select images for R⇤ until I j 2R⇤ S(Iij ) > C
+return R⇤
+
+i
+
+images is O(m2 ⇥ n). Since an image usually has a dozen
+of di↵erent resolutions in an image hosting service while a
+large-scale service may receive requests for millions of images every day, we typically have m ⌧ n. Therefore, in
+practice, the complexity of the LGPB heuristic is comparable
+to the complexity (O(n)) of the frequency-based heuristics
+presented in Section 3.1.
+Largest gain per byte with frequency adjustment
+(LGPB-FA). This heuristic is a variant of LGPB. Its key di↵erence with LGPB, as well as the frequency-based heuristics, is
+in the way it estimates the future frequency of each request.
+The motivation stems from the observation that the past
+frequency of requests is not always strongly correlated with
+their future frequency, especially in the case of infrequent
+requests [7]. Table 1 shows the Pearson correlation coefficient between the frequency of the physical image requests
+in the past (the training period of the experiments reported
+in Section 4.2) and the frequency of the same physical image requests in the future (the testing period of the experiments). As the request frequency follows a heavily skewed
+distribution, we group the requests according to their frequencies in the past and compute the Pearson correlation
+coefficient for each group respectively. We observe that the
+future frequency of a request is more correlated with its past
+frequency if it is a frequent query, and there is little correlation when a request only occurs a handful of times in the
+past. We further observe from Fig. 2 that the reason for the
+decreasing correlation at low frequency range is mainly because the likelihood of not observing the infrequent requests
+in the future increases. In the figure, the requests with high
+frequencies are grouped by frequency to ensure each group
+has at least 100 requests to compute the probability. The
+adjacent two x-axis values represent the frequency range of
+the corresponding group.
+To take this into account, we adjust the frequency estimation for computing the response time gain of caching image
+Iij , i.e., G(R, Iij ) in Eq. (9), as follows. Instead of using the
+past frequency of each request directly in Eq. (9), we multiply f 0 (Iik ) by the probability of the requests whose past fre-
+
+642
+
+Table 1: Correlation between past and future frequencies of physical image requests
+Frequency range
+[1, 10)
+[10, 100)
+[100, 1000)
+[1000, 10000)
+[10000, 1]
+
+Percent of requests
+97.6307
+2.2864
+0.0786
+0.0041
+0.0002
+
+Table 2: Available physical image resolutions
+Symbol
+s1
+s2
+s3
+s4
+s5
+s6
+s7
+s8
+s9
+s10
+s11
+
+Correlation coefficient
+0.0775
+0.1587
+0.5480
+0.6024
+0.9806
+
+0.9
+0.8
+0.7
+
+4
+
+10
+
+0.5
+0.4
+
+103
+
+0.3
+0.2
+0.1
+0
+1.0
+
+10
+100
+1000
+Physical image request frequency in the past
+
+10000
+
+0
+
+m
+X
+
+k=1
+
+p(fb(Iik ) > 0 | f 0 (Iik ) 2 [a, b))⇥
+
+f
+
+0
+
+(Iik )
+
+⇥
+
+(T (R, Iik )
+
+T (R [
+
+-1
+
+s1
+
+s2
+
+s3
+
+s4
+
+s5
+
+s6
+
+s7
+
+s8
+
+s9
+
+s10 s11
+
+Image resolution identifier
+
+(Iik ),
+
+Figure 3: Distribution of image sizes in bytes for
+each image resolution id.
+contains the id of the requested image (logical image), the id
+of the requested image resolution, the size of the requested
+image (in bytes), the timestamp of the request, and the IP
+address of the user who issued the request. We note that the
+id of the requested image and the id of the requested image
+resolution, together, uniquely identify a physical image.
+Each logical image is associated with 11 physical images.
+Di↵erent image resolutions are denoted by ids s1 , s2 , . . . , s11 .
+All physical images are obtained by resizing the original image uploaded by the user and stored in the backend image
+store. Table 2 shows the name and resolution information
+associated with each id. Since the aspect ratio of the original image is preserved during resizing, images with ids from
+s4 to s11 may have variable pixel widths, which we denote
+by W .
+The storage size of an image (in bytes) depends on the way
+the color is represented and the format of the image (e.g.,
+PNG, JPG, etc.). In our case, all physical images are stored
+in JPG format, which uses lossy compression. Therefore, the
+storage requirement of images may be very di↵erent even if
+their resolution is the same.
+The box plot in Fig. 3 provides information about the
+distribution of image sizes (in KB) for each resolution id.
+The blue lines in the plot indicate the median storage sizes.
+The median values vary from several KBs to one MB in
+increasing order of ids. The boxes extend to the first and
+third quartiles while the whiskers extend to the 10th and
+90th percentiles.
+The bar chart in Fig. 4 shows the fraction of download
+requests with a particular image resolution id observed in
+the access log. According to the figure, about half of the
+requests are for s6 (medium resolution images with a length
+of 500 pixels), which is the default resolution when serving
+
+(10)
+
+{Iij }, Iik )),
+
+where fb(Iik ) denotes the future frequency of request for image Iik . The underlying intuition for this adjustment is that
+an image is only beneficial to maintain in the cache if it will
+appear again in the future.
+The images to fill the cache are selected in the same way
+as LGPB (Algorithm 1) with the total response time gain
+of caching image Iij computed using Eq. (10). We note
+that, as shown in Fig. 2, the probability of a request appearing at least 100 times in the past also appearing in the
+future is close to 1, we only need to compute the probability
+p(fb(Iik ) > 0 | f 0 (Iik ) 2 [a, b)) for a limited number of frequency ranges. For instance, if we compute one probability
+for each frequency range [10x , 10x+1 ) for x 2, one probability for each frequency range [10x, 10(x + 1)) for 1  x < 10,
+and one probability for each frequency range [x, x + 1) for
+each 1  x < 10, at most 30 precomputed probabilities are
+enough to compute the largest gain with frequency adjustment. This adds a constant lookup overhead when computing the response time gain per byte and does not increases
+the overall complexity of the gain-based heuristics, i.e., the
+complexity of LGPB-FA is still O(m2 ⇥ n).
+
+4.1
+
+1
+
+10
+
+10
+
+quencies fall into the same frequency range [a, b) as f
+appearing in the future. The total response time gain due
+to caching of image Iij is now computed as
+G(R, Iij ) =
+
+102
+
+100
+
+Figure 2: The probability of a past request to reappear in the future with respect to its past frequency.
+
+4.
+
+Resolution (in pixels)
+75 ⇥ 75
+100 ⇥ 67
+150 ⇥ 150
+240 ⇥ W
+320 ⇥ W
+500 ⇥ W
+640 ⇥ W
+800 ⇥ W
+1024 ⇥ W
+1600 ⇥ W
+2048 ⇥ W
+
+0.6
+
+Image size in KB
+
+Probability of appearing in the future
+
+1.0
+
+Name
+Square 75
+Thumbnail
+Square 150
+Small 240
+Small 320
+Medium 500
+Medium 640
+Medium 800
+Large 1024
+Large 1600
+Large 2048
+
+EXPERIMENTAL SETTING
+Dataset
+
+As the dataset, we use an access log containing image
+download requests issued to an edge cache of Flickr during
+a period of three consecutive days. The entire log contains
+about 530 million requests. For each request, the access log
+
+643
+
+0.5
+
+0.7
+
+Requests for logical images
+Requests for physical images
+
+0.6
+Fraction of requests
+
+Fraction of requests
+
+0.4
+
+0.3
+
+0.2
+
+0.5
+0.4
+0.3
+0.2
+
+0.1
+0.1
+0
+
+s1
+
+s2
+
+s3
+
+s4
+
+s5
+
+s6
+
+s7
+
+s8
+
+s9
+
+s10
+
+0
+
+s11
+
+1
+2
+3
+4
+5+
+Number of requested unique physical images per logical image
+
+Image resolution identifier
+
+Figure 4: Number of requests for each resolution id.
+
+Figure 5: Distribution of requests with respect to
+the number of unique physical images requested per
+logical image.
+
+images. The requests for other resolutions are usually due
+to the variation in user devices, the resolution of screens,
+particular user requirements on image quality, and available
+network bandwidth.
+Fig. 5 shows the distribution of requests for logical and
+physical images with respect to the number of di↵erent physical image resolutions requested for a logical image. We observe that, for more than 33% of logical images, at least two
+di↵erent physical image sizes are requested. The number
+of requests for such images accounts for 60% of the total
+number of requests (for physical images). This implies that
+when on-the-fly resizing is enabled in the cache, it is possible to improve the system performance for the requests
+for di↵erent physical images of the same logical image by
+caching well-selected resolutions of that image rather than
+all possible physical images.
+
+4.2
+
+inition takes into account the fact that a cache can be distributed over a number of servers according to the backend
+size to make the system scalable. We assume that the cache
+is composed of an in-memory cache and a disk cache, which
+is widely used in modern caching systems. The cache size
+thus represents the total size of both caches. In our experiments, we assume that the backend image store maintains
+all 11 physical images associated with each logical image requested in the first two days of the access log. This results
+in a backend size of 287TB. Note that this assumption underestimates the size of the backend as the backend usually
+stores all images that were uploaded to the system in the
+past and is not limited to two days. Caching heuristics first
+fill the in-memory cache and then the on-disk cache until
+both caches are full.
+We evaluate the performance of the caching heuristics using a simulator written in Java. The simulator runs in a
+server with Quad-core 2.4GHz CPU and 48GB RAM. The
+information used by the simulator for selecting images to fill
+the cache (e.g., response time gain, frequency, sizes, etc.) is
+obtained by processing the training log using MapReduce
+jobs on Hadoop. This computation takes less than an hour
+for our training log and for each of the caching heuristics.
+
+Methodology
+
+We use the first two days (training period) of the access log
+to compute the frequency of requests for each physical image. The probability of a past request in a given frequency
+range appearing in the future is computed by considering
+the first day as the past and the second day as the future.
+We then execute our heuristics using the corresponding frequency information to fill the cache with images. The requests in the third day (test period) are used to evaluate the
+performance of the caching heuristics. The test set contains
+about 155 million requests.
+Our access log contains the size (in bytes) of each requested physical image. As shown in Fig. 5, often there
+are physical image resolutions that were not requested for
+a logical image. This means that for physical images that
+were not requested before, we need a mechanism to estimate
+their actual size in bytes. To this end, we use the following
+heuristic. If only one resolution sj of a (logical) image Ii
+was requested, the number of bytes for resolution sk (k 6= j)
+of Iik is estimated as
+P
+S(Iij ) ⇥ i S(Iik )/nk
+k
+S(Ii ) =
+,
+(11)
+P
+j
+i S(Ii )/nj
+
+4.3
+
+Metrics
+
+We use three di↵erent metrics to evaluate the performance
+of the proposed caching heuristics.
+– Cache hit rate: This metric measures the fraction of
+requests that are served by the cache. Since the system
+has an in-memory cache and a disk cache, and on-thefly resizing is used to compress images in both caches,
+we measure additional hit ratios: memory physical hit
+rate, disk physical hit rate, memory logical hit rate,
+and disk logical hit rate.
+– Response time: This metric measures the time it takes
+for the system to resolve a request, i.e., the time it
+takes before sending the requested image to the user
+after the request is received. The time between the
+user and the image hosting service (i.e., TRc in Eqs. (2),
+(3), and (4)) is excluded since this depends on other
+factors (e.g., user’s location, device, and bandwidth)
+that are not in the focus of this work. In addition, this
+time is the same for di↵erent caching heuristics given
+the same request issued by the same user, and thus
+
+where nk denotes the number of images with resolution sk
+in the log. If more than one resolution of an image was
+requested, we use resolution sj whose index j is the closest
+to index k to estimate S(Iik ) with the same equation. Our
+preliminary experiments show that using the closest index
+gives the most accurate estimation of the actual image size.
+We define the cache size as a percentage of the total number of bytes available in the backend image store. This def-
+
+644
+
+From
+
+s11
+
+180
+
+s10
+
+160
+
+s9
+
+140
+
+s8
+
+120
+
+s7
+
+100
+
+s6
+
+80
+
+s5
+
+60
+
+s4
+
+40
+20
+
+s3
+s1
+
+s2
+
+s3
+
+s4
+
+s5
+
+s6
+
+s7
+
+s8
+
+s9
+
+cost (set to 40ns). In the case of the on-disk cache, Tread (Iik )
+is computed as
+
+Average resizing time (in milliseconds)
+
+200
+
+Tread (Iik ) = Dseek + Drotation + dS(Iik )/Dblock e ⇥ Dread ,
+(12)
+where Dseek is the disk seek time (set to 5.80ms), Drotation
+is the rotational latency (set to 4.17ms), Dblock is the size
+of a disk block in bytes (set to 512 bytes), and Dread is the
+average time to read a block from the disk (set to 4.883ns).
+The parameters are set to the same values as in [13] that are
+determined either empirically or by consulting the literature.
+The time to transfer an image from the backend image
+store to the cache, i.e., TDR (Iij ) in Eq. (4), is computed as
+
+s10
+
+To
+
+Figure 6: Average image resizing cost.
+
+2 ⇥ Nlatency + S(Iik )/Nbandwidth ,
+
+where Nlatency denotes the network latency between the
+backend image store and the cache and Nbandwidth denotes
+the network bandwidth between them. In the simulations,
+we assume that the backend is located in the U.S. and the
+regional cache is located in the U.S., Europe, or Asia. For
+these cache locations, we set the network latency between
+them and the backend to 25ms, 50ms, and 100ms, respectively. We also set the network bandwidth between the backend and the cache to di↵erent values: 0.1MB/s, 1MB/s, and
+10MB/s. Table 3 shows the average response time, the 95thpercentile response time, and the 99th-percentile response
+time for the LGPB heuristic. Since a regional cache is more
+useful when placed in remote locations that are not close to
+the backend and the combination of 50ms network latency
+and 1MB/s bandwidth results in reasonable response times,
+we focus on this setting in our experiments.
+
+does not help to contrast the di↵erence among caching
+heuristics.
+– Backend workload: This metric measures the number
+of bytes fetched from the backend to serve a requested
+image. In other words, it measures the communication
+cost incurred due to cache misses.
+
+4.4
+
+(13)
+
+Parameters
+
+An important variable in the experiments is the cache
+capacity. We set this parameter to 0.2%, 0.4%, 0.6%, 0.8%,
+and 1.0% of the total size of the backend image store. We
+set the sizes of the in-memory and on-disk caches as 1% and
+99% of the cache capacity, respectively. This is a realistic
+setting since a cache server usually has tens of GBs of RAM
+and a few TBs of disk storage. In fact, given a fixed cache
+capacity, increasing the relative size of the in-memory cache
+does not change the overall miss rate of the cache, but only
+slightly reduces the response time for certain requests. Our
+preliminary experiments show that having a 10% in-memory
+cache reduces the average response time of a 1% in-memory
+cache by only 0.7%.
+We compute the average time for resizing an image from
+size si to size sj as follows: (i) download all 11 sizes of 100
+random images from Flickr; (ii) repeat resizing each image
+from resolution si to resolution sj 100 times for every (si , sj )
+pair with i > j; and (iii) compute the average time to resize
+the image from resolution si to size sj .6 The I/O times
+for reading the input image of resolution si and writing the
+output image of resolution sj are not taken into account.
+Fig. 6 shows the average time to resize an image from
+resolution si to resolution sj . Images with resolution s2 cannot be resized to resolution s1 since these images are not
+large enough in width (see Table 2). The average resizing
+time varies between 2ms and 186ms depending on input and
+output resolutions. We note that by using more advanced
+hardware, such as GPU, the resizing time can be reduced
+to less than 30ms. This increases the response time di↵erence between logical cache hits and cache misses. We evaluate the caching heuristics without assuming the use of such
+advanced hardware. Therefore, the reported performance
+results are more likely to be lower bounds.
+We use a cost model similar to those described in [13, 18]
+to compute the time for reading an image from the cache,
+i.e., Tread (Iik ) in Eqs. (2), (3), and (4). In the case of the inmemory cache, Tread (Iik ) is simply equal to the cache lookup
+
+5.
+5.1
+
+EXPERIMENTAL RESULTS
+Hit Rate
+
+In Fig. 7, we first compare the memory physical hit rate,
+disk physical hit rate, memory logical hit rate, and disk logical hit rate metrics for every caching heuristic and for varying cache capacity values. We observe that MRPB achieves
+the highest memory physical hit rate and disk physical hit
+rate. This is not surprising as MRPB is among the best policies in the literature in achieving high hit rates. MR also
+achieves high hit rates as it selects the most frequently requested physical images to fill the cache. Yet, given that
+several physical images of the same logical image may be
+requested frequently and with similar likelihood, caching
+only one of them misses some potential hits and thus results in lower memory/disk physical hit rates than those of
+MRPB. The decrease in the hit rates of MR is partially compensated by resizing the cached physical images in both inmemory and on-disk caches as shown in the figure. In contrast, LR results in the highest memory and disk logical hit
+rates, but the lowest memory and disk physical hit rates
+among all heuristics. This is because LR selects the largest
+requested physical image of the most frequently requested
+logical images to increase the likelihood of obtaining most of
+the requested physical images of these logical images in the
+cache (through on-the-fly resizing) rather than in the backend image store. Di↵erent from all these baseline policies,
+the proposed caching policy LGPB and LGPB-FA achieve more
+balanced physical and logical hit rates between the two extremes that target high physical hit rates and high logical
+hit rates, respectively. LGPB-FA is slightly more in favor of
+
+6
+To resize the images, we use Ymagine, an open-source highperformance CPU-based tool.
+
+645
+
+Table 3: Response time (in ms) for the LGPB heuristic (cache size: 0.2%)
+
+Latency (ms)
+25
+50
+100
+0.6
+0.5
+
+0.1
+95th
+2028
+2063
+2186
+
+Avg.
+620
+651
+716
+
+Bandwidth (MB/s)
+1.0
+Avg. 95th 99th
+99
+259
+461
+130
+310
+514
+192
+411
+617
+
+99th
+4032
+4099
+4201
+
+Avg.
+46
+77
+139
+
+10.0
+95th
+81
+130
+230
+
+99th
+101
+151
+252
+
+disk-logical-hit-ratio
+memory-logical-hit-ratio
+disk-physical-hit-ratio
+memory-physical-hit-ratio
+
+Hit ratio
+
+0.4
+0.3
+0.2
+0.1
+0
+
+LR
+R
+M PB
+R
+M B
+P FA
+LG BP
+LG
+
+LR
+R
+M PB
+R
+M B
+P FA
+LG BP
+LG
+
+0.4
+
+LR
+R
+M PB
+R
+M B
+P FA
+LG BP
+LG
+
+LR
+R
+M PB
+R
+M B
+P FA
+LG BP
+LG
+
+LR
+R
+M PB
+R
+M B
+P FA
+LG BP
+LG
+0.2
+
+0.6
+0.8
+Cache size (as percentage of backend size)
+
+1.0
+
+Figure 7: Hit rates for di↵erent caching heuristics and cache capacity values.
+80M
+LGPB-FA
+LGPB
+MRPB
+MR
+LR
+
+2.0M
+
+Number of images in the disk cache
+
+Number of images in the in-memory cache
+
+2.5M
+
+1.5M
+
+1.0M
+
+0.5M
+
+0
+0.2
+
+0.4
+0.6
+0.8
+Cache size (as percentage of backend size)
+
+LGPB-FA
+LGPB
+MRPB
+MR
+LR
+
+70M
+60M
+50M
+40M
+30M
+20M
+10M
+0
+
+1.0
+
+0.2
+
+Figure 8: Number of images in the in-memory cache
+for di↵erent caching heuristics and di↵erent cache
+capacity values.
+
+0.4
+0.6
+0.8
+Cache size (as percentage of backend size)
+
+1.0
+
+Figure 9: Number of images in the on-disk cache
+for di↵erent caching heuristics and di↵erent cache
+capacity values.
+
+5.2
+
+cache hits than resizing as the past frequencies of infrequent
+requests, which are more likely to benefit from resizing, are
+discounted more by the likelihood they may appear in the
+future. Depending on the size of the cache, from 39% to
+51% of all requests can be served by the cache, being physical or logical hits, using LGPB-FA. This is up to 9.7% higher
+than the amount of requests that can be served by a static
+cache constructed using the best frequency-based caching
+heuristic.
+Figs. 8 and 9 further show the number of physical images
+stored in the in-memory and on-disk caches, respectively.
+We observe from both figures that, given the same cache
+capacity, LGPB-FA, LGPB, and MRPB admit much more images
+into the cache than MR and LR. This is because when selecting
+images with LGPB-FA, LGPB, or MRPB, the response time gain
+or frequency of each image is divided by its size. They are
+thus more likely to add small images into the cache given
+the same response time gain or frequency. LGPB-FA feeds
+the cache with fewer images than LGPB. Since the frequency
+of each image is adjusted by its likelihood of appearing in the
+future, only images that have high likelihood of appearing
+again and high past frequency are selected. LGPB-FA thus
+ensures more e↵ective use of the cache capacity than LGPB.
+
+Response Time
+
+In Fig. 10, we first compare the average response time of
+each caching heuristic for varying cache capacity values. As
+shown in the figure, by using the proposed caching heuristics
+LGPB-FA and LGPB, the average response time is reduced by
+up to 5.4% and 4.3%, respectively, compared to MRPB. In fact,
+independent of the cache capacity, LGPB-FA and LGPB consistently perform better than the best frequency-based heuristic and reduce its average response time by up to 4.2% and
+3.1%, respectively. LGPB-FA leads to lower average response
+time than LGPB especially when the cache capacity is low.
+This conveys the e↵ectiveness of the frequency adjustment
+as selecting the right images is more crucial under lowercapacity constraint. More importantly, while achieving similar average response time (e.g., around 115ms), LGPB-FA
+and LGPB considerably reduce the capacity of the cache (by
+about 25%). This implies a large reduction in the hardware investment needed for the caching system without any
+degradation in response latency and hence user experience.
+Fig. 11 shows the cumulative distribution of response time
+for di↵erent caching heuristics for a fixed cache capacity
+(set to 0.4%). We observe that MR and LR result in more
+requests to be served within 30ms, but fewer requests are
+
+646
+
+140
+
+1.0
+0.9
+0.8
+
+130
+
+Fraction of requests
+
+Average response time (in ms)
+
+135
+
+125
+120
+115
+LGPB-FA
+LGPB
+MRPB
+MR
+LR
+
+110
+105
+0
+
+0.6
+0.5
+0.4
+Cache capacity: 0.2%
+Cache capacity: 0.4%
+Cache capacity: 0.6%
+Cache capacity: 0.8%
+Cache capacity: 1.0%
+
+0.3
+0.2
+0.1
+
+0.2
+0.4
+0.6
+0.8
+Cache size (as percentage of backend size)
+
+1.0
+
+1
+
+Figure 10: Average response time for di↵erent
+caching heuristics and cache capacity values.
+
+10
+
+100
+Response time (in ms)
+
+1000
+
+10000
+
+Figure 12: Cumulative distribution of response time
+for LGPB-FA with varying cache capacity values.
+
+1.0
+
+66
+
+0.9
+
+Average data from backend (in KB)
+
+0.60
+
+0.8
+Fraction of requests
+
+0.7
+
+0.54
+0.7
+0.48
+120
+
+0.6
+
+130
+
+140
+
+0.5
+0.4
+LGPB-FA
+LGPB
+MRPB
+MR
+LR
+
+0.3
+0.2
+0.1
+1
+
+10
+
+100
+Response time (in ms)
+
+1000
+
+64
+62
+60
+58
+56
+54
+LGPB-FA
+LGPB
+MRPB
+MR
+LR
+
+52
+50
+48
+
+10000
+
+0
+
+0.2
+0.4
+0.6
+0.8
+Cache size (as percentage of backend size)
+
+1.0
+
+Figure 11: Cumulative distribution of response
+time for di↵erent caching heuristics (cache capacity:
+0.4%).
+
+Figure 13: Backend communication cost for di↵erent caching heuristics and di↵erent cache capacity
+values.
+
+served between 30ms and 100ms, compared to the proposed
+gain-based caching heuristics LGPB-FA and LGPB. As shown in
+Fig. 7, this is because MR prefers to select images that lead
+to direct hits in the cache while LR prefers to select large
+images to fill the cache so that more requests can be served
+through resizing. Although both physical hits and logical
+hits usually take less time than cache misses, the limited
+number of images in the cache filled by these two heuristics (Figs. 8 and 9) forces more images to be fetched from
+the backend, leading to high response time for more requests
+than LGPB-FA and LGPB. Finally, we observe in the inner plot
+in Fig. 11 that LGPB-FA and LGPB serve 57.5% and 56.9% of
+the requests under 140ms, respectively, outperforming all
+frequency-based caching heuristics.
+Fig. 12 shows the cumulative distribution of response time
+for the LGPB-FA heuristic for varying cache capacity values.
+We observe that larger cache capacity values lead to lower
+response times. For instance, by using a cache capacity of
+1.0%, more than 30% of the requests can be served under
+100ms compared to using a cache capacity of 0.2%.
+
+the most frequently requested logical images can be resized
+on-the-fly in the cache rather than being forwarded to the
+backend. Despite its lower backend communication cost, as
+we have observed in Fig. 10, it takes more time to serve a
+request. This is because resizing a large image may itself be
+very costly (e.g., converting an image from resolution s11 to
+resolution s10 as shown in Fig. 6). Finally, we observe that
+LGPB-FA and LGPB incur up to 8.9% and 7.0% lower communication overhead than the other frequency-based caching
+heuristics MR and MRPB, respectively.
+
+5.3
+
+6.
+
+RELATED WORK
+
+Caching has been an active research topic for many years,
+and hence the previous work on caching is vast. While earlier works were focused on more fundamental areas, such as
+operating systems [16] and databases [5], more recent works
+in the Web era have investigated the use of caching in applications such as web servers [15, 19] and search engines [4,
+13]. Media access patterns in the Internet were investigated
+in [8]. Herein, we prefer to keep our survey brief and limit
+it to the related work on static caching and image caching.
+Static caching has found application especially in web
+search engines [1, 11, 13]. Cost-based heuristics were proposed for static caching of web search results, aiming to
+reduce the query workload of backend search systems [7,
+14]. The gain-based heuristics we proposed in this work differ from earlier cost-based heuristics in the way they try
+to reduce the average response latency. Moreover, their
+implementation requires iterative computation of the gains
+since the response times depend on which images are al-
+
+Backend Workload
+
+We quantify the cost of the backend communication using the amount of data transferred between the cache and
+the backend image store. Fig. 13 shows the average number of bytes fetched from the backend to serve a request.
+We observe that LR always incurs the lowest communication overhead, and on average, it fetches at most 2.3% less
+bytes from the backend for each request than the gain-based
+caching heuristics LGPB-FA and LGPB. This is because, with
+LR, the requests for di↵erent physical images associated with
+
+647
+
+[4] B. B. Cambazoglu, F. P. Junqueira, V. Plachouras,
+S. Banachowski, B. Cui, S. Lim, and B. Bridge. A
+refreshing perspective of search engine caching. In
+Proc. 19th Int’l Conf. World Wide Web, pages
+181–190, 2010.
+[5] W. E↵elsberg and T. Haerder. Principles of database
+bu↵er management. ACM Transactions on Database
+Systems, 9(4):560–595, 1984.
+[6] G. Francès, X. Bai, B. B. Cambazoglu, and
+R. Baeza-Yates. Improving the efficiency of multi-site
+web search engines. In Proc. 7th ACM Int’l Conf. Web
+Search and Data Mining, pages 3–12, 2014.
+[7] Q. Gan and T. Suel. Improved techniques for result
+caching in web search engines. In Proc. 18th Int’l
+Conf. World Wide Web, pages 431–440, 2009.
+[8] L. Guo, E. Tan, S. Chen, Z. Xiao, and X. Zhang. The
+stretched exponential distribution of Internet media
+access patterns. In Proc. 27th ACM Symp. Principles
+of Distributed Computing, pages 283–294, 2008.
+[9] Q. Huang, K. Birman, R. van Renesse, W. Lloyd,
+S. Kumar, and H. C. Li. An analysis of Facebook
+photo caching. In Proc. 24th ACM Symp. Operating
+Systems Principles, pages 167–181, 2013.
+[10] E. Kayaaslan, B. B. Cambazoglu, and C. Aykanat.
+Document replication strategies for geographically
+distributed web search engines. Information
+Processing & Management, 49(1):51–66, 2013.
+[11] E. P. Markatos. On caching search engine query
+results. Computer Communications, 24(2):137–143,
+2001.
+[12] S. Muralidhar, W. Lloyd, S. Roy, C. Hill, E. Lin,
+W. Liu, S. Pan, S. Shankar, V. Sivakumar, L. Tang,
+and S. Kumar. F4: Facebook’s warm BLOB storage
+system. In Proc. 11th USENIX Conf. Operating
+Systems Design and Implementation, pages 383–398,
+2014.
+[13] R. Ozcan, I. S. Altingovde, B. B. Cambazoglu, F. P.
+Junqueira, and O. Ulusoy. A five-level static cache
+architecture for web search engines. Information
+Processing & Management, 48(5):828–840, 2012.
+[14] R. Ozcan, I. S. Altingovde, and O. Ulusoy. Cost-aware
+strategies for query result caching in web search
+engines. ACM Transactions on the Web, 5(2):9:1–9:25,
+2011.
+[15] S. Podlipnig and L. Böszörmenyi. A survey of web
+cache replacement strategies. ACM Computing
+Surveys, 35(4):374–398, 2003.
+[16] A. J. Smith. Cache memories. ACM Computing
+Surveys, 14(3):473–530, 1982.
+[17] L. Tang, Q. Huang, W. Lloyd, S. Kumar, and K. Li.
+RIPQ: Advanced photo caching on flash for Facebook.
+In Proc. 13th USENIX Conf. File and Storage
+Technologies, pages 373–386, 2015.
+[18] A. Trotman. Compressing inverted files. Information
+Retrieval, 6(1):5–19, 2003.
+[19] J. Wang. A survey of web caching schemes for the
+Internet. SIGCOMM Computer Communication
+Review, 29(5):36–46, 1999.
+
+ready cached. A brief survey of caching techniques used in
+web search engines can be found in [3].
+Regarding image caching, the only work we are aware
+of is [9], which presents the photo serving stack of Facebook. According to [9], Facebook has a highly distributed
+infrastructure involving client-side caches, edge caches, origin caches, and data centers.7 This architecture is slightly
+di↵erent from the architecture we presented in this paper
+due to the presence of client-side caches and lack of regional
+proxies. While the hit rate of client-side caches is reported
+to be 65.5% for Facebook, the contribution of these caches is
+negligible in our application (as most client-side hits of Facebook come from the cached profile photos of users’ friends)
+and hence they are omitted. Another di↵erence is that the
+work in [9] considers dynamic caching techniques while we
+explore static caching heuristics. More importantly, in terms
+of cache performance when using image resizing, their objective is to improve the cache hit rate, which may not be
+ideal as the cost of responding to an image request upon a
+cache hit may be very di↵erent (in contrast to result caching
+in web search engines). Indeed, as our experiments indicate,
+high hit rates do not always ensure low response times. For
+interested reader, some detail on the backend photo storage
+system of Facebook can be found in [2]. Facebook’s newer
+large binary object storage system is introduced in [12]. A
+recent work on photo caching in flash storage systems of
+Facebook is available in [17].
+
+7.
+
+CONCLUSIONS
+
+In this work, we formalized the static caching problem for
+large-scale image serving systems and proposed two caching
+heuristics that aim to improve the average response time.
+Extensive experiments using real-life access logs obtained
+from Flickr demonstrated that the proposed heuristics reduce the image serving time and the system workload in
+terms of backend communication cost compared to simpler,
+frequency-based caching heuristics. More importantly, the
+proposed heuristics were shown to require much lower cache
+capacity than the baseline heuristics to achieve comparable
+response times, potentially leading to significant hardware
+savings when building image caching systems. A possible extension that may further improve the performance of such
+systems would be to investigate the request dynamics and
+propose similar heuristics for dynamic caching.
+
+8.
+
+REFERENCES
+
+[1] R. Baeza-Yates, A. Gionis, F. P. Junqueira,
+V. Murdock, V. Plachouras, and F. Silvestri. Design
+trade-o↵s for search engine caching. ACM
+Transactions on the Web, 2(4):20:1–20:28, 2008.
+[2] D. Beaver, S. Kumar, H. C. Li, J. Sobel, and
+P. Vajgel. Finding a needle in haystack: Facebook’s
+photo storage. In Proc. 9th USENIX Conf. Operating
+Systems Design and Implementation, pages 1–8, 2010.
+[3] B. B. Cambazoglu and R. A. Baeza-Yates. Scalability
+Challenges in Web Search Engines. Synthesis Lectures
+on Information Concepts, Retrieval, and Services.
+Morgan & Claypool Publishers, 2015.
+
+7
+
+The origin cache is distributed across the data centers.
+
+648
+
+

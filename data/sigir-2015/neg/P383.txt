@@ -1,0 +1,3597 @@
+Context- and Content-aware Embeddings
+for Query Rewriting in Sponsored Search
+Mihajlo Grbovic† , Nemanja Djuric† , Vladan Radosavljevic† ,
+Fabrizio Silvestri‡ , Narayan Bhamidipati†
+{mihajlo, nemanja, vladan, silvestr, narayanb}@yahoo-inc.com
+Yahoo Labs
+701 First Ave, Sunnyvale, CA, USA
+‡
+125 Shaftesbury Ave, London, England
+†
+
+ABSTRACT
+
+General Terms
+
+Search engines represent one of the most popular web services, visited by more than 85% of internet users on a daily
+basis. Advertisers are interested in making use of this vast
+business potential, as very clear intent signal communicated
+through an issued query allows effective targeting of users.
+This idea is embodied in a sponsored search model, where
+each advertiser maintains a list of keywords they deem indicative of increased user response rate with regards to their
+business. According to this targeting model, when a query
+is issued all advertisers with a matching keyword are entered into an auction according to the amount they bid for
+the query and the winner gets to show their ad. One of the
+main challenges is the fact that a query may not match many
+keywords, resulting in lower auction value, lower ad quality,
+and lost revenue for advertisers and publishers. Possible
+solution is to expand a query into a set of related queries
+and use them to increase the number of matched ads, called
+query rewriting. To this end, we propose rewriting method
+based on a novel query embedding algorithm, which jointly
+models query content as well as its context within a search
+session. As a result, semantically similar queries are mapped
+into vectors close in the embedding space, which allows expansion of a query via simple K-nearest neighbor search.
+The method was trained on more than 12 billion sessions,
+one of the largest corpus reported thus far, and evaluated
+on both public TREC data set and an in-house sponsored
+search data set. The results show that the proposed approach significantly outperformed existing state-of-the-art,
+strongly indicating its benefits and monetization potential.
+
+Information Retrieval; Query Rewriting; Algorithms.
+
+Keywords
+Query rewriting; word embeddings.
+
+1.
+
+INTRODUCTION
+
+In recent years targeted advertising has become one of the
+largest and most lucrative advertising channels. Despite the
+fact that traditional offline advertising still accounts for the
+majority of advertising expenditures [34], future potential
+of this burgeoning field is clearly exemplified by reported ad
+revenue of over 20 billion dollars in the first half of 2013 in
+the US alone, combined with a remarkable growth of around
+20% on a yearly basis [21]. The size and importance of the
+online advertising, as well as the interesting open questions
+that the scale and variety of the targeting tasks bring, has
+drawn attention of many researchers from both industry and
+academia, resulting in a number of novel methods and improvements to the flourishing field [1, 18, 32].
+Due to a large diversity of the internet medium, targeted
+advertising has evolved to encompass many different outlets
+for the advertisers interested in reaching their target audience. These include behavioral targeting [12] (where users
+are targeted based on their general browsing behavior), email retargeting [18] (targeting users based on their e-mail
+interaction patterns), site re-targeting (targeting users based
+on their historical search queries), to name a few. In this
+work we consider a task of sponsored search advertising [17,
+22], a very popular advertising model that targets users with
+the most relevant ads by considering an immediate query issued by a user. It has become one of the prevalent means
+of advertising due to a fact that the current query carries a
+strong signal about an immediate intent of the user, resulting in a highly effective targeting model [15].
+In the sponsored search model each advertiser maintains
+a list of keywords that they deem relevant to their product
+(e.g., Nike may maintain a keyword list containing terms
+such as “running shoes” and “athletics”). In addition to a
+list of keywords, each advertiser also specifies a monetary
+bid amount they are willing to pay if their ad is shown and
+clicked by the user. Then, when a user issues a query in
+a search engine, the query is compared against each advertisers’ keyword list, and all advertisers with the matching
+keyword are entered into an auction. Finally, according to
+advertiser’s bid amount and the estimated quality and rel-
+
+Categories and Subject Descriptors
+H.3.3 [Information Storage and Retrieval]: Information
+Search and Retrieval
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies are not
+made or distributed for profit or commercial advantage and that copies bear
+this notice and the full citation on the first page. Copyrights for components
+of this work owned by others than ACM must be honored. Abstracting with
+credit is permitted. To copy otherwise, or republish, to post on servers or to
+redistribute to lists, requires prior specific permission and/or a fee. Request
+permissions from permissions@acm.org.
+SIGIR ’15, August 09 - 13, 2015, Santiago, Chile
+Copyright 2015 ACM 978-1-4503-3621-5/15/08.
+http://dx.doi.org/10.1145/2766462.2767709 ...$15.00.
+
+383
+
+evance of an ad that they wish to show, one advertiser and
+their corresponding ad are chosen for user targeting. Value
+of the auction increases when number of matched advertisers and their bids are high, which directly results in a better
+ad quality and higher revenue for both advertisers and publishers (i.e., websites that host the ads).
+Due to a large number of queries that the users could
+possibly issue, a common occurrence is that an exact query
+match cannot be found, as the advertisers usually cannot
+cover all relevant queries related to their product or service. However, even when the exact match does not exist,
+most often there does exist a non-matching keyword that is
+still highly related to the query. For example, query “purina
+one” and bidded keyword “dog food” are strongly related yet
+a string match would fail to make the connection, which directly translates into lost revenue. To mitigate this problem,
+query rewriting is used to expand the original query by providing K related ones for which ads are available, and which
+can be used instead to qualify advertisers for an auction [9,
+23, 40]. In the above example, a query rewriting method can
+be used to rewrite ”purina one” into related queries such as
+“dog food”, “cat food”, “purina pro plan”, and others, thus increasing likelihood of retrieving more high-quality, relevant
+ads, likely to be clicked by a user that issued the query.
+In this paper we address this critical step in sponsored
+search, and propose a novel query rewriting algorithm motivated by recent advances in distributed neural language
+models [14, 30, 31]. We explore and expand upon these approaches for the task of query rewriting, resulting in significant performance improvements over the current state-ofthe-art methods. Key contributions are summarized below:
+
+[11, 23]. However, disadvantage of existing solutions is that
+they mostly do not take into account complex semantic relationships between queries, which may lead to suboptimal
+rewrites. For example, the rewrites typically result in the
+original queries with added or removed terms, such as “purina one” being rewritten as “purina” or “purina one pro”.
+Thus, they are often obvious and have already been considered by the advertisers that targeted the original query, and
+do not add a significant value to the auction.
+We note that query rewriting task is related to the problem of query suggestion, albeit the goals of the two techniques are quite different. In the case of query suggestion
+the objective is to provide users with queries that are important for meeting users’ information needs [2, 7, 39], while
+in query rewriting the task is to expand query to increase
+both the number and quality of retrieved ads. We refer an
+interested reader to [36] for an overview of query log mining
+approaches as applied to query suggestion task.
+
+2.2
+
+In a number of natural language processing (NLP) applications, including information retrieval, part-of-speech tagging, chunking, and many others, the specific objective can
+be generalized to the task of assigning a probability value
+to a sequence of words. To this end, language models have
+been developed, defining a mathematical model to capture
+statistical properties of words and the dependancies among
+them [3, 27]. Traditionally, language models represent each
+word as a feature vector using one-hot representation, where
+a word vector has the same length as the size of a vocabulary, and a vector element that corresponds to the observed
+word is equal to 1, and 0 otherwise. However, this approach
+often exhibits significant limitations in practical tasks, suffering from high dimensionality of the problem and severe
+data sparsity, resulting in suboptimal performance.
+Neural language models have been proposed to address
+these issues, inducing low-dimensional, distributed embeddings of words by means of neural networks [4, 13, 38].
+Such approaches take advantage of the word order in text
+documents, explicitly modeling the assumption that closer
+words in the word sequence are statistically more dependent.
+Historically, inefficient training of the neural network-based
+models has been an obstacle to their wider applicability, being proportional to the size of the vocabulary which may
+grow to several millions in practical tasks. However, this issue has been successfully addressed with recent advances
+in the field, particularly with the development of highly
+scalable continuous bag-of-words (CBOW) and skip-gram
+(SG) language models [30, 31] for learning word representations. These powerful, efficient models have shown very
+promising results in capturing both syntactic and semantic
+relationships between words in large-scale text corpora, obtaining state-of-the-art results on a plethora of NLP tasks.
+More recently, the concept of distributed representations has
+been extended beyond word representations to sentences and
+paragraphs [14, 28], relational entities [8, 37], general textbased attributes [26], descriptive text of images [25], nodes
+in graph structure [33], and other applications going beyond
+NLP domain for which they were originally proposed.
+
+• We describe an application of distributed language
+models to query rewriting, where we propose to use
+three novel methods for learning distributed, lowdimensional query representations that compactly capture their semantic meaning;
+• We propose and discuss how to add ad clicks and
+search result clicks to query context, which allows specialization of representations for various tasks of critical interest to search engine companies (e.g., query
+suggestion, query-to-ad matching, query categorization), indicating even wider applicability of the method
+in the advertising domain;
+• We trained and evaluated the models using more than
+12 billion search sessions, resulting in rewriting results
+of high quality. Empirical results show that the proposed approach significantly outperform the existing
+state-of-the-art methods.
+
+2.
+
+RELATED WORK
+
+In this section we describe related work in the domains
+of query rewriting and neural language modeling that motivated the approach proposed in this work.
+
+2.1
+
+Neural language models
+
+Query rewriting for sponsored search
+
+Owing to the importance of query rewriting for the success
+of query-ad auctions, various algorithms have been proposed
+in the literature to address this critical step. These include
+graph-based methods such as Query Flow Graph (QFG) [6,
+7] that learn from users’ browsing behavior, as well as methods that exploit syntactical relationships between queries
+
+3.
+
+PROPOSED APPROACH
+
+To address the shortcomings of the existing state-of-theart methods for query rewriting, we propose to take a rad-
+
+384
+
+ically new approach to this task, motivated by the recent
+success of distributed language models in NLP applications
+[31, 38]. In the context of NLP, distributed models are able
+to learn word representations in a low-dimensional continuous vector space using a surrounding context of the word
+in a sentence, where in the resulting embedding space semantically similar words are close to each other [31]. Our
+objective is to take advantage of this property for the task of
+query rewriting, and to learn query representations in a lowdimensional space where semantically similar queries would
+be close. As a result, and in contrast to rewriting methods commonly used in practice, related queries could have
+a high similarity score even if they do not have any shared
+terms. Clearly, such approach would allow us to reduce complex task of query rewriting to a trivial K-nearest-neighbor
+search in the new embedding space.
+However, application of distributed language models to
+the task of query rewriting is not an easy endeavour. Finding distributed query representation, as opposed to finding
+word representations, brings very unique challenges quite
+different from those found in everyday NLP problems. First,
+there are significant differences between language used in
+everyday language and web searches [10, 35]. For example,
+web search users often use summarization when searching for
+content (e.g., typing “vacations Spain” instead of “vacations
+in Spain”), thus omitting frequent words. Further, some ngrams that rarely appear in everyday language often appear
+together in web search [24], and queries are characterized
+by more spelling mistakes. Moreover, contrary to everyday
+language where linguistic rules and notions of words and
+sentences are clearly defined, search queries are composed
+of terms where there is no existing notion of “sentence of
+queries” or the surrounding context equivalent to natural
+language domain.
+In this paper we address these issues, and propose three
+query rewriting methods that bring the state-of-the-art distributed language models closer to the setting of sponsored
+search: 1) context2vec, where we exploit the fact that user
+query is recorded with a timestamp, from which we create
+”query sentences” and apply state-of-the-art language model
+[31]; 2) content2vec, where we propose to learn distributed
+query vector representations from its content without considering session information, which is equivalent to paragraph2vec method from [28]; and 3) context-content2vec,
+where we propose to use a novel two-level architecture [14]
+that jointly models content of queries (i.e., word tokens that
+form the query) along with the query context (defined as
+other temporally close queries within a search session). Empirical results suggest that the resulting rewrites are highly
+related to the original queries, while being more diverse than
+rewrites produced by the current state-of-the-art methods.
+In addition, using a large data base of query-bids collected
+for thousands of advertisers, we show that the rewrites produced by the proposed method match the highest percentage
+of bidded queries, providing a strong positive impact on the
+overall revenue of both publishers and advertisers.
+In addition to search query logs, search engines systematically log a number of other valuable signals that can help
+better explain and model the user intent. For example, ad
+clicks and clicks on search results are also recorded, and may
+provide a supplementary intent signal that can be used to
+improve query representations. To help exploit these two
+valuable sources of information, we propose to incorporate
+
+both ad clicks and search result clicks into user query sessions, and show how the additional signals are seamlessly
+handled by the proposed models. The benefits of including
+the ad and search clicks for query rewriting task are clearly
+confirmed by the empirical results, showing increased relevance of query rewrites and higher coverage of advertisers’ bid terms. Moreover, in addition to improving query
+representations, in this way we also learn low-dimensional
+representations of ad clicks and search clicks in the same
+embedding space, which opens doors for using the proposed
+methods on a number of important online tasks, such as
+query-to-ad matching, query suggestion, and query categorization, to name a few.
+
+4.
+
+METHODOLOGY
+
+In this section we describe the proposed methodology for
+the task of query rewriting in sponsored search. As discussed earlier, the goal is to find queries related to the issued one, which would allow us to retrieve relevant ads that
+were not matched by the original query. To solve this problem, we propose to learn representation of queries in lowdimensional space from historical search logs using neural
+language models. Query rewriting can then be performed
+by finding K nearest neighbors of the issued query in the
+learned embedding space.
+More specifically, given a set S of S search sessions
+obtained from online users, where each session s =
+(q1 , . . . , qMs ) ∈ S is defined as an uninterupted sequence
+of Ms queries, and each query qm = (wm1 , wm2 , . . . wmTm )
+consists of Tm words, our objective is to find D-dimensional
+real-valued representation vqm ∈ RD of each query qm such
+that semantically similar queries lie nearby in the new space.
+We propose three approaches for learning query representations that address specifics of the web search environment. We first propose context2vec and content2vec methods that consider query context and query content, respectively, motivated by previous work on learning word representations from news articles [30, 31]. We then detail
+context-content2vec, a two-level architecture for joint modeling of both query context and query content, which results
+in better, more useful query representations.
+
+4.1
+
+Model 1: context2vec
+
+The context2vec model involves learning low-dimensional
+representations of queries from search logs by using a notion
+of a search session as a “sentence” and queries within the
+session as “words”, borrowing the terminology from NLP domain (see Figure 1a). More specifically, context2vec learns
+query representations using the skip-gram model [31] by
+maximizing the objective function over the entire set S of
+search sessions, defined as
+L=
+
+X X
+
+X
+
+log P(qm+i |qm ).
+
+(4.1)
+
+s∈S qm ∈s −b≤i≤b,i6=0
+
+Probability P(qm+i |qm ) of observing a neighboring query
+qm+i given the current query qm is defined using soft-max,
+exp(vq>m vq0 m+i )
+,
+P(qm+i |qm ) = PV
+>
+0
+q=1 exp(vqm vq )
+
+(4.2)
+
+where vq and vq0 are the input and output vector representations of query q, b is defined as length of the context for query
+
+385
+
+context	  
+
+qm-­‐b	   …	   qm-­‐1	  
+
+context	  
+
+qm+1	   …	   qm+b	  
+
+qm-­‐b	   …	   qm-­‐1	  
+
+qm+1	   …	   qm+b	  
+
+words	  within	  the	  m-­‐th	  query	  
+
+words	  within	  the	  m-­‐th	  query	  
+
+wt	  
+
+Projec,on	  
+
+wt	  
+
+Projec'on	  
+
+Projec'on	  
+
+qm	  
+
+qm	  
+
+wt-­‐c	  
+
+…	   wt-­‐1	  
+
+wt+1	   …	  
+
+Projec'on	  
+
+qm	  
+
+wt+c	  
+
+wt-­‐c	  
+
+…	   wt-­‐1	  
+
+content	  
+
+(a) context2vec
+
+wt+1	   …	  
+
+wt+c	  
+
+content	  
+
+(b) content2vec
+
+(c) context-content2vec
+
+Figure 1: Query embedding models
+
+within the query qm , computed as
+
+sequences, and V is the number of unique queries in the vocabulary. From equations (4.1) and (4.2) we can see that
+context2vec models temporal context of query sequences,
+where queries with similar contexts (i.e., with similar neighboring queries) will have similar vector representations in
+the projected semantic space.
+
+4.2
+
+v̄m =
+
+4.3
+
+Model 2: content2vec
+
++
+
+qm ∈s
+
+X
+
+
+log P(wmt |wm,t−c : wm,t+c , qm ) ,
+
+(4.3)
+
+wmt ∈qm
+
+where c is length of the context for words within the query.
+The probability P(wmt |wm,t−c : wm,t+c , qm ) is defined using
+a soft-max function,
+0
+exp(v̄> vw
+)
+mt
+,
+P(wmt |wm,t−c : wm,t+c , qm ) = PV
+> v0 )
+exp(v̄
+w
+w=1
+
+Model 3: context-content2vec
+
+s∈S qm ∈s
+
+−b≤i≤b,i6=0
+
++ αm log P(qm |wm1 : wmTm )
+
+X
++
+log P(wmt |wm,t−c : wm,t+c , qm ) ,
+
+(4.4)
+
+(4.8)
+
+wmt ∈qm
+
+where α weights are hyperparameters that trade off between
+minimization of the log-likelihood of query sequences (i.e.,
+query context) and the log-likelihood of word sequences (i.e.,
+query content). Denoting frequency of the mth query as Km ,
+1
+, such that
+we set the hyperparameters as αm = log(1+K
+m)
+rarely seen queries rely more on content and frequently seen
+queries more on context.
+As can be observed, context-content2vec model combines
+the two earlier models, using the context2vec model in the
+upper layer and the content2vec model in the lower layer.
+Note that the probabilities from equation (4.8) are defined in
+equations (4.2), (4.4), and (4.6). In order to learn from both
+contextual and content information, the training data set is
+a union of context and content training data sets defined
+previously in sections 4.1 and 4.2.
+
+0
+where vw
+is the output vector representation of wmt , and
+mt
+v̄ is averaged vector representation of the context including
+corresponding qm , defined as
+X
+1
+v̄ =
+(vqm +
+vwm,t+j ),
+(4.5)
+2c + 1
+−c≤j≤c,j6=0
+
+where vw is the input vector representation of w. Similarly,
+the probability P(qm |wm1 : wmTm ) is defined as
+> 0
+exp(v̄m
+v qm )
+,
+P(qm |wm1 : wmTm ) = PV
+> 0
+w=1 exp(v̄m vw )
+
+(4.7)
+
+Both context2vec and content2vec models have limited
+modeling power in the light of the available data. This is
+due to the fact that they are not capable of exploiting all the
+available query log information as they model only one aspect of the data at hand (i.e., either make use of the context
+of queries in search sessions or their content, respectively).
+To overcome this limitation, we propose a two-layer contextcontent2vec [14] specifically tailored for the purpose of modeling query logs. The two-layer architecture of the proposed
+model is illustrated in Figure 1c. The upper layer models
+the temporal context of query sequences in search sessions,
+based on the assumption that temporally closer queries are
+statistically more dependent. On the other hand, the bottom layer models the content information of word sequences
+found within queries.
+More formally, given S sessions of queries together with
+their content, objective of the two-layer context-content2vec
+model is to maximize the log-likelihood of the training data,
+X X 
+X
+L=
+log P(qm+i |qm )
+
+We propose content2vec method to simultaneously learn
+vector representations of queries and the words contained
+within them, motivated by the paragraph2vec algorithm
+[28]. The content2vec architecture is illustrated in Figure
+1b. Training data set was derived from user search logs by
+disregarding the query timestamps, and consisted of queries
+qm and their containing words qm = (wm1 , wm2 , . . . wmTm ).
+During training, query vectors are learned so they predict
+the words in their content, while word vectors are learned
+so they predict their context words within the query. More
+specifically, objective of content2vec is to maximize the loglikelihood over the set S of all query sessions,
+X X
+L=
+log P(qm |wm1 : wmTm )
+s∈S
+
+Tm
+1 X
+vw .
+Tm t=1 mt
+
+(4.6)
+
+where vq0 m is the output vector representation of qm , and
+v̄m is averaged input vector representation of all the words
+
+386
+
+Training and inference
+cheapoair_airfares_wholesale
+southwestern_airlines airports_in_puerto_rico
+orbitz_com_airfare
+nited_airlines bookingbuddy
+
+atlas_travel
+
+asa_airlines
+
+piceline
+edreams
+
+jet_airlines
+air_flights
+
+cheap_airline_flights
+
+cheap_airlines_ticket
+
+etihad_air
+
+hawain_airlines
+
+airfair
+
+yuma_airport
+costamar_com
+
+one_pass
+
+flight_deals
+first_class_air_travel
+
+hipmunk
+
+santa_fe_airport
+
+air_france_baggage_allowance
+
+airbus_319
+
+avior_airlines
+
+areomexico
+
+expedida
+
+aviacsa_airlines
+
+my_allegiant_com
+
+destin_florida_airport
+
+delta_airlines_vacations
+
+hnl_airport
+
+missoula_airport
+
+miami_airport_arrivals
+
+southe
+
+travel_tickets
+
+pvd_airport
+
+mci_airport
+
+www_emirates_airlines
+
+iah_airport
+
+orbizt_com
+
+allgiant
+
+airfare_to_hawaii travelocity_co
+
+emerites
+
+binghamton_airport
+
+delta_partner_airlines
+
+huntington_wv_airport aruba_airport
+
+embraer_175
+
+green_bay_airport
+
+flyfrontier_com
+
+kaiak
+westjet_com
+
+flights
+
+penn_air
+
+jetcost
+air_malta
+lacsa
+
+u_s_air
+
+usa_3000_airline_tickets ata_airlinesvirginair
+
+air_fairs
+
+finnair
+
+santa_barbara_airbus
+
+kayack
+
+flagstaff_airport
+
+flight_info
+
+vueling_com
+otwire
+
+allegaint
+
+aol_travel
+
+bwi
+
+souy
+
+usa_airlines
+
+travolcity
+
+alligeant_air
+
+lga_airport
+
+kayaak
+
+united_ai
+
+quatarairlines
+twa_airlines
+
+fly_kci
+
+trip_com
+
+cheapo_flights
+one_travel
+
+tf_green
+
+fnt_airport
+airfare_to_philippines
+
+delta_com
+
+s_w_airlines air_canda
+
+whatscheaper_com south_airlines
+
+ryan_airlines
+
+spokane_airport
+
+www_jet
+
+allegent
+
+us_air_airlines
+
+dallas_love_airport
+
+pty_airport travalocity
+
+southwes_airlines
+
+jet_blue_flight_tracker sky_scanner
+
+kiake_travel
+
+oribitz airtran_reservations oregon_airports
+
+kayk
+
+cheap_oair
+
+deltaa
+phl
+
+top_airlines
+
+airtran
+
+matrix_airfare
+
+lufthanza
+
+transair
+
+airtrans
+
+island_airways
+
+knoxville_airport
+
+www_frontier_airlines_com
+
+cheap_seats_airline_tickets
+
+american_arilines
+
+cheap_o_air
+kayak_flights_search
+southwest_airlines
+
+aerlingus
+
+routehappy
+
+srq_sarasota
+
+ba_com
+
+kajak
+
+flyfrontier
+
+alliant_airlines
+ex_edia
+
+nc_airports ba_airlines
+
+yvr_airport
+
+side_step
+
+airtran_air_flights_schedule 757_200
+
+southwst
+
+flydenver
+
+fly_rfd
+
+fronteer
+
+southwest_sirlines
+
+airtramairlinetickets expedia_flights
+kayak_airlines
+air_train
+
+sothwest
+
+concord_airport
+
+flights_to_italy_from_usa
+
+jetble
+
+travelacity
+
+travolicty
+
+air_france_usa iberia_air
+
+expidia
+fly_swa
+
+www_delta_com_airlines
+
+1tpa1_2mci2
+
+asian_airlines
+
+blue_airlines sky_blue_airlines
+flight_deal
+
+ek_airline
+
+i_fly_swa
+
+alligiant
+
+otbitz
+
+western_airlines
+orbitiz
+usair
+airfast
+
+ethiad
+
+budget_air
+
+fiji_air
+
+bush_international_airport
+
+expeida
+spirit
+
+expeidia
+
+delta_airlines
+us_airways cheap_flights
+spirti
+
+northwest_air find_a_flight
+bookingbuddies_com low_airfare
+kyackflights dealtasmartfares_com
+discount_airfare_tickets
+webjet_airfares
+aairlinemerican orbitz_airline_tickets cheapoflightsexploretrip
+cheapoair_coupon_code
+cheap_southwest_airline_tickets jetblueairlines_com
+
+kakay
+
+rfd_airport
+
+expdia
+
+south_west_airlines
+
+outhwest
+
+dal_airport
+
+bt_store
+
+unitedairways
+air_italia
+
+kayka
+
+1boi1_2las2
+
+kaya
+
+round_the_world_tickets iberia_com
+
+expedia_airlines
+
+deltaair
+air_trans aitran
+flykci_com
+
+unite_airlines
+
+travalosity
+
+isp_airport
+
+katak
+
+traveloc
+
+american_airlines
+
+farebuzz_com nited hotwire_airline_tickets
+
+chs_airport
+
+plain_tickets
+
+westjet
+
+irlines jet_blue_airlines cheap_airlines
+airtrans_airlines
+obitz_com
+kyake
+
+usair_airlines
+airport_codes
+
+frontier_airlines
+
+travlocity
+norfolk_international_airport
+
+aeroplan_com
+
+xpedia
+
+ibc_airways
+cak_airport
+
+souyhwest
+
+kyack
+
+liat
+star_alliance
+
+iad_dulles
+
+kyak
+
+dfw_arrivals
+
+cheap_fares_airlines
+
+lan_chile
+oaj
+
+united_airfares
+
+clearwater_airport_florida ord1bna1_2iad2
+
+sas_airlines
+
+traelocity
+
+spedia
+expadia
+delt usa3000
+
+rj_com
+
+best_travel
+
+tracelocity
+
+vail_airport
+
+phl_airport
+
+flyjamaica
+
+arik
+usairway_airline untied
+evv_airport
+
+southwest_com_travel
+
+hawaiian_air_lines
+
+emarat_air_line
+
+dtw_map
+
+best_airfare_prices
+
+national_airlines
+
+airway
+
+jetblue_airlines
+
+air_travel
+
+costamar
+
+spiri
+
+insel_airlines
+
+cheap_hawaii_flights abilene_regional_airport delts
+
+cheap_seats
+
+southwest_promo_codes_2013 lowest_fare_airline_tickets
+cheapairlines
+vayama_international
+american_airlines_reservations jet_blue_airlines_website
+southwest_deals southwest_cheap_flights
+copa_airlines_colombia
+kyak_flights
+travelocity_airline_tickets
+compare_airfares france_airlines southwst_airlines
+joplin_airport
+southwest_airport
+travelation_com northwest_airlines_flight alegient_air
+southwest_air_ines
+cheapest_days_to_fly
+southwest_airlin
+alligiant_airline
+cheaptickets_com capeair_com
+alaskin_airlines
+alaska_airlines
+american_west_airlines
+southwest_airllines cheap_flights_to_maui
+united_airlines_discount_code
+cheptickets_com
+discounted_airline_tickets
+jet_ble
+flights_cheap
+cheeptickets
+alligant_air_fare
+low_airfare_tickets us_airvirgin_amer
+onetravel_cheap_seats_airfare fly_com_flights
+allegantairfares
+fare_finder
+killeen_airport
+
+staralliance_com
+a320_airbus
+sourhwest
+
+airtran_airlines
+
+airport
+hotwi
+
+cheapest_airlines
+airtran_airlines_web
+booking_buddy_flights
+swairlines_com
+
+smarter_travel
+
+comair
+
+sanford_florida_airport
+
+low_fares_airline
+
+froniter_airlines air_tkt
+
+delta_airlines_reservations
+
+air_fares lowest_airline_tickets
+airline_codes_list
+iberia_airlines_usa
+southwest_airlins
+
+tam_com_br india_airlines
+
+aviacsa
+
+skyteam
+
+air_canada_com john_wayne_airport
+
+azul_airlines
+
+clt_airport
+
+kiyak
+
+united_airlines
+airlines_in_usa
+kiak
+
+memphis_tn_airport
+
+southwest_ai
+
+trvelocity
+
+frontier_airliens aaa_flights
+
+travel_city
+
+kayaka
+
+alaskan_air
+
+airlines_that_fly_to_hawaii
+
+lanperu
+
+airline
+
+alegiant
+
+dayton_ohio_airport
+
+airline_baggage_fees
+
+jfk_airport
+
+parksfo
+
+tarom
+
+travelone
+
+american_airlines_airlines
+airline_codes
+
+smf_airport
+orbtiz_com
+
+us_air_ways travelovity airfaires4less
+kayak_airfares cheap_o_tickets
+
+aereomexico
+
+expidia_com travelicity
+buddybooking
+delta_arlines
+alitalia_airline
+american_airelines
+kci_parking
+
+kayke
+
+kayat
+
+sanford_airport
+
+dela
+
+ww_aa_com
+
+german_airlines
+
+prbitz
+
+cheapoair
+air_tran
+
+names_of_airlines
+spirit_airlines
+
+srq
+
+delta_air
+
+bereavement_fares
+
+kayac
+
+blue_jet_travel
+delta_ai alskaairlnes
+kaakstudent_universe_travel
+united_states_airlines
+southwest_airlines_number iflyswa
+spirt_air
+usair_airways best_fares
+southwest_om
+airlines_cheap_fares
+
+spirit_air
+
+kaykay
+
+rdu_airport
+
+southwest_coupons
+
+usa_airways
+sun_airlines
+southwest_airlines_confirmation
+alegent_air_line military_airfare
+
+bwi_airport
+
+oritz
+
+bluejet_com
+
+acy_airport
+
+pbia
+
+sw_air
+tavelzoo
+1mia1_2gua2
+
+md_80_aircraft
+
+cheap_tickets_airline
+www_usairways
+lhr_airport
+
+orbitz_airline_tickets_expedia
+aligiant
+reno_air
+cheap_airfare dely
+airline_deals cheap_flight_tickets
+northwest_airlines airline_discounts
+
+copaair lifemiles
+
+tennessee_airports
+
+caribbean_airlines
+
+smart_fares_airline_tickets
+sanford_airport_orlando parking_orlando_airport
+
+xl_airways
+a321
+
+jet_blue_airline_reservation
+
+jet_b_ue
+
+iraqi_airways
+
+orbitz_com
+
+kayah
+
+pbi_airport
+
+virgin_airlines
+
+korea_airlines abq_airport
+
+airtkt_com
+cheap_fligts
+direct_air
+united_airlin
+list_of_airline_companies
+
+airfasttickets
+
+frontie
+centrav
+
+expedie
+oak_airport
+
+bos_airport
+
+blue_jet_airlines
+
+kayake
+
+airgorilla_airline_tickets
+
+expiedia
+
+oribtz
+
+sprit_air
+airtrainairlanes
+ait_tran
+air_line
+
+exprdia
+
+winair
+
+jet_blue_deals
+cheap_flights_to_detroit
+spiritair_com
+
+johnnyjet_com
+
+first_class_airline_tickets
+cheap_airline_tickets
+united_a_airlines
+
+deta
+
+jetblue_airlines_air_fares kayak_airline_tickets
+
+skymiles
+
+expedica
+
+expdeia
+
+sidestep_airfare
+
+florida_airports_map
+
+www_fly_com
+
+us_airways_tickets
+alligentair
+
+qantas_com
+
+alegient
+
+cheapseats
+bestday
+
+stt_airport
+
+jal_com
+
+laguardia_parking
+
+sky_bahamas
+
+cheap_tickets
+
+gsp_airport
+
+ecp_airport
+
+taca_airlines
+
+southwestairlines_com
+
+houston_airport
+
+lufthansa_airlines_flight
+
+gojet_airlines
+
+luftansa
+
+ilg_airport
+
+tsa_website
+
+ilm_airport
+
+aeromexico
+
+icelandair_airlines
+
+alaskaair_com
+
+peoria_airport
+
+zoo_travel
+
+asaptickets
+
+flight_center
+
+flights_to_new_orleans
+
+czech_airlines
+
+flights_to_st_thomas
+
+tame_airlines
+sna_airport
+
+tropic_air unitedairlines_united_com
+
+1aus1_2null2
+
+expedia
+cid_airport
+
+mem_airport
+
+southwest_airlines_airline
+
+american_airlines_baggage
+
+southwest_ailinestravelocit
+
+delta_arilines
+
+bravofly
+
+unitd_airlines
+
+us_airport_codes
+
+bacc_travel
+
+southwest_airines
+
+dtw_airport
+
+idaho_airports
+oia_airport
+
+amextravel_com
+
+embraer_rj145
+
+vegas_flights
+luton_airport
+travelocity
+
+qantas_airlines
+
+chinaairline
+
+airline_tickets_discount
+southwest_checkin_online
+
+united_airlines_frequent_flyer
+
+flights_to_spain
+
+atl_airport
+
+little_rock_airport
+
+inter_jet
+
+cae_airport
+
+continental_air
+
+virgin_usa
+
+finnair_airlines
+expressjet
+
+us_air_dividend_miles
+
+traveloctiy
+
+sw_airline
+
+duluth_airport
+turkishairlines_com
+
+fly_china
+
+american_ai
+
+icelandair_flights
+
+providence_airport china_airlines_reviews
+
+skyscaner
+
+quantas
+
+quikpark_lax
+
+airports_in_maine
+
+737_700
+
+dfw_flights
+
+las_vegas_airport_code
+
+allegian
+
+hou_airport
+
+brussels_airlines
+
+ual_com
+
+united_com_refund
+
+dca_airport
+
+qc_airport
+
+swiss_com
+gulf_airlines
+metjet_airline
+
+(a) automotive-related ad
+
+air_algerie
+
+america_west_flights
+
+grr_airport
+
+orbits_com
+
+ana_air
+
+centrav_com
+ind_airport
+
+jetb
+
+air_miles_rewards
+
+ifly_com
+
+xtra_airways
+
+sdf_airport
+
+dsm_airport
+
+airfare_to_florida
+
+sidestep mid_america_airport
+westjet_ca
+
+islandair_com
+
+blue_jet_airline airtran_air_flights
+continental_airlines
+hot_wire_air_fares cheaoairlinefair
+low_fare_airlines
+us_airways_airlines
+
+aligiant_air
+
+turkish_air
+
+latrobe_airport
+
+delta_rewards
+alligant
+
+aerolineas_volaris_tarifas
+kayal
+
+vuelos
+
+aeroflot
+
+rsw_arrivals
+
+arik_air
+
+www_deltaairlines
+hayak
+
+lan_colombia
+
+midland_airport
+
+klm_com
+
+ortbitz
+
+travilocity
+
+copaair_com
+
+clarksburg_airport
+
+aa_co
+lvia
+
+delat
+
+us_airways_seating_chart
+
+beat_of_hawaii
+
+united_check_in_online
+
+delta_travel
+
+capeair
+rbitz
+
+american_com
+
+ohare
+
+american_ailines
+
+crj900
+
+jetlue
+
+blue_air
+
+msn_travel
+
+orbtz
+
+canadair low_air_fares
+air_maroc
+detla
+contact_delta_airlines
+travelocity_airfares
+cheapoflights_com
+cheap_o_air_com air_cananda
+us_airlines_com southwesr_airlines aa_flights
+taca_air air_trans_air_airlines
+cheap_o_flights cheap_flights_to_ft_myers
+kiack
+unites
+amaerican_airlines
+non_stop_flights ticket_airline
+jeblue
+travel_one united_airway airfares kayak_airfare_search aa_con
+traveloci la_mexicana_airlines hawiian_air
+west_air
+jet_blue_airline_schedule find_flights
+aircanada continentalairlines
+discount_airfare
+flight_search air_tram
+edreams_com
+avior flighthub
+u_s_airways jerblue orbiz
+united
+webjet cheaptickets
+spirit_ailines jetbule united_airway_airline
+rsw_airlines
+delta_air_lines
+cheap_fligths
+alaska_airlines_flights southwest_arlinesluftansa_com continential_airlines
+aaairlines_com
+priceline_air_fares flycheap_com soutwest
+sputhwest
+allegiantair continentalairlines_com
+farebuzz cheep_tickets
+farecast frontier_air
+priceline_airline_tickets air_ticket
+atlanta_airlines
+jetbue
+one_travel_reviews
+virgin_airline
+airtkt spitit
+orbotz globester
+cheapoair_airfares delt_airlines
+swa
+best_airline_fares
+insanelycheapflights_com us_airways_airways
+matrix_airfare_search
+us_a
+copa_com unites_airlines
+safest_airlines
+us_airways_partners
+usairways
+southwest_airlilnes
+delta_airlnes cheaptix list_of_airlines_in_us insel_air trans_air cheapair kakak southwes alaska_air united_airlines_tickets_airfares airline_ticket_deals
+virgin_america_airline
+cheap_flighta
+spiritair
+hotwire_airfare
+delta_airlines_contact cheap_fares_com trans_air_ticketspriceline_airline_tickets_airfare ict_airport
+travelocity_flights
+air_france us_airlines_tickets united_airlnes
+chep_flights
+obitz
+when_to_buy_airline_tickets delta_miles
+usairlines_com
+southwest_airliens
+dleta
+u_s_airways_airlines lowest_airfare_prices
+cheapest_airfare
+miami_air
+frontier_airline_tickets tavelocity souyhwestairlinesfares us_airways_partner_airlines allegant blue_jet_airline_tickets
+ft_walton_airport pensacola_regional_airport silver_air delta_airline_com pit_airport refundable_airline_tickets
+chepoair_com spirt_airline
+luthansa flyfrontier_airlines southwesy united_airlines_reviews cheapest_day_to_buy_airline_tickets search_at_travel_deal_low_fares
+cheap_flights_to_phoenix
+mitchell_field_milwaukee
+airfare_tickets
+soouthwest_airlineskayak_air_travel_flights
+airflights south_west_air_lines
+northwestern_airlines
+airtranairways
+cheap_air
+cheap_flights_to_washington_dc
+cheap_flight
+jetblue_airways travelosity
+virgin_america_reservations military_flight_discounts how_to_find_cheap_airfare_online
+southest alleigiantairlines shuttle_america_airlines
+jetblu
+black_friday_airline_deals
+discount_airline_tickets
+americanairlines
+jet_blue_air cheap_airline_deals pricelines cheapoair_com go_airlinehow_to_find_cheap_airline_tickets ethiopian_air cheap_airlines_tickets aeroflot_com
+flight_coupons
+usairlines jet_aircraft
+southwest_airlines_reservations luftanza kayak_airfare low_cost_airlines
+southwest_southwest_airlines
+whats_cheaper_com low_airfares cheep_airline_tickets alliganteairlines
+cheap_tickets_to_florida
+american_airines
+one_travel_promo_code horizon_airlines air_tickets_onlinelast_minute_airline_dealsair_baltic
+southwestr
+spirit_air_lines us_airways_flight
+united_airways_website
+flight_com united_air_airlines
+us_airlines_reservations cheapest_time_to_buy_airline_tickets alligence_airlines american_airlines_partners_airlines allegant_air cheap_airfare_com el_al_israel
+united_express cheap_flights_to_phoenix_arizona
+ttn_airport
+american_airlins
+fare_compare united_air_line
+orbizairlinetickets air_tran_flights
+cheap_one_way_flights
+when_is_the_best_time_to_buy_airline_tickets
+jetbl expedia_airline_tickets_flights
+sprint_airlines
+how_to_get_cheap_airline_tickets silver_airlines
+southwesrairlinetickets
+ord_airport southwest_airlines_com_travel
+wwwdelta_com
+southeest_air_com
+lowfares_com
+cheap_airline_tickets_flights mobissimo
+airberlincheap_flights_to_nashville delta_airways avl_airportmilitary_discount_airline_tickets
+discount_flights discount_airfares delta_flight
+hotwire_airline
+provo_airportwhat_is_the_cheapest_day_to_fly
+flyemirates
+swf_airport crj_aircraft
+southwest_69 best_time_to_buy_airline_tickets
+daytona_airport_airlines klm_airline
+us_airways_flights
+cheap_tickets_airlines discount_flight_tickets
+ewr_flight_status
+united_airliens
+airlines_tickets cheap_airline_tickets_to_hawaii aa_om expedia_com_airline_tickets
+united_airlines_reservations gateway_airport cheap_plane_fares
+southwest_arilinesspirit_flights
+delta_hubs
+tarom_airlines
+airtravel southwest_classic_low_fare_shortcut_flight grb_airport delta_airline_reservations
+alegent_airlines
+search_yahoo_mizu_toy_adam_air_age_gibb_aaaaaa_aaaaaa_bag_brit airtransat
+jet_blue_airlines_reservations
+dealbase_com
+
+merceds
+
+volvo_xc60
+
+hyuandi
+
+cheap_air_com
+
+autonation_honda
+
+air_france_us
+sputhwest_com
+1phx1_2null2
+
+last_minute_flights
+
+air_tran_air_flights
+
+condor_com
+
+trevelocity
+
+ita_matrix
+
+low_cost_flights
+flight_guru
+
+air_tahiti_airlines
+
+gl_450
+
+true_car_pricing
+
+hyundai_com
+
+2014_honda_civic
+
+hondi
+toyota_used_cars
+
+acrua
+
+toyota_highlander_2014
+
+lexus_rx300
+
+kia_cadenza_2014
+
+hyundai_cars
+
+mazda_com
+nissan_dealer
+mitsubishi_lancer
+es350
+kias
+hona
+huyndai
+2014_honda_fit
+toyato
+used_subaru
+exterior_colors
+lexux
+lexus_is_350
+kia_optima_2014 infiniti_g35
+acura_com camery
+audi_a6 toyota_fj_cruiser
+kia_soul_2013
+bmw_suv
+subaru_recall_2013
+vw_passat
+audi_q7 2014_toyota_corolla
+toyota_usa land_cruiser mazda_tribute
+acura_ilx
+jetta_tdi kia_soul_2014 nissian
+toyota_dealer_locator honda_crz
+masda
+volvo_c30
+bmw_dealers vw_beetle used_lexus
+bmwx3
+acura_rdx_2013 kia_k9 honda_crv_2014 hyndai
+subaru_forester civic_si toyota_corolla_2013 mazda5
+nissan_rogue_2013 honda_truck
+acura_suv
+audi_cars toyota_tacoma_2013 madza honda_odyssey_2014 mazda_usa
+hyundai_genesis_coupe bmw_528i
+2014_kia_optima
+fiat_com
+lexus_rx subura
+nissan_pathfinder_2013
+nissan_xterra nissan_sentra_2013
+nissan_suv
+acura_dealer_locator toyota_rav4_2013
+kia_usa bmw_3_series
+longo_lexustoyota_avalon_2014 cx_5
+mazda_suv
+2014_kia
+toyota_camry_2014 hinda honda_dealership infiniti_com subaru_crosstrek_2013
+scion_cars
+honda_fit_2013 bmw_525 nissan_cube
+kia_sorento_2014
+
+quatar_airways
+
+yyz_airport
+
+e175_aircraft
+
+mercedes_suv auid
+
+russian_airlines
+
+sf_airport
+
+swiss_airline
+
+hyandai
+
+honda_pilot_2014
+
+2014_honda_accord
+
+mazda_cx9
+
+ml_350 hundai2013
+
+hyundai_accent landrover
+hyundai_dealers
+
+www_etihad_com
+
+travocity
+
+obritz
+flybe
+
+american_airlines_pet_policy
+
+go_voyages
+
+best_days_to_buy_airline_tickets
+insanely_cheap_tickets
+cheapest_day_to_fly
+west_airlines southest_airlines
+us_airwys
+
+nissan_murano land_rover
+nissan_cars
+mercedes_cla toyota_tacoma hundai
+camry
+kia_cars
+toyota_4runner 2013_honda_accord
+lexus_es_350 audi_a3 audi_usa
+toyota_corolla toyota_prius toyota_yaris
+nisan
+toyota_matrix honda_element
+mazda_cx5
+range_rover_evoque
+kia_motors
+hyundai_elantra nissan_com
+suburu
+hyundia
+hyundai_veloster fj_cruiser
+toyoya
+
+4runner
+used_bmw_cars
+
+infinitiusa
+
+hawaii_airlines
+
+globester_travel
+
+ua_airline
+
+hawaii_airline
+
+seatguru
+
+airflight
+
+audie
+
+suzuki_cars vw_gti
+2014_mazda_3
+
+arkansas_airports
+
+conviasa
+
+alaskaair
+
+air_china_usa
+
+kia_suv
+
+scion_tc
+
+niss
+
+infinit
+
+a_a_com
+
+taca_airline
+
+air_france_fr
+
+avoca_airport
+
+nissanusa
+
+luxus
+
+benz
+
+bmw_x1
+
+chinaair
+
+cheap_travel
+
+orbits
+traveloicty
+
+jaya_travels
+
+seattle_international_airport
+
+bahama_airlines
+
+toyota_fj
+2014_crv
+
+infiniti_q50
+
+rav4
+
+prius_c
+
+subaru_com
+
+subaru scion_frs lexus_cars
+kia audi honda_accord
+mbusa 2014_nissan_rogue
+
+honda_com
+nissan_frontier mazda
+
+2014_honda mercedes
+honda_odyssey infiniti_suv
+toyota_dealers
+totota
+mercedes_benz_usa kia_soul
+mazda_5
+lexus_usa honda_crosstour honda_crx nissan_altima
+honda_pilot_2013
+toyota_com lexus_rx_350 hyndai2013
+
+dc_airport airports_map
+
+hawiian_airlines
+
+endeavor_air
+
+flight_traker
+
+tracelocity_com
+
+tap_airlines
+
+qx60
+
+acura_tl
+kia_rio
+
+jaguar_cars
+
+cheap_tickets_airfares
+u_s_airways_flights
+cheap_airfares_in_usa
+cheapoair_tickets search_flights delta_telephone_number cheapticket
+jet_blu jetblue_airline flights_from
+seat_guru_delta delta_phone_number best_fares_com
+tpa_airport
+delta_ailinesair_tickets
+hipmonkey_flights jetblue_deals
+flight_search_engines kajak_tickets aaa_airline_tickets
+airlines_reservations airfare_watchdog virginairlines
+deltaair_com
+ua_air chepticket_com cheapairfares_com jet_b soutwestairlineflights airfairs last_minute_airline_tickets flight_specials momondo
+swa_airlines
+souwest
+cheepflights_com
+south_west
+alegantairways star_alliance_flights
+emarat
+jetlbue
+best_airlines america_west_airlines orbitz
+jeyblue virgin_america_airlines charter_flights_to_las_vegasusair_com cheeptickets_com
+souyhwest_airlines fareboom cheap_tickets_com
+low_fare_flights
+delta_airlines_phone_800
+booking_flights
+cheapest_airfare_tickets
+allegiant_air allegiant_airlines
+cheep_flight
+airtickets_comsuthwest berlin_air
+dirt_cheap_airline_tickets cheap_fly
+horizon_air
+cheap_tickts kyaketravel
+southwest_air_line
+lufthansa southwest_airfares
+airline_ratings_2013 ny_airports
+kayak_flights
+airtran_airways united_airl alligientairways sothwestairlinesreservations
+hawaii_air blue_jet_airfare
+fly_cheap_airlines
+airline_flights
+airfast_tickets virgin_airlines_usa virgin_american_airlines
+jet_bl
+kayak_air airline_flights_cheap cheapest_airline_tickets
+airfare_deals
+vision_airlines
+southwest_airlnes cheapflights_com alegant_air travelosityairfares
+air_canada
+de_ta air_gorilla airtrans_com
+momondo_com
+air_lines airtickets fronteer_airlines
+swiss_air_international
+airfarewatchdog chepoair
+fare_buzz
+chipoair
+unted_airlines
+smart_fares airline_promo_codessoouthwest
+list_of_airlines airtran_airlines_tickets
+swair aitalia ted_airlines
+domestic_airlines
+cheap_orlando_flights us_airays
+america_air bestfares_com abe_airport delya
+dtw_airlines
+cheap_military_airline_tickets sothwest_airline
+great_lakes_air
+et_blue lowest_fare
+travelociyt
+fare_watcher aa_airlines_lowest_fares southwwest las_vegas_airlines
+best_flights cheap_airline_pricesnonstop_flights
+americanairline_com compare_airline_prices spirtair
+souwest_airlines united_airlines_tickets
+cheapo
+cheapotickets
+explore_trip sky_west_airlines virgin_flights phone_number_for_allegiant_airlines
+virgin_air
+amarican_airlines alligiant_air usairways_airlines
+jordanian_airlines
+cheap_tikets
+cheap_air_flights southwest_airways
+what_airlines_fly_to_hawaii
+cheep_air
+unied
+alaka_airlines
+best_airlines_to_fly
+delta_deals
+dekta
+dalta_air_line
+expedia_airline_tickets
+smartfares
+usa_3000_airlines
+airgorilla
+souhwest
+southwest best_airline_deals
+sothwest_airlines_com airfare_compare
+united_airllines
+alaskanairlinesklm
+italia_airlines united_airlines_airlines
+flights_from_philadelphia compare_flight_prices alitalia
+airline_tickets
+aliegent_air cheap_air_flight
+airfare american_trans_air cheapflights air_trans_airlines cheapoir airtan amercian_airlines
+us_airlines_flight_scheduleairtram
+orbitz_flights
+southweat
+smartfares_airfares
+ireland_airlines air_choice_one
+spirtairlines
+continental_airlines_com
+airtran_air_fares
+reliant_airlines
+airtransat_air_fares spirtirlines
+0rbitz
+cheapflight travelone_com
+tsa_tips delta_airines
+swissair
+airlines_flights
+virginair_com
+lan_airline
+swissair_airlines
+united_airlines_cancellations
+virgin_airlines_flights
+smart_fare transair_com
+airtrain
+cheap0air airlines
+united_air_lines cheap_airline
+cheapest_time_to_fly
+southw
+southwe air_trans_airline uited
+cheapairfares jet_blue
+usai
+tranair
+discount_airlines lanchile
+arkefly kayak
+united_air untied_airlines
+southwestairlines
+jet_bue
+tavelocitycheaptickets
+aa_com
+united_airways fly_com
+all_airlines
+islip_airport
+delta aa_airline
+buelos_baratos
+soutwest_airlines ita_software
+united_arilines
+hawaian_airlines southwesr america_airlines
+airtranairways_com
+jet_blue_flights
+dalta
+virgin_america cheepoair
+southwet
+usairw
+us_airwyas
+southweast
+us_aiways siuthwest
+delta_con
+us_airlines_airlines
+yapta
+cheapest_airfares
+allegi a_airlines
+expedia_air tripmama
+us_ai
+airtra
+alligaint_air
+southweest
+delta_airline best_airfares
+us_airlines
+trans_air_airways
+unitd
+travelation_airline_tickets
+tran_air
+virgin_airways direct_flights
+expeedia
+clt_airport_code
+ua_airways gojet
+delat_airlines
+alligaint
+jetblue
+priceline_air_ticket
+chepo_air
+bluejet
+chepoairlinealigent_air
+lowfares
+avp_airport aa_airlines
+spiritairlines
+airtran_airline
+
+cheap_air_ticket
+buy_airline_tickets
+sw_airlines
+
+orbitz_com_flights
+
+lexus_com
+
+infinity_cars
+
+bmw_x3
+
+hunda
+
+car_brands
+
+nissan_leaf
+
+nissan_sentra
+
+mini_usa
+
+used_audi
+
+range_rover
+
+subaru_wrx
+
+delta_airline_tickets des_moines_iowa_airport jet_blue_baggage_fees iceland_air airfare_com
+united_express_skywest lgb_airport spirit_airlines_promo_codes_2013 cheapoair_expedia
+airline_coupons air_flight airline_flight usaiways
+bwi_shuttle southwest_flights_to_florida
+cheap_fights cheaptikets united_airlines_frequent_flyer_milesalliegent
+kyak_com
+us_aurways air_tran_airways alligent name_your_price_airline_tickets
+copa_air
+espedia virgin_airlines_reservations
+onetravel
+merican_airlines delta_flights mobissimo_flights
+airtran_southwest_airlines
+travel_zoo_flights swiss_air airline_travel american_airlines_tickets_pricestam_airlines
+1dtw1_2mci2
+trip_advisor_flights clearwater_airport
+jet2_flights airtran_air delta_air_flights
+canadian_airlines aa_air cheapest_airline
+obitz_air_line
+southeest airline_tickets_prices tyler_texas_airport
+spirit_airways ogg_airport cheap_airfares promo_code_for_southwest_airlines booking_buddy
+omni_air salisbury_airport gary_airport turkish_air_line cheap_ticket_com travelosity_com_flights airline_seat_guru
+southwestairline
+viewtrip
+southwest_airlines_deals frontier_airline
+americanair air_tran_airline
+book_flights flight_hub
+insanely_cheap_flights
+british_airlines
+expedia_airline unitedairline us_airways_reviews discount_airline_flights southwest_airlines_coupon_code us_air_airways jfk_departures
+jet_blue_airlines_fligt_tickets alligient_air
+greater_cincinnati_airport bristol_airport
+united_airines a330_200 air_flight_tickets suthwest_airlines
+flying_blue
+embraer_190
+insanely_cheap_airline_tickets 767_300 canada_air orbiz_com
+cheapair_com
+vayama
+fly_for_less
+kayka_com spirit_airlines_flights cheap_air_travel
+best_time_to_book_a_flight
+funjet_flights trans_air_airlines
+united_airlinssouthwest_airlines_coupons swa_flights
+germanwings
+deltaairlineskayaj
+book_a_flight midway_airlines
+swiss_airlines
+continental_airlines_reservations transaero expedia_com_flights aeromexico_reservations
+unitedair hotwire_flight military_flights
+jetblue_airlines_airfares flightnetwork
+seat_guru us_ariways
+continetal_airlines alska_airlines
+albany_airport
+cheapo_air
+americanairlinesreservations cheaptickets_airline jet_blue_com_tickets
+name_your_own_price_airline_tickets
+flypittsburgh_com one_travel_com
+bwi_flights delta_airlines_toll_free_number
+standby_flights air_mexico
+msn_airport cheapoair_reviews
+southwes_com www_usair united_airline travelcitytravelosityairlines spain_airlines southwest_airelines
+atlas_airlines
+sprit_airline military_discount_flights avianca
+airjamaica cheapoair_promo_code
+skywest airline_ratings
+uniedairlinecom myidtravel air_fare american_airlines_official_siteicelandair
+american_airlines_promotion_code
+traveolcity
+allegiant
+taca
+sky_team daytona_beach_airport_airlines orbiyz
+flight_network united_a
+farecompare msp_airport us_air_reservations airtran_com_airline paris_airports
+jey_blue cheapotickets_com air_tran_airlines
+sju_airport
+what_is_the_cheapest_airline
+lax_map_terminal amreican_airlines
+orbitx price_line_airline_ticket
+carribean_air
+amer_airlines kajak_com delta_tickets one_travel_airline_tickets
+southwest_air_com
+cheap_air_tickets
+
+air_watchdog
+usairway
+
+mazda_cars
+bmwusa
+rav4_2013
+
+nissantoyota_cars
+
+mazda_cx_5
+
+lexas
+
+mazda_cx_7
+2014_honda_crv
+nissan_quest
+
+honda_ridgeline
+
+kia_irvine new_car_deals
+
+vw_cars kia_truck
+
+vw
+
+prius
+
+tayota
+venza
+touota volvo_s60
+
+vw_cc
+
+azera
+
+honda_civic
+toyota_dealer lexus_is_2014
+juke nissan_usa
+subaru_brz
+sicon
+elantra audi_q5
+
+infinti
+
+2014_infiniti
+
+acura nissan_juke
+toyota bmw_usa
+edmunds acura_mdx
+honda
+hyundai_sonata
+kia_sorento bmw
+
+toyota_recall true_carbuik
+
+nissan_dealers
+
+toyota_sienna
+
+lexus_is_2015
+
+mercedes_benz_cla_2013
+toyota_rav4_2014 mbusa_com
+costco_auto_program honda_cr_v
+hundia
+
+kia_com lexumazda_3vw_tdi
+
+honda_dealersveloster truecar
+used_bmw
+
+2013_lexus
+
+mazada
+
+bmw_x5
+mercedes_benz
+toyota_camry
+maxima
+
+nissan_rogue
+
+bmw_5_series
+
+jetta
+
+toyata
+q7 isuzu
+
+bmw_cars
+
+compare_cars
+
+bmw_328d
+
+nissan_maxima
+
+mitsubishi_cars
+fiat_cars
+
+yaris
+
+nissa
+
+vw_golf
+hyunda
+
+honda_fit
+
+nissan_versa
+
+cr_v
+
+iihs
+
+volvo_cars
+
+toyota_rav4
+
+honda_civic_2013
+
+vwusa
+
+vw_usa
+infiniti_qx56
+passat
+volvo_xc90
+
+best_suv
+lexus_suv
+
+honda_crv
+
+fiat_500
+
+mazda_cx_9
+
+hyundai_genesis
+hyundai_santa_fe
+subaru_forester_2014
+
+kia_optima subaru_outback toyota_avalon
+honda_pilot infiniti_cars
+bmw_com honda_cars
+scion volkswagen nissan_pathfinder vw_jetta
+subaru_legacy
+infiniti lexus volvo fiat mazda_6
+vw_com altima toyota_venza
+toyot
+
+mitsubishi
+
+toyota_highlander
+q50
+
+toyota_corolla_2014
+
+kia_dealer_locator
+
+hyundai
+
+volvo_v70
+
+2014_toyota_highlander
+audi_suv
+
+2013_kia_optima
+
+honda_accord_2013 toyota_rav_4
+
+kia_optima_2013
+
+mercedes_usa
+volkswagon
+is250
+
+volvo_dealers lexus_2014
+hondai kia_sorrento
+toyota_land_cruiser
+hunday nissan_altima_2013 scion_xd
+nisson subaru_dealer_locator nissan_pathfinder_2014
+2013_toyota_avalon
+corolla audi_com
+kia_dealers
+2014_kia_sorento
+infinity_car xc90 subaru_impreza kia_sol honda_usa corolla_2014 2014_lexus
+kia_car
+hyundai_2012 volkswagen_tiguan
+hyundai_equus mazda2 nissan_juke_2013
+mitsubishi_outlander acura_tsx
+honda_cars_usa
+infinity_auto
+volkswagen_jetta tiguan crossover_vehicles
+2014_acura_mdx
+nissan_rogue_2014 dch_honda
+kia_cadenza
+awd_cars best_cars_2013
+volkswagon_com
+hundi
+toyota_celica
+vovlo fiat_usa subaru_crosstrek_2014
+volvo_suv mazda_3_2014
+audi_q3
+honda_civic_2014 hond
+kia_forte acura_rdx
+suzuki_sx4 2014_infiniti_q50 toyota_tacoma_2014 mazda3
+small_cars nissan_dealer_locatorluxes
+bmw_2014
+toyota_sienna_2014 acura_mdx_2014
+hyundai_tucson toyota_camry_2013 toyota_scion
+toyota_sequoia
+subaro infiniti_fx35
+best_suvs
+rav_4 range_rover_sport
+veloster_2013 2014_cars rx350
+volkswagen_passat scion_xb toyta
+adui honda_odyssey_2013 infiniti_g37
+lexus_gx lexus_com_usa honda_suv
+best_cars_2014
+cx5
+lexus_dealers honda_crv_2013
+xterra acura_rdx_2014 infiniti_usa
+honda_dealer vw_dealers
+mazda6
+honda_accord_2014
+honda_dealer_locator accura
+toyota_suv kia_sportage
+consumer_reports_cars
+bmw_lease
+subru
+nissan_armada
+hyundi
+car_reviews
+
+The models are optimized using stochastic gradient ascent, suitable for large-scale problems. However, computation of gradients ∇L in (4.1), (4.3), and (4.8) is proportional
+to the vocabulary size V , which is computationally expensive in practical tasks as V could easily reach hundreds of
+millions. As an alternative, we used negative sampling approach proposed in [31], which significantly reduces the computational complexity.
+When the vector representations of all queries are found,
+we can perform query rewriting in a straightforward manner. For a given user query q, we generate K query rewrites
+using K nearest neighbors (K-NN) of query q in the lowdimensional space with respect to a cosine distance [31].
+
+cube_car
+
+4.4
+
+airbus_a330_200
+
+airtran_coupon_code spirit_airline_flight
+
+mdw_airport
+
+flyfrontier_flights
+
+erie_airport
+
+southwethwest_air_lines
+
+(b) air travel-related ad
+
+Figure 2: Examples of most similar queries to select ads
+
+5.
+
+EXPERIMENTS
+
+In this section we describe the considered data set and give
+empirical evaluation of the proposed rewriting methods. We
+learned embeddings for more than 45 million queries, using
+one of the largest search data sets reported so far, comprising
+over 12 billion sessions collected on the US website of Yahoo
+Search. The vectors were used to produce query rewrites,
+evaluated in terms of relevance and ad coverage and compared to the state-of-the-art methods from the literature.
+
+5.1
+5.1.1
+
+The data set Dad = {si , i = 1, ..., S} consists of sessions si comprising both search queries and ad clicks,
+si = (qi1 , qi2 , ai3 , qi4 , ai5 ..., qiMi ), where qim refers to search
+queries, and aim refer to ad click events. Moreover, to further improve learned query representations we also considered adding search link clicks to the user sessions (i.e., clicks
+that a user made on links given as search results, also referred to as organic results), motivated by the idea behind
+QFG approach. To this end, we expanded data set Dad
+to obtain data set Dad+link = {si , i = 1, ..., S}, formed by
+further adding link click events lim to search sessions si .
+
+Training data sets
+Query content data
+
+For purposes of learning query embeddings from query
+content, we took 45 million most frequent queries and
+formed dataset Dcontent = {(qm , wm1 , wm2 , . . . , wmTm )},
+where qm is the m-th query and (wm1 , wm2 , . . . wmTm ) are
+the words contained within qm .
+
+5.1.2
+
+5.2
+5.2.1
+
+Handling "search stopwords"
+
+Unlike in everyday language, where the most frequent tokens are articles and prepositions (e.g., a, the, in), in search
+data the most frequent tokens are navigational queries, such
+as google, yahoo, facebook, etc. Due to the fact that over
+a longer period they occur in a direct neighborhood of majority of other queries, there is a risk that the embedding
+space will shrink. We have empirically observed this phenomenon, and during training the navigational queries tend
+to pull all other queries towards them, preventing the vectors
+from spreading further away in the hyperspace.
+The authors of [31] suggested to deal with the frequent
+tokens in news articles by downsampling. This heuristic
+involved
+discarding words with probability P(wi ) = 1 −
+q
+τ
+,
+where
+f (wi ) is the frequency of word wi , and τ is a
+f (wi )
+
+Search session data
+
+Search sessions are defined as uninterrupted sequences of
+web search activity. Following [16], the session ends when a
+user is inactive for more than 30 minutes. A new session is
+initiated with the following search query.
+To be able to learn query embeddings from interactions of
+queries within a search session we created dataset Dcontext =
+{si , i = 1, ..., S}, derived by sessionizing user search logs
+data into sessions si , that were in turn represented as a
+set of queries ordered in time, si = (qi1 , qi2 , ..., qiMi ). In
+a case of repetitive queries, such as si = (qi1 , qi2 , qi3 =
+qi2 , qi4 = qi2 , qi5 ), repetitions were de-duplicated to obtain
+si = (qi1 , qi2 , qi5 ). Finally, search sessions that contained
+only a single search query were discarded.
+
+5.1.3
+
+Training details
+
+user-set parameter. However, this approach is not applicable in a context of web search which poses quite different requirements. In particular, we aim to learn good representations of navigational queries while at the same time prevent
+them from adversely influencing representation learning for
+non-navigational queries. To achieve this objective, we propose a one-direction learning rule for navigational queries.
+In particular, their vectors are being updated by vectors of
+queries appearing in the context, but are not used to update
+the vectors of other queries in their context. We identified
+navigational queries editorially by evaluating the most frequent 3,000 queries for navigational intent.
+
+Ad clicks and search link clicks
+
+In a search session, queries are often accompanied by ad
+clicks and search link clicks. These events can be used as
+additional context to improve query representations and specialize them for a specific task. For example, while one of
+the main goals of query rewriting in sponsored search is
+to produce relevant alternatives to the original query, another important goal is for rewrites to match as many bid
+terms as possible to increase the auction value. Thus, to produce more commercial query rewrites, we use ad click events
+within query contexts when learning vector representations.
+For this purpose we extend the session data set by
+adding ad click events to user sessions, where each ad
+click is uniquely identified by ad identification number.
+
+5.2.2
+
+Training parameters
+
+Models were trained using a cluster of 9 machines with
+256GB of RAM memory and 24 cores. Dimensionality of the
+
+387
+
+Table 1: Differences in query rewrites of context2vec and context-content2vec for tail queries
+Query
+
+cx2vec
+
+cx-cn2vec
+
+satellite tv otego
+satellite tv menominee
+minnesota insurance exam crossword puzzles satellite tv west end
+satellite tv townsend
+satellite tv lake sara
+staphylococcal enteritis definition
+salmonella enteritis definition
+microwave food safety
+listeria monocytogenes prevention
+e coli cdc
+preventing cross contamination
+steak sauce substitute
+montreal seasoning ingredients
+what to cook in cast iron skillet
+ground turkey breakfast sausage
+how to cook steak on cast iron skillet
+reseason cast iron
+mp3attic music
+donar ovulos en elche
+iphone 6 repair services
+credit a la consommation rapide
+smart phone repair service
+social security disability bronx ny
+
+minnesota insurance
+minnesota insurance license practice exams
+online insurance exam crossword puzzles
+colorado insurance exam crossword puzzles
+online minnesota insurance exam crossword puzzles
+microwave oven food safety
+microwave baby food safety
+microwave food safety studies
+microwave food safety issues
+foodsafety.com
+cast iron skillet recipes
+how to cook with cast iron skillet
+how to cook in a cast iron skillet
+how to cook with a cast iron skillet
+chicken in cast iron skillet
+at&t iphone repair service
+iphone 5c repair service
+iphone repair
+iphone service repair
+iphone repair services
+
+Table 2: Examples of query rewrites with and without ad clicks in training data (bolded rewrites matched bid-terms)
+makeup (no ads) makeup (with ads) snowboarding (no ads) snowboarding (with ads) seafood (no ads) seafood (with ads)
+makeup tips
+fashion makeup
+make up
+makeup pictures
+makeup images
+makeup tutorial
+
+lipstick
+mac makeup
+makeup sets
+eye shadow
+makeup covergirl
+makeup items
+
+snowbaording
+snow boarding
+snowboarding information
+snowboarding jumps
+snowboard pics
+shaun white snowboarding
+
+snowboards
+snowboarding gear
+burton snowboarding
+snowboard deals
+snowboards on sale
+snowboarding mountains
+
+embedding space was set to D = 300, context neighborhood
+size was set to 5 and content neighborhood size was set to 7.
+Finally, we used negative sampling to speed up the training,
+and used 10 random samples in each vector update.
+
+5.3
+
+seafood restaurant
+seafood restaurants
+crab shack
+seafood market
+sea food
+sea food menu
+
+6) cx-cn2vecad model was trained using Dcontext and
+Dad (i.e., context data with ad clicks added). Training resulted in additional 8.5 million ad vectors.
+As illustrated in Table 2, we can see that addition of
+Dad resulted in quite different query rewrites than using a
+data set without ad clicks. For example, rewrites for query
+“makeup” mainly contain terms that are related to tips, tutorials, and pictures when no ads were used in training. Conversely, rewrites for the same query when clicks on ads are
+considered contain more commercial search terms.
+In addition, given ad and query vectors in the same embedding space, we can easily retrieve similar queries for any
+given ad. This by-product is extremely useful for suggesting
+new bid keywords for specific categories of ads (note that
+in our system ads are categorized into one or more interest
+categories, such as “sports” or “travel”). As an example, in
+Figure 2 we show K = 5,000 most similar queries to ads
+in “automotive” and “air travel” categories. Keywords with
+higher cosine similarity are shown with larger font sizes. We
+can observe that the key concepts of the category are well
+captured with the most similar queries.
+7) cx-cn2vecad+link model was trained using Dcontent
+and Dad+link (i.e., context data with ad clicks and link clicks
+added). Training resulted in additional 19 million search link
+vectors and 8.5 million ad vectors.
+8) QFGad+link model was trained using a click-flow
+graph constructed from Dad+link dataset, with additional
+19 million search link vectors and 8.5 million ad vectors.
+To produce rewrites for out-of-dictionary queries, embedding models generated their vectors by summing the existing
+vectors of word tokens within queries (excluding stopwords).
+Unlike the embedding methods, QFG could not produce
+rewrites for queries that were not seen in the graph.
+Our evaluation did not include topic models such as LDA
+[5] or PLSA [19], as earlier research [20] found that these
+methods perform poorly on short text documents.
+
+Query rewriting models
+
+We considered the following approaches in our empirical
+analysis, where each resulted in vector representation for 45
+million most frequent queries.
+1) word2vecnews model was used as a simple baseline.
+Query vectors were constructed by summing publicly available word vectors for word tokens in a query (whitespace was
+used as a token separator), trained on Google News data set
+with English stopwords removed1 .
+2) word2vecsearch query vectors constructed by summing word vectors for word tokens in a query, trained using
+Dcontent data set.
+3) content2vec model (cn2vec) was trained using
+Dcontent where queries were used as a global context to the
+containing words, as illustrated in Figure 1b.
+4) context2vec model (cx2vec) was trained using
+Dcontext , as illustrated in Figure 1a.
+5) context-content2vec model (cx-cn2vec) used both
+Dcontent and Dcontext data to train query vectors, leveraging
+the two-layer architecture from Section 4.3. Since the model
+learns from both content and context, one of the motivations
+behind cx-cn2vec is to improve embeddings for queries that
+were not seen in many sessions. In Table 1 we give several
+illustrative examples of such tail queries. Unlike cx2vec, cxcn2vec relies more on content in case of rare queries, and
+thus provides better rewrites. For example, at the time of
+creation of our data set the query “iphone 6 repair service”
+was a tail query, resulting in poor cx2vec rewrites such as
+“mp3attic music” or “social security disability bronx ny”. On
+the other hand, cx-cn2vec provided more relevant rewrites.
+1
+
+sea food
+crab legs
+best seafood
+oysters
+lobster recipes
+seafood market
+
+https://code.google.com/p/word2vec
+
+388
+
+Table 3: Mean and standard deviation (in brackets) of query similarity (cosine distance) between pairs of editorially judged
+query rewrites (top: in-dictionary queries, bottom: out-of-dictionary queries)
+
+grade
+
+pairs
+
+cn2vec
+
+cx2vec
+
+cx-cn2vec
+
+Excellent
+1,518
+Good
+5,531
+Fair
+4,021
+Bad
+4,229
+avg. p-value
+Excellent
+2,119
+Good
+11,305
+Fair
+11,146
+Bad
+7,849
+avg. p-value
+-
+
+0.630 (0.136)
+0.599 (0.136)
+0.550 (0.167)
+0.398 (0.196)
+1.39e-15
+0.791 (0.166)
+0.752 (0.155)
+0.715 (0.136)
+0.635 (0.199)
+4.99e-26
+
+0.658 (0.107)
+0.621 (0.125)
+0.565 (0.129)
+0.363 (0.170)
+5.44e-26
+0.623 (0.141)
+0.587 (0.135)
+0.561 (0.145)
+0.383 (0.211)
+1.137e-27
+
+0.669 (0.107)
+0.637 (0.100)
+0.577 (0.124)
+0.349 (0.184)
+8.27e-28
+0.628 (0.134)
+0.592 (0.130)
+0.565 (0.139)
+0.387 (0.209)
+4.0423e-32
+
+cx-cn2vecad cx-cn2vecad+link word2vecnews word2vecsearch
+0.668 (0.114)
+0.632 (0.104)
+0.566 (0.130)
+0.336 (0.187)
+2.99e-30
+0.623 (0.143)
+0.584 (0.137)
+0.558 (0.146)
+0.382 (0.212)
+1.196e-30
+
+0.85
+
+NDCG @ K
+
+0.8
+0.75
+0.7
+cx−cn2vec ad + link
+cx−cn2vec ad
+cx−cn2vec
+cx2vec
+cn2vec
+QFG ad + link
+word2vec search
+word2vec news
+
+0.6
+0.55
+0.5
+1
+
+5
+
+10
+
+K
+
+15
+
+20
+
+Figure 3: NDCG@K for different competing methods
+
+5.4
+
+Evaluation
+
+In the following two sections we show our main experimental results, where we report performance of the competing approaches in terms of relevance and ad coverage of
+query rewrites. We also provide examples of rewrites by
+cx-cn2vecad+link method in an online video2 .
+
+5.4.1
+
+Relevance
+
+We used editorial judgments of query rewrites to compare
+query rewriting methods in terms of relevance.
+In-house data. The first data set we used is an inhouse data set consisting of the query and several rewrites
+produced by current production system that were graded
+editorially. The editors were instructed to assign the following grades: bad, fair, good, and excellent. In total, the
+data set includes more than 40,000 (query, rewrite, grade)
+tuples, such as (“nfl news”, “latest nfl news”, “excellent”),
+(“nfl news”, “nfl shooting”, “fair”), (“nfl news”, “nfl rumor”,
+“good”), (“metro transit”, “metro pcs”, “bad”).
+Given a query we ranked the rewrite candidates based on
+a model’s output score and retrieved the top K candidates.
+Next, we computed the NDCG metric using editorial grades
+of rewrites as labels (0 for bad, 1 for fair, 2 for good, and 3
+for excellent) at values of K ranging from 1 to 20. In Figure
+3 we report the results for different models.
+2
+
+(0.094)
+(0.097)
+(0.132)
+(0.179)
+1e-100
+0.668 (0.147)
+0.612 (0.141)
+0.584 (0.147)
+0.410 (0.208)
+2.926e-40
+
+0.818 (0.146)
+0.770 (0.152)
+0.749 (0.190)
+0.517 (0.280)
+4.121e-07
+0.824 (0.145)
+0.796 (0.145)
+0.769 (0.175)
+0.509 (0.311)
+2.038e-16
+
+0.648 (0.151)
+0.614 (0.155)
+0.567 (0.173)
+0.395 (0.201)
+1.014e-14
+0.790 (0.157)
+0.756 (0.156)
+0.707 (0.141)
+0.602 (0.208)
+9.388e-22
+
+QFGad+link
+0.329
+0.205
+0.114
+0.166
+
+(0.667)
+(0.574)
+(0.366)
+(0.584)
+0.013
+-
+
+By considering the reported results, several conclusions
+can be drawn. Regarding models that did not utilize search
+session data (i.e., word2vecnews , word2vecsearch , and cn2vec),
+we can see that the word embeddings specifically tailored for
+search queries perform better than using word embeddings
+learned using news data. In addition, learning query vectors as global context of words using cn2vec leads to slightly
+better results than directly summing the words. However,
+all three models performed worse than the QFGad+link baseline method, which made use of the co-occurrence of queries,
+ads, and links in search sessions. Query embeddings trained
+directly on search sessions, i.e. cx2vec, already outperform
+QFGad+link . Further improvements were observed when embeddings were learned from both context and content. Finally, incorporating ad and link click events showed incremental boost in relevance. The largest gain was observed
+when links were added as an additional context.
+In addition, in Table 3 we report average similarities of
+(query, rewrite) pairs in each editorial grade group. It is
+important to note that scores are comparable only within
+the same method and not across methods. For conclusive
+comparison we calculated the level of separation between the
+groups by p-value of t-test, which tests the hypothesis that
+the means of two neighboring grades are equal. By comparing p-values reported we can quantify which method does the
+best job of separating the four grade groups. Findings are
+similar to the ones from Figure 3. Additionally, we find that
+QFGad+link method has issues with “bad” grade group, and
+that without incorporating search context, the embedding
+models have similar average scores in “good” and “fair” grade
+groups. As expected, separation improves when embedding
+models incorporate search context, with the standard deviation between the groups reducing even further when ads
+and links were considered as an additional context.
+In the case when one or both queries from the editorial
+grade list were not found in a model, we generated the vectors by summing vectors of query tokens. Bottom part of Table 3 shows results for such cases. We can observe that similar conclusion hold even for such out-of-dictionary queries.
+TREC data. The second data we used was a publicly
+available TREC Web Track data set3 from 2009 to 2013, containing a total of 250 queries. Using the competing methods
+we produced 5 rewrites for each query, and evaluated the result editorially. The editors were given instructions to rate
+the rewrites in the following way: grade 0 if the rewrite is
+irrelevant, grade 1 if relevant, and grade 2 if it is excellent.
+
+0.9
+
+0.65
+
+0.733
+0.683
+0.605
+0.425
+
+3
+
+http://youtu.be/pvfFQSCYhqI
+
+389
+
+http://trec.nist.gov/
+
+Table 4: Examples of rewrites obtained using the competing methods (bolded rewrites matched bid-terms)
+Original
+
+QFGad+link
+
+wedding budget
+wedding
+wedding cost calculator
+budget
+wedding calculator
+calculator
+wedding cost breakdown
+wedding budget worksheet
+gmat prep
+gmat classes
+gmat prep
+gmat
+classes
+kaplan gmat course
+kaplan gmat
+building a fence
+build your own fence
+how to build how to build a wood fence
+a fence
+do it yourself fence
+how to build a privacy fence
+solar panels for homes
+solar electric panels
+solar panels solar power
+ebay solar panels
+how to make solar panels
+
+cn2vec
+
+cx-cn2vec
+
+cx-cn2vecad
+
+monthly budget calculator
+online budget calculator
+budget wedding
+budget calculator free
+average wedding budget
+gmat prep online
+gmat prep courses
+gmat online prep
+online gmat prep
+best gmat prep courses
+how to build fence
+build fence
+build a fence
+how to build a cheap fence
+build your own fence
+solar panels for your home
+solar panels for residential homes
+solar panels for
+solar panels on ebay
+davis solar
+
+wedding planning checklist
+wedding budget template
+wedding budget worksheet
+wedding checklist printable
+wedding costs average
+gmat preparation courses
+sample gmat tests
+gmat prep class
+which is easier gre or gmat
+how much is the gmat
+how to build a fence on a hill
+how to fence a yard
+how to build a fence gate
+how to build a brick wall fence
+how to build a fence video
+solar power
+solar energy
+solar panels for homes
+solar power systems
+solar panel
+
+wedding budget worksheet
+wedding vendors
+the knot
+wedding planning checklist
+wedding wire
+gmat study books
+gmat test prep classes
+gmat prep class
+kaplan gre courses
+free gmat sample tests
+how to build a fence minecraft
+fancy fences and gates
+how to build a metal fence
+home depot com fencing
+back yard fences
+solar power
+solar panels for homes
+solar panels on sale
+solar panel kits
+solar panels for sale
+
+Table 5: Comparison of query rewrite methods (TREC data)
+
+Editorial grades for each method as well as the Levenshtein distance [29] were averaged and reported in Table
+5. We can see that the cx-cn2vecad+link query embedding
+method, learned from query content and search session context including ad and link clicks, returned the most relevant
+rewrites and outperformed the baseline QFG method. Once
+more, learning query embeddings from content of queries
+on its own was not enough to outperform QFG. Interestingly, there was just a small difference between cx2vec and
+cx-cn2vec models. It can be explained by the fact that
+cx-cn2vec generally improves rewrites for tail queries, while
+TREC data set mostly consists of frequent queries.
+In addition to providing highly relevant rewrites, cxcn2vecad+link showed the highest diversity, a favorable property for rewrite algorithms. Considering the performance in
+terms of Levenshtein distance, we can observe that rewrites
+produced by models which learned from content are less diverse than the ones produced by approaches that modeled
+query context during training.
+Examples of query rewrites obtained by the competing
+methods are given in Table 4. As can be seen, there exist
+significant differences between the rewrites of the competing
+approaches. As discussed earlier, the content-based model
+cn2vec is sensitive to cases when the query words appeared
+in different contexts across the query dictionary. For example, words “budget” and “calculator” from the query “wedding budget calculator” mostly appeared in more general
+financial contexts. For this reason in the first 5 rewrites we
+have queries that are not related to wedding. The model that
+utilized both content and context data cx-cn2vec outputs
+highly relevant, interesting rewrites that capture a number
+of meanings and contexts of the original query. The model
+that considered ads during training cx-cn2vecad produced
+more commercial rewrites, referencing stores and sales. We
+also bolded queries that matched the actual bidterms in the
+system, discussed in more detail in the following experiment.
+Examples of query rewrites produced by cx-cn2vecad+link are
+shown in an online video4 . The video mostly covers queries
+from TREC 2010 data set.
+4
+
+Method
+Editorial grade Levenshtein dist.
+QFGad+link
+1.0441
+11.70
+word2vecnews
+0.9189
+10.91
+word2vecsearch
+0.9492
+11.32
+cn2vec
+0.9571
+11.37
+cx2vec
+1.1273
+13.79
+cx-cn2vec
+1.1343
+13.13
+cx-cn2vecad
+1.2281
+13.62
+cx-cn2vecad+link
+1.2457
+13.25
+
+5.4.2
+
+Ad coverage
+
+In the previous section we showed the advantage of proposed methods in terms of relevance. In this section we evaluate how beneficial those rewrites are from the ad matching perspective. It is of fundamental interest to sponsored
+search to ensure that the rewrites being provided as alternatives to the users’ queries match as many additional relevant
+bidterms as possible. The percentage of rewrites that match
+bid terms is defined as coverage. We conducted an off-line
+experiment to compare query rewriting methods: 1) on an
+in-house dataset of 2,000 editorially selected queries which
+the editors deemed representative of the query set; and 2)
+on the TREC data set. For each query in the data sets
+we generated K = 5 rewrites and look-up bidterms in our
+current sponsored search demand. We report average coverage (relative improvement over QFG) over the entire set
+of queries for each of the two data sets. Table 6 summarizes
+the results of our analysis.
+To estimate monetary value of each query rewriting
+method we used two proxy measures. First, for the query
+rewrites produced by each method we look-up the bid
+amounts for the queries that were matched in the bidterm
+database. We report the total sum of these amounts, and
+refer to this metric as “revenue potential”. In addition, for
+each rewrite method we calculated effective cost per mille
+(eCPM). Given a query rewrite q, and an ad a for which
+q was a bidterm, we calculated eCPM value eqa by multi-
+
+http://youtu.be/n5kHKyKQAa8
+
+390
+
+Table 6: Relative improvement over the QFG method of different query rewrite methods on query-bid data
+
+In-house data
+TREC data
+Method
+Coverage Revenue potential eCPM Coverage Revenue potential eCPM
+QFGad+link
+1.00
+1.00
+1.00
+1.00
+1.00
+1.00
+word2vecnews
+0.76
+0.39
+0.46
+0.32
+0.66
+0.73
+word2vecsearch
+0.87
+0.58
+0.77
+0.57
+0.84
+0.75
+cn2vec
+0.89
+0.62
+0.84
+0.59
+0.84
+0.74
+cx2vec
+1.16
+1.80
+1.41
+1.41
+1.16
+1.20
+cx-cn2vec
+1.18
+1.86
+1.38
+1.44
+1.21
+1.19
+1.20
+1.89
+1.60
+1.52
+1.35
+1.31
+cx-cn2vecad
+cx-cn2vecad+link
+1.18
+1.88
+1.45
+1.50
+1.28
+1.22
+
+plying cost per click (CPC) dollar amount and the clickthrough rate (CTR) of that (query, ad) pair, computed as
+number of ad clicks divided by number of ad impressions.
+FiP P
+nally, we report the weighted sum of eCPM’s, q a wq eqa ,
+where the weight wq is proportional to the number of times
+the query appeared in the search logs. Considering the results presented in Table 6, we can see that query embedding
+models trained using news documents and query content
+achieved lower average coverage than QFG method. However, QFG was in turn outperformed by the coverage of
+rewrites produced using query embedding approaches.
+Moreover, by taking the results from both experiments
+into account, it can be concluded that cx-cn2vecads+links
+is the best choice as it achieves the highest relevance while
+maintaining large ad coverage. When link clicks were added
+on top of ad clicks we observed a large improvement in relevance, with ad coverage remaining almost the same.
+
+6.
+
+[3]
+
+[4]
+
+[5]
+
+[6]
+
+CONCLUSION
+
+[7]
+
+In this paper we described novel query rewriting methods
+based on recently proposed neural language models. The
+methods learn low-dimensional, distributed representations
+of search queries based on context (context2vec), content
+(content2vec), or combined context and content (contextcontent2vec) of the queries within search sessions. To specialize the query rewrites for sponsored search application,
+we further incorporated ad clicks and search link clicks into
+the training data. We evaluated the proposed methods using both in-house and publicly available TREC data sets.
+When compared to the current state-of-the-art approaches,
+we showed that context-content2vec generates the most relevant query rewrites, while at the same time maintains high
+level of ad coverage. The results clearly indicate significant
+advantages of context-content2vec over the state-of-the-art
+query rewrite algorithms, and suggest high monetization potential of the query embedding approach to the task of sponsored search advertising. In our ongoing work, we plan to
+experiment with more involved search sessionization algorithms and navigational query detection algorithms.
+
+7.
+
+[8]
+
+[9]
+
+[10]
+[11]
+
+REFERENCES
+
+[1] M. Aly, A. Hatch, V. Josifovski, and V. K. Narayanan.
+Web-scale user modeling for targeting. WWW, 2012.
+[2] R. Baeza-Yates, C. Hurtado, and M. Mendoza. Query
+recommendation using query logs in search engines. In
+Proceedings of the 2004 International Conference on
+Current Trends in Database Technology, EDBT’04,
+
+[12]
+[13]
+
+391
+
+pages 588–596, Berlin, Heidelberg, 2004.
+Springer-Verlag.
+R. Baeza-Yates, B. Ribeiro-Neto, et al. Modern
+information retrieval, volume 463. ACM press New
+York, 1999.
+Y. Bengio, H. Schwenk, J.-S. Senécal, F. Morin, and
+J.-L. Gauvain. Neural probabilistic language models.
+In Innovations in Machine Learning, pages 137–186.
+Springer, 2006.
+D. M. Blei, A. Y. Ng, and M. I. Jordan. Latent
+dirichlet allocation. the Journal of machine Learning
+research, 3:993–1022, 2003.
+P. Boldi, F. Bonchi, C. Castillo, D. Donato, A. Gionis,
+and S. Vigna. The query-flow graph: Model and
+applications. In Proceedings of the 17th ACM
+Conference on Information and Knowledge
+Management, CIKM ’08, pages 609–618, New York,
+NY, USA, 2008. ACM.
+F. Bonchi, R. Perego, F. Silvestri, H. Vahabi, and
+R. Venturini. Efficient query recommendations in the
+long tail via center-piece subgraphs. In Proceedings of
+the 35th International ACM SIGIR Conference on
+Research and Development in Information Retrieval,
+SIGIR ’12, pages 345–354, New York, NY, USA, 2012.
+ACM.
+A. Bordes, N. Usunier, A. Garcia-Duran, J. Weston,
+and O. Yakhnenko. Translating embeddings for
+modeling multi-relational data. In Advances in Neural
+Information Processing Systems, pages 2787–2795,
+2013.
+D. E. Bowman, M. L. Hamrick, T. R. Kohn, R. E.
+Ortega, and J. R. Spiegel. Refining search queries by
+the suggestion of correlated terms from prior searches,
+Dec. 21 1999. US Patent 6,006,225.
+A. Broder. A taxonomy of web search. In ACM Sigir
+forum, volume 36, pages 3–10. ACM, 2002.
+A. Z. Broder, P. Ciccolo, M. Fontoura, E. Gabrilovich,
+V. Josifovski, and L. Riedel. Search advertising using
+web relevance feedback. In Proceedings of the 17th
+ACM Conference on Information and Knowledge
+Management, CIKM ’08, pages 1013–1022, New York,
+NY, USA, 2008. ACM.
+Y. Chen, D. Pavlov, and J. F. Canny. Large-scale
+behavioral targeting. KDD, 2009.
+R. Collobert, J. Weston, L. Bottou, M. Karlen,
+K. Kavukcuoglu, and P. Kuksa. Natural language
+processing (almost) from scratch. The Journal of
+Machine Learning Research, 12:2493–2537, 2011.
+
+[14] N. Djuric, H. Wu, V. Radosavljevic, M. Grbovic, and
+N. Bhamidipati. Hierarchical neural language models
+for joint representation of streaming documents and
+their content. In International World Wide Web
+Conference (WWW), 2015.
+[15] D. C. Fain and J. O. Pedersen. Sponsored search: A
+brief history. Bulletin of the American Society for
+Information Science and Technology, 32(2):12–13,
+2006.
+[16] D. Gayo-Avello. A survey on session detection
+methods in query logs and a proposal for future
+evaluation. Inf. Sci., 179(12):1822–1843, May 2009.
+[17] M. Grbovic, N. Djuric, V. Radosavljevic, and
+N. Bhamidipati. Search retargeting using directed
+query embeddings. In International World Wide Web
+Conference (WWW), 2015.
+[18] M. Grbovic and S. Vucetic. Generating ad targeting
+rules using sparse principal component analysis with
+constraints. WWW, 2014.
+[19] T. Hofmann. Probabilistic latent semantic indexing. In
+Proceedings of the 22nd annual international ACM
+SIGIR conference on Research and development in
+information retrieval, pages 50–57. ACM, 1999.
+[20] L. Hong and B. D. Davison. Empirical study of topic
+modeling in twitter. In Proceedings of the First
+Workshop on Social Media Analytics, pages 80–88.
+ACM, 2010.
+[21] A. K. Jain, L. Hong, and S. Pankanti. Iab internet
+advertising revenue report: 2013 first six months’
+results. Technical report, Interactive Advertising
+Bureau, 2013.
+[22] B. J. Jansen and T. Mullen. Sponsored search: An
+overview of the concept, history, and technology.
+International Journal of Electronic Business,
+6(2):114–131, 2008.
+[23] R. Jones, B. Rey, O. Madani, and W. Greiner.
+Generating query substitutions. In Proceedings of the
+15th international conference on World Wide Web,
+pages 387–396. ACM, 2006.
+[24] F. Keller and M. Lapata. Using the web to obtain
+frequencies for unseen bigrams. Computational
+linguistics, 29(3):459–484, 2003.
+[25] R. Kiros, R. Zemel, and R. Salakhutdinov. Multimodal
+neural language models. In Proceedings of the 31th
+International Conference on Machine Learning, 2014.
+[26] R. Kiros, R. S. Zemel, and R. Salakhutdinov. A
+multiplicative model for learning distributed
+text-based attribute representations. arXiv preprint
+arXiv:1406.2710, 2014.
+[27] V. Lavrenko and W. B. Croft. Relevance based
+
+[28]
+
+[29]
+
+[30]
+[31]
+
+[32]
+
+[33]
+
+[34]
+[35]
+
+[36]
+
+[37]
+
+[38]
+
+[39]
+
+[40]
+
+392
+
+language models. In SIGIR, pages 120–127. ACM,
+2001.
+Q. V. Le and T. Mikolov. Distributed representations
+of sentences and documents. arXiv preprint
+arXiv:1405.4053, 2014.
+V. Levenshtein. Binary codes capable of correcting
+deletions, insertions, and reversals. In Soviet
+Physics-Doklady, volume 10, 1966.
+T. Mikolov, K. Chen, G. Corrado, and J. Dean.
+Efficient estimation of word representations in vector
+space. CoRR, abs/1301.3781, 2013.
+T. Mikolov, I. Sutskever, K. Chen, G. S. Corrado, and
+J. Dean. Distributed representations of words and
+phrases and their compositionality. In Advances in
+Neural Information Processing Systems, pages
+3111–3119, 2013.
+S. Pandey, M. Aly, A. Bagherjeiran, A. Hatch,
+P. Ciccolo, A. Ratnaparkhi, and M. Zinkevich.
+Learning to target: what works for behavioral
+targeting. CIKM, 2011.
+B. Perozzi, R. Al-Rfou, and S. Skiena. Deepwalk:
+Online learning of social representations. arXiv
+preprint arXiv:1403.6652, 2014.
+PwC. Global entertainment and media outlook:
+2014-2018. Technical report, 2014.
+C. Silverstein, H. Marais, M. Henzinger, and
+M. Moricz. Analysis of a very large web search engine
+query log. In ACm SIGIR Forum, volume 33, pages
+6–12. ACM, 1999.
+F. Silvestri. Mining query logs: Turning search usage
+data into knowledge. Found. Trends Inf. Retr.,
+4:1–174, Jan. 2010.
+R. Socher, D. Chen, C. D. Manning, and A. Ng.
+Reasoning with neural tensor networks for knowledge
+base completion. In Advances in Neural Information
+Processing Systems, pages 926–934, 2013.
+J. Turian, L. Ratinov, and Y. Bengio. Word
+representations: a simple and general method for
+semi-supervised learning. In Proceedings of the 48th
+Annual Meeting of the Association for Computational
+Linguistics, pages 384–394. Association for
+Computational Linguistics, 2010.
+H. Vahabi, M. Ackerman, D. Loker, R. Baeza-Yates,
+and A. Lopez-Ortiz. Orthogonal query
+recommendation. In Proceedings of the 7th ACM
+Conference on Recommender Systems, RecSys ’13,
+pages 33–40, New York, NY, USA, 2013. ACM.
+W. V. Zhang and R. Jones. Comparing click logs and
+editorial labels for training query rewriting. In WWW
+2007 Workshop on Query Log Analysis: Social And
+Technological Challenges, 2007.
+
+

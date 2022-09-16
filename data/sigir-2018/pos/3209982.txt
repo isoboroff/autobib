@@ -1,0 +1,1649 @@
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Towards Better Text Understanding and Retrieval through
+Kernel Entity Salience Modeling
+Chenyan Xiong
+
+Zhengzhong Liu
+
+Carnegie Mellon University
+cx@cs.cmu.edu
+
+Carnegie Mellon University
+liu@cs.cmu.edu
+
+Jamie Callan
+
+Tie-Yan Liu
+
+Carnegie Mellon University
+callan@cs.cmu.edu
+
+Microsoft Research
+tie-yan.liu@microsoft.com
+
+ABSTRACT
+
+estimation [8, 9]. The ability to know which terms are salient (important and central) to the meaning of texts is crucial to many
+text-related tasks. In ad hoc search, the document ranking is often
+determined by the salience of query terms in them, which is typically estimated by combining frequency-based signals such as term
+frequency and inverse document frequency [5].
+Effective as it is, frequency is not equal to salience. For example, a
+Wikipedia article about an entity may not repeat the entity the most
+frequently; a person’s homepage may only mention her name once;
+a frequently mentioned term may be a stopword. In word-based
+retrieval, many approaches have been developed to better estimate
+term importance [3]. However, in entity-based representations [20,
+26, 29], while entities convey richer semantics [1], entity salience
+estimation is a rather immature task [8, 9] and its effectiveness in
+search has not yet been explored.
+This paper focuses on improving text understanding and retrieval by better estimating entity salience in documents. We present
+a Kernel Entity Salience Model (KESM) that estimates entity salience
+end-to-end using neural networks. Given annotated entities in a
+document, KESM represents them using Knowledge Enriched Embeddings and models the interactions between entities and words
+using a Kernel Interaction Model [27]. In the entity salience task [9],
+the kernel scores from the interaction model are combined by KESM
+to estimate entity salience, and the whole model, including the
+Knowledge Enriched Embeddings and Kernel Interaction Model, is
+learned end-to-end using a large number of salience labels.
+KESM also improves ad hoc search by modeling the salience of
+query entities in candidate documents. Given a query-document
+pair and their entities, KESM uses its kernels to model the interactions of query entities with the entities and words in the document.
+It then merges the kernel scores to ranking features and combines
+these features to rank documents. In ad hoc search, KESM can either
+be trained end-to-end when sufficient ranking labels are available,
+or be first pre-trained on the salience task and then adapted to
+search as a salience ranking feature extractor.
+Our experiments on a news corpus [9] and a scientific proceeding
+corpus [29] demonstrate KESM’s effectiveness in the entity salience
+task. It outperforms previous frequency-based and feature-based
+models by large margins, while requires much less linguistic preprocessing than the feature-based model. Our analyses find that
+KESM has a better balance on popular (head) entities and rare (tail)
+entities when predicting salience. In contrast, frequency-based or
+feature-based methods are heavily biased towards the most popular
+entities—less attractive to users as they are more expected. Also,
+
+This paper presents a Kernel Entity Salience Model (KESM) that
+improves text understanding and retrieval by better estimating
+entity salience (importance) in documents. KESM represents entities
+by knowledge enriched distributed representations, models the
+interactions between entities and words by kernels, and combines
+the kernel scores to estimate entity salience. The whole model is
+learned end-to-end using entity salience labels. The salience model
+also improves ad hoc search accuracy, providing effective ranking
+features by modeling the salience of query entities in candidate
+documents. Our experiments on two entity salience corpora and two
+TREC ad hoc search datasets demonstrate the effectiveness of KESM
+over frequency-based and feature-based methods. We also provide
+examples showing how KESM conveys its text understanding ability
+learned from entity salience to search.
+
+KEYWORDS
+Text Understanding, Entity Salience, Entity-Oriented Search
+ACM Reference Format:
+Chenyan Xiong, Zhengzhong Liu, Jamie Callan, and Tie-Yan Liu. 2018.
+Towards Better Text Understanding and Retrieval through Kernel Entity
+Salience Modeling. In Proceedings of The 41st International ACM SIGIR Conference on Research and Development in Information Retrieval (SIGIR ’18). ACM,
+New York, NY, USA, 10 pages. https://doi.org/10.1145/3209978.3209982
+
+1
+
+INTRODUCTION
+
+Natural language understanding has been a long desired goal in
+information retrieval. In search engines, the process of text understanding begins with the representations of query and documents.
+The representations can be bag-of-words, the set of words in the
+text, or bag-of-entities, which uses automatically linked entity annotations to represent texts [10, 20, 25, 29].
+With the representations, the next step is to estimate the term
+(word or entity) importance in text, which is also called term salience
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+SIGIR ’18, July 8–12, 2018, Ann Arbor, MI, USA
+© 2018 Association for Computing Machinery.
+ACM ISBN 978-1-4503-5657-2/18/07. . . $15.00
+https://doi.org/10.1145/3209978.3209982
+
+575
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+KESM is less sensitive to document length while frequency-based
+methods are not as effective on shorter documents.
+Our experiments on TREC Web Track search tasks show that
+KESM’s text understanding ability in estimating entity salience also
+improves search accuracy. The salience ranking features from KESM,
+pre-trained on the news corpus, outperform both word-based and
+entity-based features in learning to rank, despite various differences
+in the salience and search tasks. Our case studies find interesting
+examples showing that KESM favors documents centering on query
+entities over those merely mentioning them. We find it encouraging
+that the fine-grained text understanding ability of KESM—the ability
+to model the consistency and interactions between entities and
+words in texts—is indeed valuable to ad hoc search.
+The next section discusses related work. Section 3 describes the
+Kernel Entity Salience Model and its application to entity salience
+estimation. Section 4 discusses its application to ad hoc search.
+Experimental methodology and results for entity salience are presented in Sections 5 and Section 6. Those for ad hoc search are in
+Sections 7 and Section 8. Section 9 concludes.
+
+2
+
+The word importance in documents can also be estimated by
+graph-based approaches [3, 18, 21]. Instead of using isolated words,
+the graph-based approaches connect words by co-occurrence or
+proximity. Then graph ranking algorithms, for example, PageRank,
+are used to estimate term importance in a document. The graph
+ranking scores reflect the centrality and connectivity of words and
+are able to improve standard retrieval models [3, 21].
+In the entity space, modeling term importance is even more
+crucial. Unlike word-based representations, the entity-based representations are often automatically constructed and inevitably
+include noises. The noisy query entities have been a major bottleneck for entity-oriented search and often required manual cleaning [7, 10, 15]. Along this line, a series of approaches have been
+developed to model the importance of entities in a query, for example, latent-space learning to rank [23] and hierarchical ranking
+models [26]. These approaches learn the importance of query entities and the ranking of documents jointly using ranking labels.
+The features used to describe the entity importance include IR-style
+features [23] and NLP-style features from entity linking [26].
+Nevertheless, previous research on modeling entity salience
+mainly focused on query representations, while the entities in document representations are still weighted by frequencies, i.e. in the
+bag-of-entities model [26, 29]. Recently, Dunietz and Gillick [9] proposed the entity salience task using the New York Times corpus [22];
+they consider the entities that are annotated in the expert-written
+summary to be salient to the article, enabling them to automatically
+construct millions of training data. Dojchinovski et al. constructed
+a deeper study and found that crowdsource workers consider entity
+salience an intuitive task [8]. Both of them demonstrated that the
+frequency of an entity is not equal to its salience; a supervised
+model with linguistic and semantic features is able to outperform
+frequency significantly, though mixed findings have been found
+with graph-based methods such as PageRank.
+
+RELATED WORK
+
+Representing and understanding texts is a key challenge in information retrieval. The standard approaches in modern information
+retrieval represent a text by a bag-of-words; they model term importance using frequency-based signals such as term frequency
+(TF), inverse document frequency (IDF), and document length [5].
+The bag-of-words representation and frequency-based signals are
+the backbone of modern information retrieval and have been used
+by many unsupervised and supervised retrieval models [5, 14].
+Nevertheless, bag-of-words and frequency-based statistics only
+provide shallow text understanding. One way to improve the text
+understanding is to use more meaningful language units than words
+in text representations. These approaches include the first generation of search engines that were based on controlled vocabularies [5]
+and also the recent entity-oriented search systems which utilize
+knowledge graphs in search [7, 15, 20, 24, 29]. In these approaches,
+texts are often represented by entities, which introduce information
+from knowledge graphs to search systems.
+In both word-based and entity-based text representations, frequency signals such as TF and IDF provide good approximations for
+the importance or salience of terms (words or entities) in the query
+or documents. However, solely relying on frequency signals limits
+the search engine’s text understanding capability; many approaches
+have been developed to improve term importance estimation.
+In the word space, the query term weighting research focuses
+on modeling the importance of words or phrases in the query. For
+example, Bendersky et al. use a supervised model to combine the
+signals from Wikipedia, search log, and external collections to better
+estimate term importance in verbose queries [2]; Zhao and Callan
+predict the necessity of query terms using evidence from pseudo
+relevance feedback [30]; word embeddings have also been used
+as features in supervised query term importance prediction [31].
+These methods in general leverage extra signals to model how
+important a term is to capture search intents. They can improve
+the performance of retrieval models compared to frequency-based
+term weighting.
+
+3
+
+KERNEL ENTITY SALIENCE MODEL
+
+This section presents our Kernel Entity Salience Model (KESM). Compared to the feature-based salience models [8, 9], KESM uses neural
+networks to learn the representation of entities and their interactions for salience estimation.
+The rest of this section first describes the overall architecture of
+KESM and then how it is applied to the entity salience task.
+
+3.1
+
+Model Architecture
+
+As shown in Figure 1, KESM includes two main components: the
+Knowledge Enriched Embedding (Figure 1a) and the Kernel Interaction Model (Figure 1b).
+Knowledge Enriched Embedding (KEE) encodes each entity
+e into its distributed representation v®e . It is achieved by first using
+an embedding layer that maps the entity to an embedding:
+V
+
+e −→ e®.
+
+Entity Embedding
+
+V is the parameters of the embedding layer to be learned.
+An advantage of entities is that they are associated with external
+semantics in the knowledge graph, for example, synonyms, descriptions, types, and relations. Instead of only using e®, KEE enriches
+
+576
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Knowledge Enriched
+Embedding (KEE)
+
+Target Entity
+“Barack Obama”
+
+Entity
+Embedding
+
+Φ
+
+…
+
+KEE of
+Target Entity
+
+Max
+CNN … Pooling
+…
+
+Cosine Similarity
+
+… Kernels
+RBF
+Kernels
+
+…
+
+presidency
+
+(a) Knowledge Enriched Embedding (KEE)
+
+Word
+
+… Kernels
+
+…
+
+Embeddings of
+Document Words
+
+Description Words
+
+,E
+Entity
+
+…
+
+⊔
+
+Obama
+American
+politician
+
+KEE of Document
+Entities
+
+Φ
+
+,W
+
+(b) Kernel Interaction Model (KIM)
+
+Figure 1: KESM Architecture. (a): Entities are represented using embeddings enriched by their descriptions. (b): The salience of
+an entity in a document is estimated by kernels that model its interactions with entities and words in the document. Squares
+are continuous vectors (embeddings) and circles are scalars (cosine similarities).
+between the target entity ei and other entities in the KEE representation space. One view of kernels is that they count the number
+of entities whose similarities with ei are in its region (µ k , σk2 ); the
+other view is that the kernel scores are the votes from other entities
+in a certain neighborhood (kernel region) of the current entity.
+Similarly, the word kernels Φ(ei , W) model the interactions between ei and document words W:
+
+the entity representation with its description, for example, the first
+paragraph of its Wikipedia page.
+Specifically, given the description D of the entity e, KEE uses a
+Convolutional Neural Network (CNN) to compose the words in D:
+{w 1 , ..., wp , ..., wl }, into one embedding:
+V
+
+wp −→ w® p ,
+
+Word Embedding
+
+c
+
+Cp = W · w® p:p+h ,
+v®D = max(C 1 , ..., Cp , ..., Cl −h ).
+
+CNN Filter
+
+Φ(ei , W) = {ϕ 1 (ei , W), ...ϕ k (ei , W)..., ϕ K (ei , W)},
+2 !
+Õ
+cos(v®ei , w® j ) − µ k
+.
+ϕ k (ei , W) =
+exp −
+2σk2
+w ∈W
+
+Description Embedding
+
+It embeds the words into w® using the embedding layer, composes the
+word embeddings using CNN filters, and generates the description
+embeddings v®D using max-pooling. W c and h are the weights and
+length of the CNN.
+v®D is then combined with the entity embedding e® by projection:
+v®e = W p · (®
+e ⊔ v®D ).
+
+(5)
+
+j
+
+w® j is the word embedding of w j , mapped by the same embedding
+parameters (V ). The word kernels ϕ k (ei , W) model the interactions
+between ei and document words, gathering ‘votes’ from words for
+ei in the corresponding kernel regions.
+For each entity ei , KEE encodes it to v®ei and KIM models its interactions with entities and words in the document. The kernel scores
+KIM(ei , d) include signals from three sources: the description of
+the entity in the knowledge graph, its interactions with the document entities, and its interactions with the document words. The
+utilization of these kernel scores depends on the specific task: entity
+salience estimation (Section 3.2) or document ranking (Section 4).
+
+KEE Embedding
+and W p
+
+⊔ is the concatenation operator
+is the projection weights.
+v®e is the KEE vector for e. It incorporates the external information
+from the knowledge graph and is to be learned as part of KESM.
+Kernel Interaction Model (KIM) models the interactions of a
+target entity with entities and words in the document using their
+distributed representations.
+Given a document d, its annotated entities E = {e 1 , ...ei ..., en },
+and its words W = {w 1 , ...w j ..., wm }, KIM models the interactions
+of a target entity ei with E and W using kernels [6, 27]:
+KI M(ei , d) = Φ(ei , E) ⊔ Φ(ei , W).
+
+(4)
+
+3.2
+
+Entity Salience Estimation
+
+The application of KESM in the entity salience task is simple. Combining the KIM kernel scores gives the salience score of the corresponding entity:
+
+(1)
+
+The entity kernels Φ(ei , E) model the interaction between ei and
+document entities E:
+
+f (ei , d) = W s · KIM(ei , d) + b s .
+
+Φ(ei , E) = {ϕ 1 (ei , E), ...ϕ k (ei , E)..., ϕ K (ei , E)},
+(2)
+
+2
+Õ
+© cos(v®ei , v®e j ) − µ k ª
+®.
+ϕ k (ei , E) =
+exp ­­−
+(3)
+®
+2σk2
+e j ∈E
+«
+¬
+v®ei and v®e j are the KEE embeddings of ei and e j . ϕ k (ei , E) is the k-th
+RBF kernel with mean µ k and variance σk2 . If (µ k = 1, σk → ∞), ϕ k
+counts the entity frequency. Otherwise, it models the interactions
+
+(6)
+
+f (ei , d) is the salience score of ei in d. W s and b s are parameters
+for salience estimation.
+Learning: The entity salience training data are labels about
+document-entity pairs that indicate whether the entity is salient to
+the document. The salience label of entity ei to document d is:
+(
++1, if ei is a salient entity in d;
+y(ei , d) =
+−1, otherwise.
+
+577
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Ranking Features
+
+…
+Log Sum
+
+Word
+Embeddings
+
+Document
+Family of
+Barack
+Obama…
+…………
+
+…
+
+…
+
+Word
+Kernels
+
+…
+
+# of Documents
+Entities Per Doc
+Salience Per Doc
+Unique Word
+Unique Entity
+
+…
+
+KIM
+
+Entity Linking
+“Obama”
+
+Table 1: Datasets used in the entity salience task. New York
+Times are news articles and salient entities are those in the
+expert-written news summaries. Semantic Scholar are paper
+abstracts and salient entities are those in the titles.
+
+,
+
+Ranking Score
+
+KEE …
+
+“Family”
+
+…
+
+Entity
+Kernels
+
+The ranking process of KESM following this intuition is illustrated
+in Figure 2. It first calculates the kernel scores of the query entities
+in the document using KEE and KIM. Then it merges the kernel
+scores from multiple query entities to ranking features and uses a
+ranking model to combine these features.
+Specifically, given query q, query entities Eq , candidate document d, document entities Ed , and document words Wd , the ranking score is calculated as:
+
+KEE
+Query
+
+“Obama”
+
+“Family Tree”
+
+Query Entities
+
+Figure 2: Ranking with KESM. KEE embeds the entities. KIM
+calculates the kernel scores of query entities VS. document
+entities and words. The kernel scores are combined to ranking features and then to the ranking score.
+
+We use pairwise learning to rank [14] to train KESM:
+Õ
+max(0, 1 − f (e + , d) + f (e − , d)),
+
+f (q, d) = W r · Ψ(q, d),
+
+
+Õ
+KIM(ei , d)
+Ψ(q, d) =
+log
+.
+|Ed |
+e ∈Eq
+
+(8)
+(9)
+
+i
+
+KIM(ei , d) are the kernel scores of the query entity ei in document
+d, calculated by the KIM and KEE modules described in last section.
+|Ed | is the number of entities in d. W r is the ranking parameters
+and Ψ(q, d) are the salience ranking features.
+Several adaptations have been made to apply KESM in search.
+First, Equation (9) normalizes the kernel scores by the number of
+entities in the document (|Ed |), making them more comparable
+across different documents. In the entity salience task, this is not
+required because the goal is to distinguish salient entities from nonsalient ones in the same document. Second, there can be multiple
+entities in the query and their kernel scores need to be combined
+to model query-document relevance. The combination is done by
+log-sum, following language model approaches [5].
+Learning: In the search task, KESM is trained using standard
+pairwise learning to rank and relevance labels:
+Õ
+max(0, 1 − f (q, d + ) + f (q, d − )).
+(10)
+
+(7)
+
+e +,e − ∈d
+
+w.r.t. y(e + , d) = +1 & y(e − , d) = −1.
+The loss function enforces KESM to rank the salient entities e + ahead
+of the non-salient ones e − within the same document.
+In the entity salience task, KESM is trained end-to-end by backpropagation. During training, the gradients from the labels are
+first propagated to the Kernel Interaction Model (KIM) and then the
+Knowledge Enriched Embedding (KEE). KESM updates the kernel
+weights; KIM converts the gradients from kernels to ‘expectations’
+on the distributed representations—how the entities and words
+should be allocated in the space to better reflect salience; KEE updates its embeddings and parameters according to these ‘expectations’. The knowledge learned from the training labels is encoded
+and stored in the model parameters, mainly the embeddings [27].
+
+4
+
+Semantic Scholar
+Train Dev Test
+800k 100k 100k
+66
+66
+66
+7.3
+7.3
+7.3
+921k 300k 301k
+331k 162k 162k
+
+…
+
+Document Entities
+
+Entity
+Obama Family Tree Linking
+
+New York Times
+Train Dev Test
+526k
+64k
+64k
+198
+197
+198
+27.8
+27.8 28.2
+609k 278k 281k
+622k 319k 317k
+
+d + ∈D +,d − ∈D −
+
+D+
+
+are the relevant and irrelevant documents. f (q, d + ) and
+are the ranking scores calculated by Equation (8).
+There are two ways to train KESM for ad hoc search. First, when
+sufficient ranking labels are available, for example, in commercial
+search engines, the whole KESM model can be learned end-to-end
+by back-propagation from Equation (10). On the other hand, when
+not enough ranking labels are available for end-to-end learning,
+the KEE and KIM can be first trained using the labels from the entity
+salience task. Only the ranking parameters W r need to be learned
+from relevance labels. As a result, the knowledge learned from the
+salience labels is adapted to ad hoc search through the ranking
+features, which can be used in any learning to rank system.
+and D −
+
+f (q, d − )
+
+RANKING WITH ENTITY SALIENCE
+
+This section presents the application of KESM in ad hoc search.
+Ranking: Knowing which entities are salient in a document indicates a deeper text understanding ability [8, 9]. The improved text
+understanding should also improve search accuracy: the salience of
+query entities in a document reflects how focused the document is
+on the query, which is a strong indicator of relevancy. For example,
+a web page that exclusively discusses Barack Obama’s family is
+more relevant to the query “Obama Family Tree” than those that
+just mention his family members.
+
+578
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Table 2: Entity salience features used by the LeToR baseline [9]. The features are extracted via various natural language processing techniques, as listed in the Source column.
+Name
+Frequency
+First Location
+Head Word Count
+Is Named Entity
+Coreference Count
+Embedding Vote
+
+5
+
+Description
+The frequency of the entity
+The location of the first sentence that contains the entity
+The frequency of the entity’s first head word in parsing
+Whether the entity is considered as a named entity
+The coreference frequency of the entity’s mentions
+Votes from other entities through cosine embedding similarity
+
+EXPERIMENTAL METHODOLOGY FOR
+ENTITY SALIENCE ESTIMATION
+
+We re-implemented the features used by Dunietz and Gillick [9].
+As listed in Table 2, the features are extracted by various linguistic and semantic techniques including entity linking, dependency
+parsing, named entity recognition, and entity coreference resolution. Besides the standard Frequency count, the Head Word Count
+considers syntactic signals when counting entities; the Coreference Count considers all mentions that refer to an entity as its
+appearances when counting frequency.
+The entity embeddings are trained on the same corpus using
+Google’s Word2vec toolkit [19]. Entity linking is done by TagMe;
+all entities are kept [20, 29]. Other linguistic and semantic preprocessing are done by the Stanford CoreNLP toolkit [16].
+Compared to Dunietz and Gillick [9], we do not include the headline feature because it uses information from the expert-written
+summary and does not improve the performance much anyway;
+we also replace the head-lex feature with Embedding Vote which
+has similar effectiveness but is more efficient.
+Evaluation Metrics: We use the ranking-focused evaluation
+metrics: Precision@{1, 5} and Recall@{1, 5}. These metrics circumvent the problem of selecting a cutoff threshold for each individual
+document in classification evaluation metrics [9]. Statistical significances are tested by permutation test with p < 0.05.
+Implementation Details: The hyper-parameters of KESM are
+configured following popular choices or previous research. The
+dimension of entity embeddings, word embeddings, and CNN filters
+are all set to 128. The kernel pooling layers use the same pre-defined
+kernels as in previous research [27]: one exact match kernel (µ =
+1, σ = 1e − 3) and ten soft match kernels equally splitting the cosine
+similarity range [−1, 1] (µ ∈ {−0.9, −0.7, ..., 0.9} and σ = 0.1). The
+length of the CNN used to encode entity description is set to 3 which
+is tri-gram. The entity descriptions are fetched from Freebase. The
+first 20 words (the gloss sentence) of the description are used. The
+words or entities that appear less than 2 times in the training corpus
+are replaced by “Unk_word” or “Unk_entity”.
+The parameters include the embeddings V , the CNN weights W c ,
+the projection weights W p , and the kernel weights W s , b s . They are
+learned end-to-end using Adam optimizer, size 64 mini-batching,
+and early-stopping on the development split. V is initialized by
+the skip-gram embeddings of words and entities jointly trained
+on the training corpora, which takes several hours [26]. With our
+PyTorch implementation, KESM usually only needs one pass on the
+training data and converges within several hours on a typical GPU.
+In comparison, LeToR takes days to extract its features because
+parsing and coreference are costly.
+
+This section presents the experimental methodology for the entity
+salience task. It mainly follows the setup by Dunietz and Gillick [9]
+with some revisions to facilitate the applications in search. An
+additional dataset is also introduced.
+Datasets1 used include New York Times and Semantic Scholar.
+The New York Times corpus has been used in previous work [9].
+It includes more than half million news articles and expert-written
+summarizes [22]. Among all entities annotated on a news article,
+those that also appear in the summary of the article are considered
+as salient entities; others are not [9].
+The Semantic Scholar corpus contains one million randomly
+sampled scientific publications from the index of SemanticScholar.
+org, the academic search engine from Allen Institute for Artificial
+Intelligence. The full texts of the papers are not released. Only the
+abstract and title of the paper content are available. We treat the
+entities annotated on the abstract as the candidate entities of a
+paper and those also annotated on the title as salient.
+The entity annotations on both corpora are Freebase entities
+linked by TagMe [11]. All annotations are included to ensure coverage, which is important for effective text representations [20, 29].
+The statistics of the two corpora are listed in Table 1. The Semantic Scholar corpus has shorter documents (paper abstracts) and
+a smaller entity vocabulary because its papers are mostly in the
+computer science and medical science domains.
+Baselines: Three baselines from previous research are compared: Frequency, PageRank, and LeToR.
+Frequency [9] estimates the salience of an entity by its term
+frequency. It is a straightforward but effective baseline in many
+related tasks. IDF is not as effective in entity-based text representations [20, 29], so we used only frequency counts.
+PageRank [9] estimates the salience score of an entity using its
+PageRank score [3]. We conduct a supervised PageRank on a fully
+connected graph. The nodes are the entities in the document. The
+edges are the embedding similarities of the connected nodes. The
+entity embeddings are configured and learned in the same manner
+as KESM. Similar to previous work [9], PageRank is not as effective
+in the salience task. The results reported are from the best setup we
+found: a one-step random walk linearly combined with Frequency.
+LeToR [9] is a feature-based learning to rank (entity) model. It is
+trained using the same pairwise loss with KESM, which we found
+more effective than the pointwise loss used in prior research [9].
+1 Available
+
+Source
+Entity Linking
+Entity Linking
+Dependency Parsing
+Named Entity Recognition
+Entity Coreference Resolution
+Entity Embedding (Skip-gram)
+
+at http://boston.lti.cs.cmu.edu/appendices/SIGIR2018-KESM/
+
+579
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Table 3: Entity salience performances on New York Times and Semantic Scholar. (E), (W), and (K) mark the resources used by
+KESM: Entity kernels, Word kernels, and Knowledge enrichment. KESM is the full model. Relative performances over LeToR are
+shown in the percentages. W/T/L are the number of documents a method improves, does not change, and hurts, compared to
+LeToR. †, ‡, §, and ¶ mark the statistically significant improvements over Frequency† , PageRank‡ , LeToR§ , and KESM (E) ¶ .
+
+Method
+Frequency
+PageRank
+LeToR
+KESM (E)
+KESM (EK)
+KESM (EW)
+KESM
+
+Precision@1
+0.5840
+−8.53%
+0.5845†
+−8.46%
+0.6385
+–
+0.6470†‡§
++1.33%
+0.6528†‡§ ¶ +2.24%
+0.6767†‡§ ¶ +5.98%
+0.6866†‡§ ¶ +7.53%
+
+New York Times
+Precision@5
+Recall@1
+0.4065
+−11.82% 0.0781
+−11.92%
+0.4069†
+−11.73% 0.0782†
+−11.80%
+0.4610
+– 0.0886
+–
+0.4782†‡§
++3.73% 0.0922†‡§
++4.03%
+0.4769†‡§
++3.46% 0.0920†‡§
++3.82%
+†‡§
+¶
+0.5018
++8.86% 0.0989†‡§ ¶ +11.57%
+0.5080†‡§ ¶ +10.21% 0.1010†‡§ ¶ +13.93%
+
+Recall@5
+0.2436
+−14.44%
+0.2440†
+−14.31%
+0.2848
+–
+0.3049†‡§
++7.05%
+0.3026†‡§
++6.27%
+0.3277†‡§ ¶ +15.08%
+0.3335†‡§ ¶ +17.10%
+
+W/T/L
+5,622/38,813/19,154
+5,655/38,841/19,093
+–/–/–
+19,778/27,983/15,828
+18,619/29,973/14,997
+22,805/26,436/14,348
+23,290/26,883/13,416
+
+Method
+Frequency
+PageRank
+LeToR
+KESM (E)
+KESM (EK)
+KESM (EW)
+KESM
+
+Precision@1
+0.3944
+−9.99%
+0.3946†
+−9.94%
+0.4382
+–
+0.4793†‡§
++9.38%
+0.4901†‡§ ¶ +11.84%
+0.5097†‡§ ¶ +16.31%
+0.5169†‡§ ¶ +17.96%
+
+Semantic Scholar
+Precision@5
+Recall@1
+0.2560
+−11.38% 0.1140
+−12.23%
+0.2561†
+−11.34% 0.1141†
+−12.11%
+0.2889
+– 0.1299
+–
+0.3192†‡§
++10.51% 0.1432†‡§
++10.26%
+0.3161†‡§
++9.43% 0.1492†‡§ ¶ +14.91%
+†‡§
+¶
+0.3311
++14.63% 0.1555†‡§ ¶ +19.77%
+†‡§
+¶
+0.3336
++15.47% 0.1585†‡§ ¶ +22.09%
+
+Recall@5
+0.3462
+−13.67%
+0.3466†
+−13.57%
+0.4010
+–
+0.4462†‡§
++11.27%
+0.4449†‡§
++10.95%
+0.4671†‡§ ¶ +16.50%
+0.4713†‡§ ¶ +17.53%
+
+W/T/L
+11,155/64,455/24,390
+11,200/64,418/24,382
+–/–/–
+27,735/56,402/15,863
+28,191/54,084/17,725
+32,592/50,428/16,980
+32,420/52,090/15,490
+
+6
+
+SALIENCE EVALUATION RESULTS
+
+powerful than the raw embedding similarities used in PageRank [27].
+KESM (EW) always significantly outperforms KESM (E). The interaction between an entity and document words conveys useful information, the distributed representations make them easily
+comparable, and the kernels model the word-entity interactions
+effectively. Knowledge enrichment (K) provides mixed results. A
+possible reason is that the training data is large enough to train
+good entity embeddings. Nevertheless, we find that adding the
+external knowledge makes the model stable and converged faster.
+
+This section first presents the overall evaluation results for the
+entity salience task. Then it analyzes the advantages of modeling
+salience over counting frequency.
+
+6.1
+
+Entity Salience Performance
+
+Table 3 shows the experimental results for the entity salience task.
+Frequency provides reasonable estimates of entity salience. The
+most frequent entity is often salient to the document; the Precision@1 is rather high, especially on the New York Times corpus.
+PageRank barely improves Frequency, although its embeddings
+are trained by the salience labels. LeToR, on the other hand, significantly improves both Precision and Recall of Frequency [9], which
+is expected as it has much richer features from various sources.
+KESM outperforms all baselines significantly. Its improvements
+over LeToR are more than 10% on both datasets with only one
+exception: Precision@1 on New York Times. The improvements are
+also robust: About twice as many documents are improved (Win)
+than hurt (Loss).
+We also conducted ablation studies on the source of evidence
+in KESM. Those marked with (E) include the entity kernels; those
+with (W) include word kernels; those with (K) enrich the entity
+embeddings with description embeddings. All variants include the
+entity kernels (E); otherwise the performances significantly dropped
+in our experiments.
+KESM performs better than all of its variants, showing that all
+three sources contributed. Individually, KESM (E) outperforms all
+baselines. Compared to PageRank, the only difference is that KESM
+(E) uses kernels to model the interactions which are much more
+
+6.2
+
+Modeling Salience VS. Counting Frequency
+
+This experiment provides two analyses that study the advantage of
+KESM over counting frequency.
+Ability to Model Tail Entities. The first advantage of KESM is
+that it is able to model the salience of less frequent (tail) entities.
+To demonstrate this effect, Figure 3 illustrates the distribution of
+predicted-salient entities in different frequency ranges. The entities
+with top k highest predicted scores are predicted-salient, while k is
+the number of salient entities in the ground truth.
+In both datasets, the frequency-based methods are highly biased
+towards the head entities: The top 0.1% most popular entities receive
+almost two-times more salience predictions from Frequency than
+in ground truth. This is an intrinsic bias of frequency-based methods
+which not only limits their effectiveness but also attractiveness—
+less unexpected entities are selected.
+In comparison, the distributions of KESM are much closer to
+the ground truth. KESM does a better job in modeling tail entities
+because it estimates salience not only by frequency but also by
+modeling the interactions between entities and words. A tail entity
+can be estimated salient if many other entities and words in the
+
+580
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+50%
+40%
+30%
+20%
+10%
+0%
+
+50%
+40%
+30%
+20%
+10%
+0%
+
+<0.1% [0.1%, [0.5%, [1%,
+0.5%) 1%)
+2%)
+
+Frequency
+
+LeToR
+
+[2%,
+3%)
+
+KESM
+
+[3%,
+4%)
+
+[4%,
+5%)
+
+<0.1% [0.1%, [0.5%, [1%,
+0.5%) 1%)
+2%)
+
+>5%
+
+Frequency
+
+Ground Truth
+
+(a) New York Times
+
+LeToR
+
+[2%,
+3%)
+
+KESM
+
+[3%,
+4%)
+
+[4%,
+5%)
+
+>5%
+
+Ground Truth
+
+(b) Semantic Scholar
+
+Figure 3: The distribution of salient entities predicted by different models. The entities are binned by their frequencies in
+testing data. The bins are ordered from most frequent (Top 0.1%) to less frequent (right). The x-axes mark the percentile range
+of each group. The y-axes are the fraction of salient entities in each bin. The histograms are ordered the same as the legends.
+0.6
+
+0.6
+
+0.4
+
+0.4
+
+0.2
+
+0.2
+
+0
+
+0
+
+7
+
+175
+518
+876 1232 32k
+(20%) (40%) (60%) (80%) (100%)
+
+122
+172
+228
+302 1323
+(20%) (40%) (60%) (80%) (100%)
+
+Frequency
+
+Frequency
+
+LeToR
+
+(a) New York Times
+
+KESM
+
+LeToR
+
+EXPERIMENTAL METHODOLOGY
+FOR AD HOC SEARCH
+
+This section presents the experimental methodology for the ad hoc
+search task. It follows a popular setup in recent entity-oriented
+search research [26]2 .
+Datasets are from the TREC Web Track ad hoc search tasks,
+a widely used search benchmark. It includes 200 queries for the
+ClueWeb09 corpus and 100 queries for the ClueWeb12 corpus. The
+‘Category B’ subsets of the two corpora and corresponding relevance judgments are used.
+The ClueWeb09-B rankings re-ranked the top 100 documents
+retrieved by sequential dependency model (SDM) queries [17] with
+standard post-retrieval spam filtering [7]. On ClueWeb12-B13, SDM
+queries are not better than unstructured queries, and spam filtering
+provides mixed results; thus, we used unstructured queries and no
+spam filtering on this dataset, as in prior research [26]. All documents were parsed by Boilerpipe to title and body fields [13]. The
+query and document entities are from Freebase and were annotated
+by TagMe [11]. All entities are kept. It leads to high coverage and
+medium precision, the best setting found in prior research [25].
+Evaluation Metrics are NDCG@20 and ERR@20, official evaluation metrics of TREC Web Tracks. Statistical significances are
+tested by permutation test (randomization test) with p < 0.05.
+Baselines: The goal of our experiments is to explore the usage
+of entity salience modeling in ad hoc search. To this purpose, our
+experiments focus on evaluating the effectiveness of KESM’s entity
+salience features in standard learning to rank; the proper baselines
+are the ranking features from word-based matches (IRFusion) and
+entity-based matches (ESR [29]). Unsupervised retrieval with words
+(BOW) and entities (BOE) are also included.
+BOW is the base retrieval model, which is SDM on ClueWeb09-B
+and Indri language model on ClueWeb12-B.
+BOE is the frequency-based retrieval with bag-of-entities [26]. It
+uses TagMe annotations and exact-matches query and documents
+in the entity space. It performs similarly to the entity language
+model [20] as they use the same information.
+IRFusion uses standard word-based IR features such as language
+model, BM25, and TFIDF, applied to body and title fields. It is obtained from previous research [26].
+
+KESM
+
+(b) Semantic Scholar
+
+Figure 4: Performances on documents with varying lengths
+(number of words). The x-axes are the maximum length of
+the documents and the percentile of each group. The y-axes
+mark the performances on Precision@5. The histograms are
+ordered the same as the legends.
+
+document are closely related to it. For example, there are many
+entities and words describing various aspects of an entity in its
+Wikipedia page; the entities and words on a personal homepage
+are probably related to the person. These entities and words can
+‘vote up’ the title entity or the person because they are strongly
+connected to it/her. The ability to model such interactions with
+distributed representations and kernels is the main source of KESM’s
+text understanding capability.
+Reliable on Short Documents. The second advantage of KESM
+is its reliability on short texts. To demonstrate it, we analyzed the
+performances of models on documents of varying lengths. Figure 4
+groups the testing documents into five bins by their lengths (number
+of words), ordered from short (left) to long (right). Their upper
+bounds and percentiles are marked on the x-axes. The Precision@5
+of corresponding methods are marked on the y-axes.
+Both Frequency and LeToR (whose features are also mostly
+frequency-based) are less reliable on shorter documents. The advantages of KESM are more significant when documents are shorter,
+while even in the longest bins where documents have thousands of
+words, KESM still outperforms Frequency and LeToR. Solely counting frequency is not sufficient to understand documents. The interactions between words and entities provide richer evidence and
+help KESM perform more reliably on shorter documents.
+
+2 Available
+
+581
+
+at http://boston.lti.cs.cmu.edu/appendices/SIGIR2017_word_entity_duet/
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Table 4: Ad hoc search accuracy of KESM when used as ranking features in learning to rank. Relative performances over IRFusion
+are shown in the percentages. W/T/L are the number of queries a method improves, does not change, or hurts, compared with
+IRFusion. †, ‡, §, and ¶ mark the statistically significant improvements over BOE† , IRFusion‡ , ESR§ , and ESR+IRFusion ¶ . BOW is
+the base retrieval model, which is SDM in ClueWeb09-B and language model in ClueWeb12-B13.
+
+Method
+BOW
+BOE
+IRFusion
+ESR
+KESM
+
+NDCG@20
+0.2496
+−5.26%
+0.2294
+−12.94%
+0.2635
+–
+0.2695†
++2.30%
+0.2799†
++6.24%
+
+ESR+IRFusion
+KESM+IRFusion
+
+0.2791†‡
+0.2993†‡§ ¶
+
++5.92%
++13.58%
+
+ClueWeb09-B
+ERR@20
+0.1387
+−10.20%
+0.1488
+−3.63%
+0.1544
+–
+0.1607
++4.06%
+0.1663
++7.68%
+
+W/T/L
+62/38/100
+74/25/101
+–/–/–
+80/39/81
+85/35/80
+
+ClueWeb12-B13
+NDCG@20
+ERR@20
+0.1060
+−12.02% 0.0863
+−6.67%
+0.1173
+−2.64% 0.0950
++2.83%
+0.1205
+– 0.0924
+–
+0.1166
+−3.22% 0.0898
+−2.81%
+0.1301†§
++7.92% 0.1103‡§ ¶ +19.35%
+
++4.46%
++16.38%
+
+91/34/75
+98/35/67
+
+0.1281
+0.1308†§
+
+0.1613
+0.1797†‡§ ¶
+
++6.30%
++8.52%
+
+0.0951
+0.1079‡§ ¶
+
++2.87%
++16.77%
+
+W/T/L
+35/22/43
+44/19/37
+–/–/–
+30/23/47
+43/25/32
+45/24/31
+43/23/34
+
+Table 5: Ranking performances of IRFusion, ESR, and KESM with title or body field individually. Relative performances (percentages) and Win/Tie/Loss are calculated by comparing with IRFusion on the same field. † and ‡ mark the statistically significant
+improvements over IRFusion† and ESR‡ , also on the same field.
+
+Method
+IRFusion-Title
+ESR-Title
+KESM-Title
+IRFusion-Body
+ESR-Body
+KESM-Body
+
+ClueWeb09-B
+NDCG@20
+ERR@20
+0.2584
+−3.51% 0.1460
+−5.16%
+0.2678
+– 0.1540
+–
+0.2780†
++3.81% 0.1719†‡ +11.64%
+0.2550
++0.48% 0.1427
+−3.44%
+0.2538
+– 0.1478
+–
+0.2795†‡ +10.13% 0.1661†‡ +12.37%
+
+W/T/L
+83/48/69
+–/–/–
+91/46/63
+80/46/74
+–/–/–
+96/39/65
+
+8
+
+ESR is the entity-based ranking features obtained from previous
+research [26]. It includes both exact and soft match signals in the
+entity space [29]. The differences with KESM are that in ESR, the
+query and documents are represented by frequency-based bagof-entities [29] and the entity embeddings are pre-trained in the
+relation inference task [4].
+Implementation Details: As discussed in Section 4, the TREC
+benchmarks do not have sufficient relevance labels for effective
+end-to-end learning; we pre-trained the KEE and KIM of KESM using
+the New York Time corpus and used them to extract salience ranking features. The entity salience features are combined by the same
+learning to rank model (RankSVM [12]) as used by IRFusion and
+ESR, with the same cross validation setup [26]. Similar to ESR, the
+base retrieval score is included as a feature in KESM. In addition, we
+also concatenate the features of ESR or KESM to IRFusion to evaluate their effectiveness when combined with word-based features.
+The resulting feature sets ESR+IRFusion and KESM+IRFusion were
+evaluated exactly the same as they were individually.
+As a result, the comparisons of KESM with LeToR and ESR hold
+out all other factors and directly investigate the effectiveness of
+the salience ranking features in a widely used learning to rank
+model (RankSVM). Given the current exploration stage of entity
+salience in information retrieval, we believe this is more informative
+than mixing entity salience signals into more sophisticated ranking
+systems [23, 26], in which many other factors come into play.
+
+ClueWeb12-B13
+NDCG@20
+ERR@20
+0.1187
++6.23% 0.0894
++3.14%
+0.1117
+– 0.0867
+–
+0.1199
++7.36% 0.0923
++6.42%
+0.1115
++4.61% 0.0892
+−3.51%
+0.1066
+– 0.0924
+–
+0.1207‡ +13.25% 0.1057†‡ +14.44%
+
+W/T/L
+41/23/36
+–/–/–
+35/28/37
+36/30/34
+–/–/–
+43/24/33
+
+SEARCH EVALUATION RESULTS
+
+This section presents the evaluation results and case study in the
+ad hoc search task.
+
+8.1
+
+Overall Result
+
+Table 4 lists the ranking evaluation results. The three supervised
+methods, IRFusion, ESR, and KESM, all use the exact same learning to rank model (RankSVM) and only differ in their features.
+ESR+IRFusion and KESM+IRFusion concatenate the two feature
+groups and use RankSVM to combine them.
+On both ClueWeb09-B and ClueWeb12-B13, KESM features are
+more effective than IRFusion and ESR features. On ClueWeb12B13, KESM individually outperforms other features significantly
+by 8 − 20%. On ClueWeb09-B, KESM provides more novel ranking
+signals; KESM+IRFusion significantly outperforms ESR+IRFusion.
+The fusion on ClueWeb12-B13 (KESM+LeToR) is not as successful
+perhaps because of the limited ranking labels on ClueWeb12-B13.
+To better investigate the effectiveness of entity salience in search,
+we evaluated the features on individual document fields. Table 5
+shows the ranking accuracies of the three feature groups when only
+the title field (Title) or the body field (Body) is used. As expected,
+KESM is more effective on the body field than on the title field: Titles
+are less noisy and perhaps all title entities are salient—not much
+new information is provided by salience modeling; on the other
+hand, body texts are longer and more complicated, providing more
+opportunities for better text understanding.
+
+582
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Table 6: Examples from queries that KESM improved or hurt, compared to ESR. Documents are selected from those that ESR and
+KESM disagreed. The descriptions are manually written to reflect the main topics of the documents.
+
+Query
+ER TV Show
+
+Query Entities
+“ER (TV Series)"
+“TV Program"
+
+Wind Power
+
+“Wind Power ”
+
+Hurricane Irene
+Flooding in Manville NJ
+
+“Hurricane Irene"
+“Flood"; “Manville, NJ"
+
+Query
+
+Query Entities
+“Malindi Fickle"
+“Stream"; “Farm"
+“Illinois";
+“State Government"
+“US Tax"
+“Battles"
+“Civil War"
+
+Fickle Creek Farm
+Illinois State Tax
+Battles in the Civil War
+
+Cases that KESM Improved
+ESR Preferred Document
+clueweb09-enwp02-22-20096
+“List of films in Wiki without article"
+clueweb12-0200wb-66-32730
+“Home solar power systems"
+clueweb12-0705wb-49-04059
+“Disaster funding for Hurricane Irene"
+
+KESM Preferred Document
+clueweb09-enwp00-55-07707
+“ER ( TV series ) - Wikipedia"
+clueweb12-0009wb-54-01932
+“Wind energy | Alternative Energy HQ"
+clueweb12-0715wb-81-29281
+“Videos and news about Hurricane Irene"
+
+Cases that KESM Hurt
+ESR Preferred Document
+clueweb09-en0003-97-27345
+“Hotels near Fickle Creak"
+clueweb09-enwp01-67-20725
+“Sales taxes in the United
+States, Wikipedia”
+clueweb09-enwp03-20-07742
+“List of American Civil War battles"
+
+KESM Preferred Document
+clueweb09-en0005-66-00576
+“List of breading farms"
+clueweb09-en0011-23-05274
+“Retirement-related general
+purpose taxes by State”
+clueweb09-enwp01-30-04139
+“List of wars in the Muslim world"
+
+do not align well with the information needs and thus mislead KESM.
+Modeling the entity salience in queries is a different task which is
+more about understanding search intents. To address these error
+cases may require a deeper fusion of KESM in more sophisticated
+ranking systems that can handle noisy query entities [26, 28].
+
+The salience ranking features also behave differently with ESR
+and IRFusion. As shown by the W/T/L ratios in Table 4 and Table 5,
+more than 70% query rankings are changed by KESM. The ranking
+evidence provided by KESM features is from the interactions of query
+entities with the entities and words in the candidate documents.
+This evidence is learned from the entity salience corpus and is hard
+to be described by traditional frequency-based features.
+
+8.2
+
+9
+
+CONCLUSION
+
+This paper presents KESM, the Kernel Entity Salience Model that
+estimates the salience of entities in documents. KESM represents
+entities and words with distributed representations, models their
+interactions using kernels, and combines the kernel scores to estimate entity salience. The semantics of entities in the knowledge
+graph—their descriptions—are also incorporated to enrich entity
+embeddings. In the entity salience task, the whole model is trained
+end-to-end using automatically generated salience labels.
+In addition to the entity salience task, KESM is also applied to ad
+hoc search and ranks documents by the salience of query entities
+in them. It calculates the kernel scores of query entities in the
+document, combines them to salience ranking features, and uses a
+ranking model to predict the query-document ranking score. When
+ranking labels are scarce, the ranking features can be extracted by
+pre-trained distributed representations and kernels from the entity
+salience task and then used by standard learning to rank. These
+ranking features convey KESM’s text understanding ability learned
+from entity salience labels to search.
+Our experiments on two entity salience corpora, a news corpus (New York Times) and a scientific publication corpus (Semantic Scholar), demonstrate the effectiveness of KESM in the entity
+salience task. Significant and robust improvements are observed
+over frequency and feature-based methods. Compared to those
+baselines, KESM is more robust on tail entities and shorter documents; its Kernel Interaction Model is more powerful than the raw
+embedding similarities in modeling term interactions. Overall, KESM
+is a stronger model with a more powerful architecture.
+
+Case Study
+
+The last experiment provides case studies on how KESM transfers
+its text understanding ability to search, by comparing the rankings
+of KESM-Body with ESR-Body. Both ESR and KESM match query and
+documents in the entity space, but ESR uses frequency-based bag-ofentities to represent documents while KESM uses entity salience. We
+picked the queries where KESM-Body improved or hurt compared to
+ESR-Body and manually examined the documents they disagreed.
+The examples are listed in Table 6.
+The improvements from KESM are mainly from its ability to determine whether a candidate document emphasizes the query entities
+or just mentions the query terms. As shown in the top half of Table 6, KESM promotes documents where the query entities are more
+salient: the Wikipedia page about the ER TV show, a homepage
+about wind power, and a news article about the hurricane. On the
+other hand, ESR’s frequency-based ranking might be confused by
+web pages that only partially talk about the query topic. It is hard
+for ESR to exclude those web pages because they also mention the
+query entities multiple times.
+Many errors KESM made are due to the lack of text understanding
+on the query side. KESM focuses on modeling the salience of entities
+in the candidate documents and its ranking model treats all query
+entities equally. As shown in the lower half of Table 6, the query
+entities may contain errors, for example, “Malindi Fickle”, or general
+entities that blur the (perhaps implied) query intent, for example
+“Civil War”, “State government”, and “US Tax’. These query entities
+
+583
+
+Session 5B: Entities
+
+SIGIR’18, July 8-12, 2018, Ann Arbor, MI, USA
+
+Our experiments on ad hoc search were conducted on the TREC
+Web Track queries and two ClueWeb corpora. In both corpora,
+the salience features provided by KESM trained on the New York
+Times corpus outperform both word-based ranking features and
+frequency-based entity-oriented ranking features, despite differences between the salience task and the ranking task. The advantages of the salience features are more observed on the document
+bodies on which deeper text understanding is required.
+Our case studies on the winning and losing queries of KESM
+illustrate the influences of the salience ranking features: they distinguish documents in which the query entities are the core topic
+from those where the query entities are only partial to their central ideas. Interestingly, this leads to both winning cases—better
+text understanding leads to more accurate search—and also losing
+cases: when the query entities do not align well with the underlying
+search intent, emphasizing them ends up misleading the document
+ranking.
+We find it very encouraging that KESM successfully transfers the
+text understanding ability from entity salience estimation to search.
+Estimating entity salience is a fine-grained text understanding task
+that focuses on the detailed interactions between entities and words.
+Previously it was uncommon for text processing techniques at
+this granularity to be as effective in information retrieval. Often
+shallower methods worked better for search. However, the finegrained text understanding provided by KESM—the interaction and
+consistency between query entities with the document entities and
+words—actually improves the ranking accuracy. We view this work
+as an encouraging step from “search by matching” to “search with
+meanings” [1] and hope it will motivate more future explorations
+towards this direction.
+
+10
+
+the 10th Edition of the Languge Resources and Evaluation Conference (LREC 2016).
+[9] Jesse Dunietz and Daniel Gillick. 2014. A New Entity Salience Task with Millions
+of Training Examples.. In Proceedings of the 14th Conference of the European
+Chapter of the Association for Computational Linguistics (EACL 2014). ACL, 205–
+209.
+[10] Faezeh Ensan and Ebrahim Bagheri. 2017. Document retrieval model through
+semantic linking. In Proceedings of the Tenth ACM International Conference on
+Web Search and Data Mining (WSDM 2017). ACM, 181–190.
+[11] Paolo Ferragina and Ugo Scaiella. 2010. Fast and accurate annotation of short
+texts with Wikipedia pages. arXiv preprint arXiv:1006.3498 (2010).
+[12] Thorsten Joachims. 2002. Optimizing search engines using clickthrough data.
+In Proceedings of the 8th ACM SIGKDD International Conference on Knowledge
+Discovery and Data Mining (KDD 2002). ACM, 133–142.
+[13] Christian Kohlschütter, Peter Fankhauser, and Wolfgang Nejdl. 2010. Boilerplate
+detection using shallow text features. In Proceedings of the third ACM international
+conference on Web Search and Data Mining (WSDM 2010). ACM, 441–450.
+[14] Tie-Yan Liu. 2009. Learning to rank for Information Retrieval. Foundations and
+Trends in Information Retrieval 3, 3 (2009), 225–331.
+[15] Xitong Liu and Hui Fang. 2015. Latent entity space: A novel retrieval approach
+for entity-bearing queries. Information Retrieval Journal 18, 6 (2015), 473–503.
+[16] Christopher D. Manning, Mihai Surdeanu, John Bauer, Jenny Finkel, Steven J.
+Bethard, and David McClosky. 2014. The Stanford CoreNLP Natural Language
+Processing Toolkit. In Proceedings of the 52nd Annual Meeting of the Association
+for Computational Linguistics (ACL 2014). ACL, 55–60.
+[17] Donald Metzler and W Bruce Croft. 2005. A Markov random field model for
+term dependencies. In Proceedings of the 28th Annual International ACM SIGIR
+Conference on Research and Development in Information Retrieval (SIGIR 2005).
+ACM, 472–479.
+[18] Rada Mihalcea and Paul Tarau. 2004. TextRank: Bringing order into text. In Proceedings of the 2004 conference on empirical methods in natural language processing
+(EMNLP 2004). ACL, 404–411.
+[19] Tomas Mikolov, Ilya Sutskever, Kai Chen, Greg S Corrado, and Jeff Dean. 2013.
+Distributed representations of words and phrases and their compositionality. In
+Proceedings of the 27th Advances in Neural Information Processing Systems 2013
+(NIPS 2013). NIPS, 3111–3119.
+[20] Hadas Raviv, Oren Kurland, and David Carmel. 2016. Document retrieval using
+entity-based language models. In Proceedings of the 39th Annual International
+ACM SIGIR Conference on Research and Development in Information Retrieval
+(SIGIR 2016). ACM, 65–74.
+[21] François Rousseau and Michalis Vazirgiannis. 2013. Graph-of-word and TWIDF: New approach to ad hoc IR. In Proceedings of the 22nd ACM International
+Conference on Conference on Information & Knowledge Management (CIKM 2013).
+ACM, 59–68.
+[22] Evan Sandhaus. 2008. The New York Times annotated corpus. Linguistic Data
+Consortium, Philadelphia 6, 12 (2008), e26752.
+[23] Chenyan Xiong and Jamie Callan. 2015. EsdRank: Connecting query and documents through external semi-structured data. In Proceedings of the 24th ACM
+International Conference on Information and Knowledge Management (CIKM 2015).
+ACM, 951–960.
+[24] Chenyan Xiong and Jamie Callan. 2015. Query expansion with Freebase. In
+Proceedings of the fifth ACM International Conference on the Theory of Information
+Retrieval (ICTIR 2015). ACM, 111–120.
+[25] Chenyan Xiong, Jamie Callan, and Tie-Yan Liu. 2016. Bag-of-Entities representation for ranking. In Proceedings of the sixth ACM International Conference on the
+Theory of Information Retrieval (ICTIR 2016). ACM, 181–184.
+[26] Chenyan Xiong, Jamie Callan, and Tie-Yan Liu. 2017. Word-entity duet representations for document ranking. In Proceedings of the 40th Annual International
+ACM SIGIR Conference on Research and Development in Information Retrieval
+(SIGIR 2017). ACM, 763–772.
+[27] Chenyan Xiong, Zhuyun Dai, Jamie Callan, Zhiyuan Liu, and Russell Power.
+2017. End-to-end neural ad-hoc ranking with kernel pooling. In Proceedings of
+the 40th annual international ACM SIGIR conference on Research and Development
+in Information Retrieval (SIGIR 2017). ACM, 55–64.
+[28] Chenyan Xiong, Zhengzhong Liu, Jamie Callan, and Eduard H. Hovy. 2017.
+JointSem: Combining query entity linking and entity based document ranking.
+In Proceedings of the 2017 ACM on Conference on Information and Knowledge
+Management (CIKM 2017). 2391–2394.
+[29] Chenyan Xiong, Russell Power, and Jamie Callan. Explicit semantic ranking
+for academic search via knowledge graph embedding. In Proceedings of the 26th
+International Conference on World Wide Web (WWW 2017). ACM, 1271–1279.
+[30] Le Zhao and Jamie Callan. 2010. Term necessity prediction. In Proceedings of the
+19th ACM International on Conference on Information and Knowledge Management
+(CIKM 2010). ACM, 259–268.
+[31] Guoqing Zheng and James P. Callan. 2015. Learning to reweight terms with
+distributed representations. In Proceedings of the 38th annual international ACM
+SIGIR conference on Research and Development in Information Retrieval (SIGIR
+2015). ACM, 575–584.
+
+ACKNOWLEDGMENTS
+
+This research was supported by National Science Foundation (NSF)
+grant IIS-1422676 and DARPA grant FA8750-12-2-0342 under the
+DEFT program. Any opinions, findings, and conclusions in this
+paper are the authors’ and do not necessarily reflect the sponsors’.
+
+REFERENCES
+[1] Hannah Bast, Björn Buchhold, Elmar Haussmann, and others. 2016. Semantic
+search on text and knowledge bases. Foundations and Trends in Information
+Retrieval 10, 2-3 (2016), 119–271.
+[2] Michael Bendersky, Donald Metzler, and W. Bruce Croft. 2011. Parameterized
+concept weighting in verbose queries. In Proceedings of the 34th annual international ACM SIGIR conference on Research and Development in Information Retrieval
+(SIGIR 2011). ACM, 605–614.
+[3] Roi Blanco and Christina Lioma. 2012. Graph-based term weighting for information retrieval. Information Retrieval 15, 1 (2012), 54–92.
+[4] Antoine Bordes, Nicolas Usunier, Alberto Garcia-Duran, Jason Weston, and Oksana Yakhnenko. 2013. Translating embeddings for modeling multi-relational
+data. In Advances in Neural Information Processing Systems (NIPS 2013). NIPS,
+2787–2795.
+[5] W Bruce Croft, Donald Metzler, and Trevor Strohman. 2010. Search Engines:
+Information Retrieval in Practice. Addison-Wesley Reading.
+[6] Zhuyun Dai, Chenyan Xiong, Jamie Callan, and Zhiyuan Liu. 2018. Convolutional
+Neural Networks for Soft-Matching N-Grams in Ad-hoc Search. In Proceedings
+of the Eleventh ACM International Conference on Web Search and Data Mining
+(WSDM 2018). ACM, 126–134.
+[7] Jeffrey Dalton, Laura Dietz, and James Allan. 2014. Entity query feature expansion
+using knowledge base links. In Proceedings of the 37th Annual International ACM
+SIGIR Conference on Research and Development in Information Retrieval (SIGIR
+2014). ACM, 365–374.
+[8] Milan Dojchinovski, Dinesh Reddy, Tomás Kliegr, Tomas Vitvar, and Harald Sack.
+2016. Crowdsourced Corpus with Entity Salience Annotations.. In Proceedings of
+
+584
+
+

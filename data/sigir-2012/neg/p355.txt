@@ -1,0 +1,2233 @@
+Supporting Efficient Top-k Queries in Type-Ahead Search
+†
+
+Guoliang Li†
+
+Jiannan Wang†
+
+Chen Li‡
+
+Jianhua Feng†
+
+Department of Computer Science, Tsinghua National Laboratory for Information Science and Technology
+(TNList), Tsinghua University, Beijing 100084, China.
+‡
+Department of Computer Science, UC Irvine, CA 92697-3435, USA
+liguoliang@tsinghua.edu.cn, wjn08@mails.tsinghua.edu.cn, chenli@ics.uci.edu, fengjh@tsinghua.edu.cn
+
+ABSTRACT
+Type-ahead search can on-the-ﬂy ﬁnd answers as a user
+types in a keyword query. A main challenge in this search
+paradigm is the high-eﬃciency requirement that queries must
+be answered within milliseconds. In this paper we study
+how to answer top-k queries in this paradigm, i.e., as a user
+types in a query letter by letter, we want to eﬃciently ﬁnd
+the k best answers. Instead of inventing completely new
+algorithms from scratch, we study challenges when adopting
+existing top-k algorithms in the literature that heavily rely
+on two basic list-access methods: random access and sorted
+access. We present two algorithms to support random access
+eﬃciently. We develop novel techniques to support eﬃcient
+sorted access using list pruning and materialization. We
+extend our techniques to support fuzzy type-ahead search
+which allows minor errors between query keywords and answers.
+We report our experimental results on several real large data
+sets to show that the proposed techniques can answer top-k
+queries eﬃciently in type-ahead search.
+
+Categories and Subject Descriptors
+H.3.3 [Information Search and Retrieval]: Retrieval
+models
+
+General Terms
+Algorithms, Experimentation, Performance
+
+Keywords
+Type-ahead search, top-k search, fuzzy search
+
+1. INTRODUCTION
+To give instant feedback when users formulate search queries,
+many information systems support autocomplete search, which
+shows results immediately after a user types in a partial
+keyword query. As an example, almost all the major search
+engines nowadays automatically suggest possible keyword
+queries as a user types in partial keywords. Most autocomplete
+systems treat a query with multiple keywords as a single
+string, and ﬁnd answers with text that matches the string
+
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies are
+not made or distributed for profit or commercial advantage and that copies
+bear this notice and the full citation on the first page. To copy otherwise, to
+republish, to post on servers or to redistribute to lists, requires prior specific
+permission and/or a fee.
+SIGIR’12, August 12–16, 2012, Portland, Oregon, USA.
+Copyright 2012 ACM 978-1-4503-1472-5/12/08 ...$15.00.
+
+355
+
+exactly. To overcome this limitation, a new type-ahead
+search paradigm has emerged recently [2, 13]. Using this
+paradigm, a system treats a query as a set of keywords,
+and does a full-text search on the underlying data to ﬁnd
+answers including the keywords. We treat the last keyword
+in the query as a partial keyword the user is completing. For
+instance, a query “graph sig” on a publication table can ﬁnd
+publication records with the keyword “graph” and a keyword
+that has “sig” as a preﬁx, such as “sigir”, “sigmod”, and
+“signature”. In this way, a user can get instant feedback
+after typing keywords, thus can obtain more knowledge about
+the underlying data to formulate a query more easily.
+Ji et al. [13] extended type-ahead search by allowing minor
+errors between queries and answers. As a user types in
+query keywords, the system can ﬁnd relevant records with
+keywords similar to the query keywords. This feature is
+especially important when the user has limited knowledge
+about the exact representation of entities she is looking for.
+For instance, if a user types in a partial query “chritos falut”,
+the system can ﬁnd records approximately matching the two
+keywords despite the typo in the query, such as a record
+with keywords “Christos Faloutsos”. Clearly these features
+can further improve user search experiences.
+In this paper we study how to answer ranking queries in
+type-ahead search on large amounts of data. That is, as a
+user types in a keyword query letter by letter, we want to
+on-the-ﬂy ﬁnd the most relevant (or “top-k”) records. One
+approach ﬁrst ﬁnds records matching those query keywords,
+and then computes their ranking scores to ﬁnd the most
+relevant ones. This approach is not eﬃcient when there
+are a large number of candidate answers to compute and
+store. Existing type-ahead search approaches assume an
+index structure with a trie for the keywords in the underlying
+data, and each leaf node has an inverted list of records
+with this keyword, with the weight of this keyword in the
+record [13, 19]. As an example, Table 1 shows a sample
+collection of publication records. For simplicity, we only
+list some of the keywords for each record. Figure 1 shows
+the corresponding index structure. (More details about the
+index are in Section 3.)
+Suppose a user types in a query “graph icdm li”. For
+exact search, we ﬁnd records containing the ﬁrst two keywords
+and a word with preﬁx of “li”, e.g., record r5 . For fuzzy
+search, we compute records with keywords similar to query
+keywords, and rank them to ﬁnd the best answers. For each
+complete keyword, we ﬁnd keywords similar to the query
+keyword. For instance, both keywords “icdm” and “icdl”
+are similar to the second query keyword. The last keyword
+
+Table 1: Publication records with sample keywords.
+Record ID
+r0
+r1
+r2
+r3
+r4
+r5
+r6
+r7
+r8
+r9
+
+Record
+graph icdm . . .
+graph group lui . . .
+gray icdl liu . . .
+graph icdl lin lui . . .
+graph group icdm lin liu . . .
+graph gray gross icdm lin liu . . .
+gray group icdm lin liu . . .
+gray gross group icdl lin . . .
+gross icdl liu . . .
+icdm liu . . .
+
+g
+r
+p
+
+o
+y
+
+h
+
+FORMULATION AND PRELIMINARIES
+
+Type-Ahead Search: Let R be a collection of records such
+as the tuples in a relational table. Let D be the set of words
+in R. Let Q be a query the user has typed in, which is
+a sequence of keywords w1 , w2 , . . . , wm . We treat the last
+keyword wm as a partial keyword the user is completing, and
+other keywords as complete keywords the user has completed2 .
+As a user types in a keyword query letter by letter, type-ahead
+search on-the-ﬂy ﬁnds records that contain the ﬁrst m − 1
+keywords and a word with the last keyword as a preﬁx.
+1
+
+http://tastier.ics.uci.edu/
+Our method can be easily extended to the case that every keyword
+is taken as a partial keyword.
+2
+
+356
+
+r5,9
+r4,7
+r3,4
+r1,3
+r0,2
+
+r2,9
+r5,8
+r6,4
+r7,3
+
+l
+
+c
+
+a
+
+“li” is treated as a preﬁx condition, since the user is still
+typing at the end of this keyword. We ﬁnd keywords that
+have a preﬁx similar to “li”, such as “lin”, “liu”, and “lui”.
+We access the inverted lists of these similar keywords to ﬁnd
+records and rank them to ﬁnd the best answers for the user.
+A key question is: “how to access inverted lists on trie
+leaf nodes eﬃciently to answer top-k queries?” Instead of
+inventing completely new algorithms from scratch, we study
+how to adopt a plethora of algorithms in the literature for
+answering top-k queries by accessing lists (e.g., [21, 12]).
+These algorithms share the same framework proposed by
+Fagin [6], in which we have lists of records sorted based on
+various conditions. An aggregation function takes the scores
+of a record from these lists and computes the ﬁnal score of
+the record. There are two methods to access these lists: (1)
+Random Access: Given a record id, we can retrieve the score
+of the record on each list; (2) Sorted Access: We retrieve the
+record ids on each list following the list order.
+In this paper we study technical challenges when adopting
+these algorithms, and focus on new optimization opportunities
+that arise in our problem. In particular, we study how to
+support the two types of access operations eﬃciently by
+utilizing characteristics speciﬁc to our index structures and
+access methods. We make the following contributions: 1)
+In Section 3, we present a forward-list-based method for
+supporting random access on the inverted lists, and develop
+a heap-based method and list-materialization techniques to
+support sorted access eﬃciently. 2) In Section 4 we study
+fuzzy type-ahead search. We propose a list-pruning technique
+to improve the performance of sorted access, and study how
+to improve the techniques based on forward lists and list
+materialization for fuzzy search. Due to the challenging
+nature of the problem, our extensions are technically nontrivial.
+3) In Section 5 we present our experimental results on real
+large data sets to show the eﬃciency of our techniques. We
+have deployed several systems using this paradigm, which
+have been used regularly and well accepted by users due to
+its friendly interface and high eﬃciency1 .
+
+2.
+
+i
+i
+
+d
+
+s
+
+u
+
+s
+
+p
+
+l
+
+r8,9 r1,9 r7,4
+r7,8 r7,8 r8,2
+r5,4 r6,4 r3,2
+r2,2
+r4,3
+
+n
+
+u
+u
+
+i
+
+m
+r4,9
+r5,8
+r6,5
+r9,4
+r0,3
+
+r3,9
+r7,8
+r6,4
+r5,3
+r4,2
+
+r5,8 r1,6
+r4,7 r3,4
+r6,5
+r9,4
+r2,3
+r8,1
+
+Figure 1: Trie index structure.
+
+Without loss of generality, each string in the data set and
+a query is assumed to use lower-case letters. For example, in
+Table 1, R = {r0 , r1 , . . . , r9 }, D = {graph, icdm, group, lui, . . .}.
+Suppose a user types in a query “icdm gra”. We treat “icdm”
+as a complete keyword and “gra” as a partial keyword. Records
+r0 , r4 , r5 , and r6 are potentially relevant answers. For
+example, r0 contains complete keyword “icdm” and word
+“graph” with a preﬁx of “gra”. When the user types in more
+letters and submits query “icdm graph li”, we treat “icdm”
+and “graph” as complete keywords and “li”as a partial keyword.
+Records r4 and r5 are potentially relevant answers.
+Top-k Answers: We rank each record r in R based on
+its relevance to the query. Given a positive integer k, our
+goal is to compute the best k records in R ranked by their
+relevance to Q. Notice that our problem setting allows an
+important record to be in the answer, even if not all query
+keywords appear in the record (the “OR” semantics). Thus
+the algorithms in [13] cannot be used directly in our problem.
+Ranking: In the literature there are many algorithms for
+answering top-k queries by accessing lists (e.g., [21, 12]).
+These algorithms share the same framework proposed by
+Fagin [6], in which we have lists of records sorted based
+on various conditions, such as term frequency and inverse
+document frequency (“tf*idf”). Each record has a score
+on a list, and we use an aggregation function to combine
+the scores of the record on diﬀerent lists to compute its
+overall relevance to the query. The aggregation function
+needs to be monotonic, i.e., decreasing the score of a record
+on a list cannot increase the record’s overall score. This
+approach has the advantage of allowing a general class of
+ranking functions. In this paper, we focus on an important
+class of ranking functions with the following property: the
+score F (r, Q) of a record r to a query Q is a monotonic
+combination of scores of the query keywords with respect to
+the record r. Formally, we compute the score F (r, Q) in two
+steps. In the ﬁrst step, for each keyword w, we compute a
+score of the keyword with respect to the record r, denoted by
+F (r, w). In the second step, we compute the score F (r, Q)
+by applying a monotonic function on the F (r, w)’s for all
+the keywords w. The intuition of this property is that the
+more relevant an individual query keyword is to a record,
+the more likely this record is a good answer to this query.
+For example, we compute the score of a record to query
+“icdm graph li” by aggregating the scores of each of keywords
+with respect to the record.
+Each complete keyword w has a weight associated with
+a record r, denoted by W (r, w). This weight could depend
+
+Query Keywords
+
+w1
+
+Partial keyword
+
+w2
+
+…
+
+Trie
+
+Forward index
+
+[1,4]
+
+wm
+
+g
+[1,4]
+r
+[1,2]
+a
+[1,1]
+
+virtual list
+
+i
+
+p
+h
+1
+
+Inverted lists
+
+y
+2
+
+u
+
+d
+
+s
+
+p
+
+3
+
+4
+
+l m
+5
+
+6
+
+l
+
+i
+
+[5,6]
+
+[4,4]
+
+s
+
+[5,6] [7,8]
+
+c
+
+[3,4]
+
+o
+[3,3]
+
+[7,9]
+
+[5,6]
+
+[9,9]
+
+u
+
+n
+
+u
+
+i
+
+7
+
+8
+
+9
+
+Forward list
+
+Record
+
+r0
+r1
+r2
+r3
+r4
+r5
+…
+
+1,2 ; 6,3
+1,3 ; 4,9 ; 9,6
+2,9 ; 5,2 ; 8,3
+1,4 ; 5,2 ; 7,9 ; 9,4
+1,7 ; 4,3 ; 6,9 ; 7,2 ; 8,7
+1,9 ; 2,8 ; 3,4 ; 6,8 ; 7,3 ; 8,8
+…...
+
+Figure 2: Type-ahead search for Q = w1 , w2 , . . . , wm .
+
+Figure 3: Forward lists.
+
+on the keyword, such as the tf*idf value of the keyword in
+the record. As a speciﬁc case, it can also be independent
+from the keyword. For instance, if a record is a URL with
+tokenized keywords, its weight could be a rank score of the
+corresponding Web page. If a record is an author, we can
+use the number of publications of the author as a weight of
+this record. For the last partial keyword wm , there could be
+multiple complete words. We compute the relevance score
+of wm in the record, i.e., F (r, wm ), based on the following
+property: F (r, wm ) is the maximal value of the W (r, d)
+weights for all the keywords d with respect to wm in r,
+where d is a keyword in record r and has a preﬁx of wm .
+This property states that we only look at the most relevant
+keyword in a record to the partial keyword when computing
+the relevance of the keyword to the record. It means that
+the ranking function is “greedy” to ﬁnd the most relevant
+keyword in the record as an indicator of how important
+this record is to the partial keyword. As we can see in
+Section 3, this property allows us to do eﬀective pruning
+when accessing the multiple lists of a query keyword. The
+following is an example function.
+
+The ﬁrst element “r5 , 9” indicates that the record r5 has
+this keyword, and the weight of this keyword in this record
+is “9”, i.e., W (r5 , “graph”) = 9.
+
+where
+F (r, wi ) =
+
+F (r, Q) =
+
+
+m
+
+
+F (r, wi ),
+
+Searching: We compute the top-k answers to a query Q
+in two steps. As illustrated in Figure 2, in the ﬁrst step,
+for each complete keyword wi (1 ≤ i ≤ m − 1), we get its
+inverted list. For the last partial keyword, we locate the
+trie node of wm and retrieve the inverted lists of the trie
+node’s leaf descendants. For example, in Figure 1, consider a
+query “icdm li”. The partial keyword “li” has two leaf-node
+keywords: “lin” and “liu”. In the second step, we access
+the inverted lists to compute the k best answers.
+Many algorithms have been proposed for answering top-k
+queries by accessing sorted lists [12, 6]. When adopting
+these algorithms to solve our problem, we need to eﬃciently
+support two basic types of access used in these algorithms:
+random access and sorted access on the lists.
+
+3.1
+
+To support random access, we construct a forward index
+in which each record has a forward list of IDs of its keywords.
+We assume each keyword has a unique ID with respect to
+its leaf node on the trie, and the IDs of the keywords follow
+their alphabetical order. Figure 3 shows the forward lists.
+The element “1, 9” on the forward list of record r5 shows
+that this record has a keyword with ID 1 and weight 9, which
+is keyword “graph” as shown on the trie.
+Given a record and a complete keyword, we can get the
+corresponding weight by doing a binary-search on the forward
+list. For example, to get the weight of keyword “icdm” with
+ID 6 in r5 , we can do a binary search on r5 ’s forward list
+and get the corresponding weight 8. For the partial keyword,
+as it has multiple complete words, we need ﬁrst locate its
+trie node and then enumerate its leaf-descendants to get the
+corresponding weights. This method could be expensive if
+the trie node has many leaf-descendants. To improve the
+performance, we can use an alternative method. For each
+trie node n, we can maintain a keyword range [ln , un ], where
+ln and un are the minimal and maximal keyword IDs of its
+leaf nodes, respectively [13]. An interesting observation is
+that a complete word with n as a preﬁx must have an ID
+in this keyword range, and each complete word in the data
+set with an ID in this range must have a preﬁx of n. In
+Figure 3, the keyword range of node “g” is [1, 4], since 1 is
+the smallest ID of its leaf nodes and 4 is the largest one.
+Based on this observation, this method veriﬁes whether
+record r contains a keyword with a preﬁx of wm as follows.
+We ﬁrst locate the trie node wm and then check if there
+is a keyword ID on the forward list of r in the keyword
+range [lwm , uwm ]. Since we can keep the forward list of r
+sorted, this checking can be done eﬃciently. For instance,
+consider query “graph icdm l”. For the ﬁrst element on
+the inverted list of “graph”, r5 , 9, we can check whether
+
+(1)
+
+i=1
+
+W (r, wi )
+maxcomplete word d of wm {W (r, d)}
+
+Efficient Random Access
+
+if 1 ≤ i < m,
+if i = m.
+(2)
+
+In Figure 1, consider query “icdm graph li” and record r5 .
+F (r5 , “icdm”) = W (r5 , “icdm”) = 8 and F (r5 , “graph”) =
+W (r5 , “graph”) = 9. The partial keyword “li” has two
+complete words “lin” and “liu”. F (r5 , “li”) = max{W (r5 ,
+“lin”), W (r5 , “liu”)}=8. F (r5 , “icdm graph li”) = 25.
+
+3. EXACT TYPE-AHEAD SEARCH
+In this section, we study eﬃcient list-access methods to
+support exact type-ahead search, i.e., no mismatches between
+query keywords and answers.
+Indexing: We construct a trie for the data keywords in the
+data D. A trie node has a character label. Each keyword
+in D corresponds to a unique path from the root to a leaf
+node3 on the trie. For simplicity, a trie node is mentioned
+interchangeably with the keyword corresponding to the path
+from the root to the node. A leaf node has an inverted list
+of IDs of pairs rid, weight, where rid is the ID of a record
+containing the leaf-node string, and weight is the weight
+of the keyword in the record. Figure 1 shows the index
+structure in our running example. For instance, for the leaf
+node of keyword “graph”, its inverted list has ﬁve elements.
+3
+
+A common “trick” to make each leaf node corresponds to a complete
+word and vice versa is to add a special mark to the end of each word.
+For simplicity we did not use this trick.
+
+357
+
+Virtual sorted list
+
+r3,9
+r5,8
+r7,8
+r4,7
+r1,6
+r6,5
+r9,4
+r2,3
+r8,1
+
+Partial keyword “l”
+
+Max heap of wm
+
+r3,9
+
+r3,9
+
+r1,6
+
+r3,9
+
+r5,8
+
+r3,9
+r7,8
+r6,4
+r5,3
+r4,2
+
+r5,8
+r4,7
+r6,5
+r9,4
+r2,3
+r8,1
+
+lin
+
+T(v):
+v subtrie
+of v
+
+r1,6
+r3,4
+lui
+
+liu
+
+Figure 4: A heap-based method to compute the
+virtual sorted list of partial keyword “l”.
+
+Legend:
+
+r5 contains other two keywords as follows. For complete
+keyword “icdm” with ID 6, we do a binary search on r5 ’s
+forward list and get weight 8. For partial keyword “l” with
+keyword
+range [7, 9], using a binary search
+
+ on r5 ’s forward
+list 1, 9; 2, 8; 3, 4; 6, 8; 7, 3; 8, 8 , we ﬁnd keyword
+IDs 7 and 8 in this range. Thus we know that the record
+indeed contains keywords with preﬁx“l”, and compute the
+corresponding score F (r5 , “l”) = max F (r5 , “lin”), F (r5 , “liu”),
+
+F (r5 , “lui”) = 8. Thus F (r5 , “graph icdm l”) = 25.
+
+N(v): other leaf nodes (of v)
+without materialized ancestors
+
+Figure 5: Beneﬁts of materializing the union list
+U (v) for node v with respect to partial keyword wm .
+an answer, i.e., 27. We get the next elements of “graph” and
+“icdm”, r4 , 7 and r5 , 8. We increment the cursor of the
+list that produces the top element, push it into the heap, and
+retrieve the next top element: r5 , 8. Based on the accessed
+elements, we have 1) The score of record r5 is 9 + 8 + 8 = 25;
+2) The maximal score of record r3 is 7 + 8 + 9 = 24, and
+that of r4 is 7 + 9 + 8 = 24, while those of other records are
+at most 7 + 8 + 8 = 23. Thus, record r5 is the best answer.
+
+3.2.2 List Materialization
+
+3.2 Efficient Sorted Access
+To support sorted access, we can keep the elements on the
+inverted lists sorted based on their weights in a descending
+order. Thus, for the complete keyword, we can get an ordered
+list. For the partial keyword wm , it has multiple leaf descendants
+and corresponding inverted lists. We use U (wm ) to denote
+the union of those inverted lists, called union list of wm . We
+need to support sorted access on U (wm ) to retrieve the next
+most relevant record ID for wm . Fully computing U (wm )
+using the keyword lists could be expensive in terms of time
+and space. In this section, we propose two techniques to
+support sorted access eﬃciently.
+
+3.2.1
+
+M(v): Materialized
+descendants of v
+
+Heap-Based Method
+
+We can support sorted access on U (wm ) by building a max
+heap on the inverted lists of its leaf nodes. In particular,
+we maintain a cursor on each inverted list. The max heap
+initially consists of the record IDs pointed by the cursors so
+far, sorted on the weights of the keywords in these records.
+Notice that each inverted list is already sorted based on
+the weights of its keyword in the records. To retrieve the
+next best record, we pop the top element from the heap,
+increment the cursor of the list of the popped element by 1,
+and push the new element of this list to the heap. When
+popping all elements from the heap, we can get a sorted list
+for the partial keyword. For example, consider the partial
+keyword “l”. It has three complete keywords “lin”, “liu”,
+and “lui”. We can compute its union list as shown in
+Figure 4. Note that since our method does not need to
+compute the entire list of U (wm ), U (wm ) is a virtual sorted
+list of partial keyword wm . On top of the inverted lists of
+complete keywords and the max heap of the partial keyword,
+we can adopt an existing top-k algorithm to ﬁnd the k best
+records.
+As an example, suppose we want to compute the top-1
+best answer for query “graph icdm l” using sorted access
+only. We get the ﬁrst elements of “graph” and “icdm”, r5 , 9
+and r4 , 9, pop the top element of the max heap in Figure 4,
+r3 , 9, and compute an upper bound on the overall score of
+
+We can further improve the performance of sorted access
+for the partial keyword wm by precomputing and storing the
+unions of some of the inverted lists on the trie. Let v be a trie
+node, and U (v) be the union of the inverted lists of v’s leaf
+nodes, sorted by their record weights. If a record appears
+more than once on these lists, we choose its maximal weight
+as its weight on list U (v). For example, U (“li”) = {r3 , 9,
+r5 , 8, r7 , 8; r4 , 7, r6 , 5, r9 , 4, r2 , 3, r8 , 1}. When
+using a max heap to retrieve records sorted by their scores
+for the partial keyword, this materialized list could help us
+build a max heap with fewer lists and reduce the cost of
+push/pop operations on the heap. Therefore, this method
+allows us to utilize additional memory space to answer top-k
+queries more eﬃciently. For instance, consider the index in
+Figure 1 and a query “icdm gr”. For the partial keyword
+“gr”, we access its data keywords “graph”, “gray”, “gross”,
+and “group”, and build a max heap on their inverted lists
+based on record scores with respect to this query keyword.
+If we materialize the union lists of “gra” and “gro”, we can
+use their materialized lists, saving the time to traverse the
+four leaf nodes and some push/pop operations on the heap.
+We next give a detailed cost-based analysis to quantify
+the beneﬁt of materializing a node on the performance of
+operations on the max heap of wm , for exact type-ahead
+search. Let B be a budget of storage space we are given to
+materialize union lists. Given a trie node v, let U (v) be the
+union of inverted lists of leaf nodes in the subtrie of v. Our
+goal is to select trie nodes to materialize their union lists for
+maximizing the performance of queries. The following are
+naive algorithms for choosing trie nodes:
+• Random: We randomly select trie nodes.
+• TopDown: We select nodes top down from the trie root.
+• BottomUp: We select nodes bottom up from leaf nodes.
+Each naive approach keeps choosing trie nodes to materialize
+their union lists until the sum of their list sizes reaches the
+space limit B. One main limitation of these approaches
+is that they do not quantitatively consider the beneﬁts of
+
+358
+
+in the heap is |S(wm )|. Otherwise, it is |S(wm )| +
+|S(v)| − 1. The time reduction
+ of a sorted access is
+B3 =O log(|S(wm )|+|S(v)|−1) − O log(|S(wm )|) .
+
+materializing a union list. To overcome this limitation, we
+propose a cost-based method called CostBased to do list
+materialization. Its main idea is the following.
+For simplicity we say a node has been “materialized ” if
+its union list has been materialized. For a query Q with
+a preﬁx keyword wm , suppose some of the trie nodes have
+their union lists materialized. Let v be such a materialized
+node. If we can use U (v) to construct the heap of wm , we
+need not visit v’s descendants and access the inverted lists of
+v’s leaf descendants, and thus achieve the beneﬁt of reducing
+the time of traversing the subtrie rooted at v and push/pop
+operations on the max heap of wm . We say the materialized
+node v is usable for partial keyword wm .
+Next we discuss how to check whether a node v is usable
+for partial keyword wm . If v is not a descendant of wm ,
+materializing v is unusable to wm ; otherwise, if no node on
+the path from v to wm (including wm ) has been materialized,
+materializing v is usable to wm . Notice that if v has a
+materialized ancestor v  on the path from v to wm , then
+we can use the materialized list U (v  ) instead of U (v), and
+the list U (v) will no longer be usable to wm . To summarize,
+a materialized node v is usable for partial keyword wm if,
+
+The following is the overall beneﬁt of materializing v for
+the partial keyword wm :
+(3)
+Bv = B 1 + B2 + Av ∗ B3 ,
+where Av is the number of sorted accesses on U (v). Av can
+be computed using the number of records in the union list
+U (v), and the number of keywords in the query.
+The analysis above is on a query workload. If there is
+no query workload, we can use the trie structure to count
+the probability of each node to be queried and use such
+information to compute the beneﬁt of materializing a node.
+In this paper, we employ a no query workload setting.
+
+4.
+
+FUZZY TYPE-AHEAD SEARCH
+
+In this section, we ﬁrst deﬁne the problem of top-k queries
+in fuzzy type-ahead search [13]. We then develop new techniques
+to support eﬃcient list access to answer such queries by
+extending techniques developed in exact search.
+
+1. v is a descendant of wm ; and
+2. v has no materialized ancestor between v and wm .
+For example, consider a query “icdm g”, materializing node
+“l” is unusable for partial keyword “g” as “l” is not a descendant
+of “g”. Materializing “gr” is usable for “g” if “g” is not
+materialized. If “gr” is materialized, then materializing“gra”
+is unusable for “g” as we will use the materialized list of “gr”
+to build the max heap of “g”, instead of using “gra”.
+If v is usable for wm , materializing U (v) has the following
+beneﬁts for the heap of wm . (1) We do not need to traverse
+the trie to access these leaf nodes and use them to construct
+the max heap; (2) Each push/pop operation on the heap is
+more eﬃcient since it has fewer lists. Here we present an
+analysis of the beneﬁts of materializing the usable node v.
+In general, for a trie node v, let T (v) denote its subtrie and
+|T (v)| denote the number of nodes
+in T (v). The total time
+
+of traversing this subtrie is O |T (v)| .
+Now we analyze the beneﬁt of materializing node v. As
+illustrated in Figure 5, suppose v has materialized descendants.
+Let M (v) be the set of highest materialized descendants of
+v. These materialized nodes can help reduce the time of
+accessing the inverted lists of v’s leaf nodes in two ways.
+First, we do not need to traverse the descendants
+ of a materialized
+node d ∈ M (v). We can just traverse |T (v)|− d∈M (v) |T (d)|
+trie nodes. Second, when inserting lists to the max heap of
+wm , we insert the union list of v into the heap and need
+not insert the union list of each d ∈ M (v) and the inverted
+lists of d ∈ N (v) into the heap, where N (v) denotes the
+set of v’s leaf descendants having no ancestors in M (v). Let
+S(v) = M (v) ∪ N (v). We quantify beneﬁts of materializing
+node v:
+1. Reducing traversal time: Since we do not traverse
+v’s
+
+descendants, the time reduction is B1 = O |T (v)| −
+
+
+d∈M (v) |T (d)| .
+2. Reducing heap-construction time: When constructing
+the max heap for keyword wm , we insert the union list
+U (v) into the heap, instead of the inverted lists of those
+nodes in S(v). The time reduction is B2 = |S(v)| − 1.
+3. Reducing sorted-access time: If we insert the union list
+U (v) to the max heap of wm , the number of leaf nodes
+
+4.1
+
+Ranking
+
+As a user types in a query letter by letter, fuzzy type-ahead
+search on-the-ﬂy ﬁnds records with words similar to the
+query keywords. For example, consider the data in Table 1.
+Suppose a user types in a query “graph grose”. We return
+r5 as a relevant answer since it has a keyword “gross” similar
+to query keyword “grose”. We use edit distance to measure
+the similarity between strings. Formally, the edit distance
+between two strings s1 and s2 , denoted by ed(s1 , s2 ), is the
+minimum number of single-character edit operations (i.e.,
+insertion, deletion, and substitution) needed to transform
+s1 to s2 . For example, ed(gross, grose) = 1.
+Similarity Function: Let π be a function that computes
+the similarity between a data string s and a query keyword
+w in Q = w1 , w2 , . . . , wm . An example is:
+π(s, w) = 1 −
+
+ed(s, w)
+,
+|w|
+
+where |w| is the length of the query keyword w. We normalize
+the edit distance based on the query-keyword length in order
+to allow more errors for longer query keywords. Our results
+in the paper focus on this function, and they can be generalized
+to other functions using edit distance.
+Let d be a keyword in the data set D. For each complete
+keyword wi (i = 1, 2, . . . , m − 1) in the query, we deﬁne the
+similarity of d to wi as:
+Sim(d, wi ) = π(d, wi ).
+Since the last keyword wm is treated as a preﬁx condition,
+we deﬁne the similarity of d to wm as the maximal similarity
+of d’s preﬁxes using function π, i.e.:
+Sim(d, wm ) =
+
+max
+
+prefix p of d
+
+{π(p, wm )}.
+
+Let τ be a similarity threshold. We say a keyword d in D
+is similar to a query keyword w if Sim(d, w) ≥ τ . We say a
+preﬁx p of a keyword in D is similar to the query keyword
+wm if π(p, wm ) ≥ τ . We want to ﬁnd the keywords in the
+data set that are similar to query keywords, since records
+with such a keyword could be of interest to the user.
+
+359
+
+Query Keywords
+
+w1
+
+with the second property in Section 2 to compute F (r, wi ):
+
+Partial keyword
+
+…
+
+w2
+
+wm
+
+F (r, wi ) =
+
+Trie
+
+4.2
+
+Similar prefixes
+
+{F (r, wi , d)}.
+
+(4)
+
+Efficient Random Access
+
+We ﬁrst study how to support eﬃcient random access for
+fuzzy type-ahead search. For simplicity, in the discussion
+we focus on how to verify whether the record has a keyword
+with a preﬁx similar to the partial keyword wm . With minor
+modiﬁcations the discussion extends to the case where we
+want to verify whether r has a keyword similar to a complete
+keyword wi (1 ≤ i ≤ m − 1).
+In each random access, given an ID of a record r, we want
+to retrieve information related to a query keyword wi , which
+allows us to retrieve W (r, d) for each of wi ’s similar word d
+so as to compute the score F (r, wi ). In particular, for a
+keyword wi in the query, does the record r have a keyword
+similar to wi ? One naive way to get the information is to
+retrieve the original record r and go through its keywords.
+This approach has two limitations. First, if the data is too
+large to ﬁt into memory and has to reside on hard disks,
+accessing the original data from the disks may slow down
+the process signiﬁcantly. This costly operation will prevent
+us from achieving an interactive-search speed. The second
+limitation is that it may require a lot of computation of
+string similarities based on edit distance, which could be
+time consuming. In this section, we present two eﬃcient
+approaches for solving this problem.
+
+Inverted lists
+Legend:
+
+max
+
+keyword d (in r) similar to wi
+
+Similar complete words
+
+Figure 6: Keywords similar to those in query Q =
+w1 , w2 , . . . , wm . Each query keyword wi has similar
+keywords on leaf nodes. The last preﬁx keyword wm
+has similar preﬁxes.
+Let Φ(wi ) (i = 1, . . . , m) denote the set of keywords in
+D similar to wi , and P (wm ) denote the set of preﬁxes (of
+keywords in D) similar to wm . We compute the top-k answers
+to the query Q in two steps. In the ﬁrst step, for each
+keyword wi in the query, we ﬁrst compute an edit-distance
+upper bound based on the similarity function, i.e., (1 −
+τ ) ∗ |wi |, and then compute the similar keywords Φ(wi ) and
+similar preﬁxes P (wm ) on the trie (shown in Figure 6). Ji
+et al. [13] developed an eﬃcient algorithm for incrementally
+computing these similar strings as the user modiﬁes the
+current query. A similar algorithm is developed in [5]. In
+the second step, we access the inverted lists of these similar
+data keywords to compute the k best answers.
+For example, assume a user types in a query “grose li”
+letter by letter on the data shown in Table 1. Suppose the
+similarity threshold τ is 0.45. The set of preﬁxes similar to
+the partial keyword “li” is P (“li”) = {l, li, lin, liu, lu,
+lui, i}, and the set of data keywords similar to the partial
+keyword “li” is Φ(“li”) = {lin, liu, lui, icdl, icdm}. In
+particular, “lui” is similar to “li” since Sim(lui, li) = 1 −
+ed(lui,li)
+= 0.5 ≥ τ . The set of similar words for the complete
+|li|
+keyword “grose” is Φ(“grose”) = {gross}. Then we compute
+top-k answers using the inverted lists of those words in
+Φ(“grose”) and Φ(“li”).
+
+Method 1: Probing on Forward Lists: This method
+veriﬁes whether record r contains a keyword with a preﬁx
+similar to wm as follows. For each preﬁx p on the trie
+similar to wm (computed in the ﬁrst step of the algorithm
+as discussed above), we check if there is a keyword ID on
+the forward list of r in the keyword range [lp , up ] of the trie
+node of p as discussed in Section 3.
+Method 2: Probing on Trie Leaf Nodes: Using this
+method, for each preﬁx p similar to wm , we traverse the
+subtrie of p and identify its leaf nodes. For each leaf node d,
+we store the fact that for the query Q, this keyword d has a
+preﬁx similar to wm in the query. Speciﬁcally, we store
+Query ID, partial keyword wm , Sim(p, wm ).
+
+Ranking: We still assume the ranking function has the ﬁrst
+property described in Section 2, which computes the score
+F (r, Q) by applying a monotonic function on the F (r, wi )’s
+for all the keywords wi in the query. Given a complete
+keyword wi and a record r, for exact search, we can use the
+weight of wi in r, i.e., W (r, wi ), to denote their relevancy
+F (r, wi ). But for fuzzy search, the keyword wi can be similar
+to multiple keywords in the record r, and diﬀerent similar
+words have diﬀerent similarities to wi and diﬀerent weights
+in r. A question is how to compute the relevance value of
+keyword wi in record r, F (r, wi ).
+Let d be a keyword in record r such that d is similar to
+the query keyword wi , i.e., d ∈ Φ(wi ). We use F (r, wi , d) to
+denote the relevance of this query keyword wi in the record
+with respect to keyword d. The value should depend on both
+the weight of d in r, i.e., W (r, d), as well as the similarity
+between wi and d, i.e., Sim(d, wi ). Intuitively, the more
+similar they are, the more relevant wi is to r in terms of d.
+For instance, F (r, wi , d) = Sim(d, wi )∗W (r, d) is an example
+ranking function to evaluate the relevancy of wi in the record
+with respect to keyword d. We use the following function
+
+We store the query ID in order to diﬀerentiate it from other
+queries in case multiple queries are answered concurrently.
+We store the similarity between wm and p to compute the
+score of this keyword in a candidate record. In case the
+leaf node has several preﬁxes similar to wm , we only keep
+their maximal similarity to wm . For each complete keyword
+wi , we also store the same information for those trie nodes
+similar to wi . Therefore, a leaf node might have multiple
+entries corresponding to diﬀerent keywords in the same query.
+We call these entries for the leaf node as its collection of
+relevant query keywords. Notice that this structure needs
+very little storage space, since the entries of old queries
+can be quickly reused by new queries, and the number of
+keywords in a query tends to be small. We use this additional
+information to eﬃciently check if a record r contains a complete
+word with a preﬁx similar to the partial keyword wm . We
+scan the forward list of r. For each of its keyword IDs,
+we locate the corresponding leaf node, and test whether its
+collection of relevant query keywords includes this query and
+
+360
+
+Forward index
+
+[1,4]
+[1,4]
+[1,2]
+
+a
+
+h
+1
+
+i
+[3,4]
+
+o
+
+[1,1]
+
+p
+
+g
+r
+
+[3,3] [4,4]
+
+y
+2
+
+s
+
+u
+
+[7,9]
+
+[5,6]
+[5,6] [7,8]
+
+c
+
+i
+
+[5,6]
+
+d
+l m
+
+l
+
+[9,9]
+
+u
+
+n
+
+u
+
+i
+
+7
+
+8
+
+9
+
+s p 5 6
+4
+3
+q1, lin, 0.66
+q1, lin, 1
+q1, grose, 0.8
+q2, liu, 1
+q2, liu, 0.66
+q2, gross, 1
+
+Record
+
+r0
+r1
+r2
+r3
+r4
+r5
+…
+
+Forward list
+
+r4,9
+
+1,2 ; 6,3
+
+r7,3
+
+1,3 ; 4,9 ; 9,6
+
+*3/4
+
+2,9 ; 5,2 ; 8,3
+1,4 ; 5,2 ; 7,9 ; 9,4
+1,7 ; 4,3 ; 6,9 ; 7,2 ; 8,7
+1,9 ; 2,8 ; 3,4 ; 6,8 ; 7,3 ; 8,8
+
+the keyword wm . If so, we use the stored string similarity
+to compute the score of this keyword in the query.
+Figure 7 shows how we use this method in our running
+example, where the user types in a keyword query q1 =
+lin, grose. When computing the similar words of “grose”,
+i.e., “gross”, we insert the query ID (shown as “q1 ”), the
+partial keyword “grose”, and the corresponding preﬁx similarity
+to its collection of relevant query keywords. To verify whether
+record r5 has a word with a preﬁx similar to “grose”, we scan
+its forward list. Its third keyword is “gross”. We access its
+corresponding leaf node, and see that the node’s collection
+of relevant query keywords includes “grose”. Thus we know
+that r5 indeed contains a keyword similar to “grose”, and
+can retrieve the corresponding preﬁx similarity.
+Comparison: The time complexity of
+ the forward-list based
+method (Method 1) is O G ∗ log(|r|) , where G is the total
+number of similar preﬁxes of wm and similar complete words
+of wi ’s for 1 ≤ i ≤ m − 1, and |r| is the number of distinct
+keywords in record r. Since the similar preﬁxes of wm could
+have ancestor-descendant relationships, we can optimize the
+step of accessing them by considering the “highest” ones.
+The time complexity of the second method is
+
+O(
+|T (p)| + |r| ∗ |Q|).
+smilar prefix p of wm
+
+The ﬁrst term corresponds to the time of traversing the
+subtries of similar preﬁxes, where T (p) is the subtrie rooted
+at a similar preﬁx p. The second term corresponds to the
+time of probing the leaf nodes, where |Q| is the number of
+query keywords. Notice that to identify the answers, we
+need access the inverted lists of complete words, thus the
+ﬁrst term can be removed from the complexity. Method 1 is
+preferred for data sets where records have a lot of keywords
+such as long documents, while Method 2 is preferred for data
+sets where records have a small number of keywords such as
+relational tables with relatively short attribute values.
+
+4.3 Efficient Sorted Access
+Heap-Based Method: For a query keyword w, we want
+to support sorted access that can access record IDs based on
+the relevance of w to these records. As w has multiple similar
+words, we can support sorted access eﬃciently by building
+a max heap on the inverted lists of such similar words, as
+described in Section 3. Notice that, in exact search, each
+leaf node has the same similarity to w; but for fuzzy search,
+diﬀerent leaf nodes could have diﬀerent similarities. Thus,
+when pushing a record r from an inverted list of a similar
+word d to the heap, we maintain r, F (r, d) in the heap. We
+push/pop the record on the heap with the maximal F (r, d).
+Consider the query “icdm li”. Figure 8 shows the two
+heaps for the two keywords. For illustration purposes, for
+
+361
+
+*1
+
+r7,4
+r8,2
+r3,2
+r2,2
+
+r4,9
+r5,8
+r6,5
+r9,4
+r0,3
+
+icdl
+
+icdm
+
+…...
+
+Figure 7: Probing on trie leaf nodes.
+
+r4,9
+
+icdm
+
+li
+
+r4,9
+r5,8
+r6,5
+r9,4
+r7,3
+r0,3
+r8,1.5
+r3,1.5
+r2,1.5
+
+r3,9
+r5,8
+r7,8
+r4,7
+r6,5
+r9,4
+r1,3
+r2,3
+r0,1.5
+r8,1
+
+r3,9
+r3,9
+r3,9
+*1
+
+r3, 9
+r7,8
+r6,4
+r5,3
+r4,2
+lin
+
+r4,4.5
+
+r5,8
+r1,3
+r4,4.5
+r7,3
+r5,8 *1/2 r4,4.5
+*1/2
+*1/2
+r4,7
+r1,6 r4,9
+r7,6
+r6,5
+r3,4 r5,8
+r8,5
+r9,4
+r6,5
+r3,4
+r2,3
+r9,4
+r2,3
+r8,1
+r
+,3
+0
+liu
+
+*1
+
+lui
+
+icdm
+
+icdl
+
+Figure 8: Max heaps for the query keywords “icdm”
+and “li”. Each shaded list is merged from the
+underlying lists. It is “virtual” since we do not need
+to compute the entire list.
+each keyword we also show the virtual merged list of records
+with their scores, and this list is only partially computed
+during the traversal of the underlying lists. Each record on
+a heap has an associated score of this keyword with respect
+to the query keyword, computed using Equation 4.
+List Pruning: As there may be a large number of similar
+words for a query keyword, especially for the partial keyword,
+it could be expensive to construct a heap on the ﬂy. We
+further improve the performance of sorted access on the
+virtual sorted list U (w) by using the idea of “on-demand
+heap construction,” i.e., we want to avoid constructing a
+heap for all the inverted lists of keywords similar to a query
+keyword. Suppose w has t similar words. Each push/pop
+operation on the heap of these lists takes O(log(t)) time.
+If we can reduce the number of lists on the heap, we can
+reduce the cost of its push/pop operations. We have two
+observations about this pruning method. (1) As a special
+case, if those keywords matching query keywords exactly
+have the highest relevance scores, this method allows us
+to consider these records prior to considering other records
+with mismatching keywords. (2) The pruning can be more
+powerful if w is the last partial keyword wm , since many of
+its similar keywords share the same preﬁx p on the trie.
+Consider query “icdm li”, Figure 8 illustrates how we can
+prune low-score lists and do on-demand heap constructions.
+The preﬁx “li” has several similar keywords. Among them,
+the two words “lin” and “liu” have the highest similarity
+value to the query keyword, mainly because they have a
+preﬁx matching the keyword exactly. We build a heap using
+these two lists. To compute the top-1 best answer, the lists
+of “lui”, “icdm”, and “icdl” are never included in the heap
+since their upper bounds are always smaller than the scores
+of popped records before the traversal terminates.
+We next introduce how to do list pruning for the max-heap
+based methods in fuzzy type-ahead search. Given a keyword
+w, let d1 , . . . , dt be its similar words and L1 , . . . , Lt be the
+corresponding inverted lists, respectively. We need not use
+all the inverted lists to build the max heap of w. Instead, we
+use those with higher similarities to w to “on-demand build
+the max heap”. We ﬁrst sort these inverted lists based on the
+similarities of their keywords to w, without loss of generality,
+suppose Sim(d1 , w) > . . . > Sim(dt , w). We ﬁrst construct
+the max heap using the lists with the highest similarity
+values and then include other lists on-demand.
+Suppose Li is a list not included in the heap so far. We
+can derive an upper bound ui on the score of a record from
+Li (with respect to the query keyword w) using the largest
+
+weight on the list and the string similarity Sim(di , w). Let
+r be the top record on the heap, with a score F (r, w). If
+F (r, w) ≥ ui , then this list does not need to be included
+in the heap, since it cannot have a record with a higher
+score. Otherwise, this list needs to be included in the heap.
+Based on this analysis, each time we pop a record from the
+heap and push a new record r, we compare the score of
+the new record with the upper bounds of those lists not
+included in the heap so far. For those lists with an upper
+bound greater than this score, they need to be included in
+the heap from now on. Notice that this checking can be
+done very eﬃciently by storing the maximal value of these
+upper bounds, and ordering these lists based on their upper
+bounds. The pruning power can be even more signiﬁcant if
+the keyword w is the partial keyword wm , since many of its
+similar keywords share the same preﬁx p on the trie similar
+to wm . We can compute an upper bound of the record
+scores from these lists and store the bound on the trie node
+p. In this way, we can prune the lists more eﬀectively by
+comparing the value F (r, w) with this upper bound stored on
+the trie, without needing to on-the-ﬂy compute the bound.
+List Materialization: For fuzzy search, the partial keyword
+wm has multiple similar preﬁxes and each similar preﬁx has
+multiple similar words. The max heap of wm is built on
+top of inverted lists of such similar words. Let d be such a
+similar word. Recall that the value F (r, wm , d) of a record r
+on the list of a similar word d with respect to wm is based on
+both W (d, r) and Sim(d, wm ). Let v be a materialized node.
+To use U (v) to replace the lists of v’s leaf nodes in the max
+heap, the following two conditions need to be satisﬁed:
+• All the leaf nodes of v have the same similarity to wm .
+• All the leaf nodes of v are similar to wm , i.e., their
+similarity to wm is no less than the threshold τ .
+When the conditions are satisﬁed, the sorting order of the
+union list U (v) is also the order of the scores of the records on
+the leaf-node lists with respect to wm . A materialized node
+v that satisﬁes the two conditions must be a descendant
+of a similar preﬁx of partial keyword wm . We can prove
+this by contradiction. Suppose node v is not a descendant
+of any similar preﬁx of partial keyword wm . Then node
+v and its ancestors are not similar preﬁxes of wm , that is
+the leaf nodes of v are not similar keywords of wm . This is
+contradicted with the second condition. Thus a materialized
+node v that satisﬁes the two conditions must be a descendant
+of a similar preﬁx of partial keyword wm .
+Suppose p1 , p2 , . . . , pn are similar preﬁxes of wm . We
+check whether their materialized descendants satisfy the two
+conditions as follows. Consider a materialized node v which
+has ancestors among p1 , p2 , . . . , pn . If node v has no descendants
+that are similar preﬁxes of wm , v must satisfy the two conditions;
+otherwise suppose pj is a descendant of v that is a similar
+preﬁx of wm and has the largest similarity to v among all
+such descendants. Without loss of generality, let pi be an
+ancestor of v and has the largest similarity with v among all
+similar preﬁxes. If Sim(v, pj ) ≤ Sim((v, pi ), v satisﬁes the
+two conditions; otherwise v will not. Thus we can ﬁnd usable
+materialized nodes to construct the max heap of wm and use
+our proposed techniques in Section 3.2.2 to do a cost-based
+analysis to select high-quality nodes for materialization.
+
+5.
+
+EXPERIMENTS
+
+We implemented our proposed techniques and compared
+with existing methods on three real data sets. (1) “DBLP”:
+
+362
+
+It included computer science publication records4 . (2) “URL”5 :
+It included 10 million URLs. (3) “Enron”: It was an email
+collection6 . Table 2 shows details of the data.
+Table 2: Data sets and index costs.
+Data Set
+# of Records (millions)
+Data size
+Avg. # of words/record
+# of distinct keywords (millions)
+Trie size
+Size of inverted lists
+
+URL
+
+DBLP
+
+Enron
+
+10
+1.1 GB
+7.7
+1.79
+421 MB
+379 MB
+
+1
+500 MB
+17.1
+0.392
+31 MB
+83 MB
+
+0.5
+1.4 GB
+271.7
+1.26
+128 MB
+342 MB
+
+For the DBLP data set, we selected 1000 real queries from
+the logs of our deployed systems and each query contained
+1-6 keywords7 . For the other two data sets, we generated
+1000 queries with keywords randomly selected from the set
+of words used in the collection. We assumed the letters
+of a query were typed in one by one. For each keystroke,
+we measured the time of computing the top-k answers to
+this query. For exact search, we measured the total running
+time. For fuzzy search, we measured the time in two steps:
+in step 1 we computed keywords on the trie similar to the
+query keywords (using the algorithm described in [13]); in
+step 2 we found the top-k answers using the inverted lists of
+these similar keywords. Unless otherwise speciﬁed, k = 10.
+We compared our method with state-of-the-art method [13].
+We implemented the NRA algorithm described in [6] if we
+only do sorted access, and the Threshold Algorithm (“TA”)
+if we can do both sorted access and random access.
+All the indexes were built oﬀ-line and pre-loaded and
+full-resident in memory during all querying operations. All
+experiments were run on a Ubuntu Linux machine with an
+Intel Core processor (X5450 3.00GHz and 4 GB RAM).
+
+5.1
+
+Exact Search
+
+Sorted Access Only: We implemented the following methods.
+(1) BinaryProbe [13]: We considered the inverted lists of the
+complete query keywords, and the union of the inverted lists
+for the complete keywords of the partial keyword. We chose
+the shortest list, and for each of its record IDs, we did binary
+probings on other lists. (2) NRA(Heap): We implemented
+the NRA algorithm using the heap-based technique. (3)
+NRA(Heap+Materialization8 ): We implemented the NRA
+algorithm using the heap-and-materialization-based techniques.
+Figure 9 shows the results on the Enron dataset, which
+showed that our method improved search eﬃciency. For
+instance, for queries with a partial keyword of length 2,
+NRA(Heap) reduced the query time of BinaryProbe from
+128 ms to 10 ms. NRA(Heap+Materialization) further reduced
+the time to 2 ms. This is because 1) BinaryProbe ﬁrst
+computed all results and then ranked them; 2) BinaryProbe
+on-the-ﬂy computed the union list of the partial keyword.
+NRA(Heap) used the max heap to generate a sorted partial
+list and NRA(Heap+Materialization) used materialized lists
+to save push/pop operations on the heap.
+Sorted Access + Random Access: We implemented the
+following methods. (1) BinaryProbe (Forward List)[13], we
+chose the shortest list, and for each of its record IDs, we
+veriﬁed whether the record ID contained other keywords
+4
+
+http://dblp.uni-trier.de/xml/
+http://www.sogou.com/labs/dl/t-rank.html
+6
+http://www-2.cs.cmu.edu/∼enron/
+7
+Details are omitted due to double-blind review.
+8
+We used additional 50% space with respect to inverted index for
+materialization in the experiments.
+5
+
+BinaryProbe
+NRA(Heap)
+NRA(Heap+Materialization)
+
+100
+
+30
+20
+10
+0
+
+10
+
+1
+
+2
+
+3
+
+4
+
+5
+
+# of records (*100K)
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+10
+
+1
+
+4
+
+6
+
+8
+
+10
+
+# of records (*100K)
+
+Length of the prefix keyword
+
+5.2 Fuzzy Search
+Sorted Access Only: We ﬁrst evaluated the eﬀect of the
+list-pruning technique. Figure 11 shows the experimental
+results (including two steps). We can observe that list pruning
+indeed improved search eﬃciency. For the Enron dataset
+with 0.5M records, the method with pruning can reduce
+the time from 30 ms to 17 ms. The pruning technique
+was more eﬀective on the Enron dataset than on the other
+two datasets mainly due to two reasons. First, the Enron
+dataset had more trie nodes due to its large number of
+distinct keywords in the emails. Thus a query keyword
+can have more similar preﬁxes on the trie. Second, the
+Enron dataset had fewer records, and the inverted lists were
+relatively shorter. During the list traversal, the NRA algorithm
+visited fewer records, and its higher score of the top record
+from the max heap helped us prune more lists.
+List Materialization: We evaluated the improvement on
+sorted access using list materialization for fuzzy type-ahead
+search. We measured the amount of storage space for storing
+materialized lists as a percentage of the total size of the
+inverted lists on the trie. We varied this amount, and measured
+the average time of ﬁnding the top-10 answers using the
+NRA algorithm. Figure 12 shows the results. We can see
+that list materialization improved the search performance.
+We implemented the diﬀerent methods for list materialization,
+namely Random, TopDown, BottomUp, and CostBased as
+discussed in Section 3.2.2. Figure 13 shows the results.
+Among the three naive methods, Random gave the best
+results. The CostBased algorithm outperformed all the naive
+methods. This is because CostBased selected high-quality
+nodes for materialization using a cost-based analysis.
+Sorted Access + Random Access: We implemented
+the TA algorithm using the two methods for random access
+and list pruning for sorted access (described in Section 4).
+Figure 14 shows the scalability results on the three datasets.
+The two random-access methods scaled well. Method 2
+(probing on trie leaf nodes) outperformed Method 1 (probing
+on forward lists). This is because for the three data sets,
+there were many preﬁxes similar to the partial keyword, and
+Method 1 needed to consider all similar preﬁxes for each
+record on forward lists.
+
+RELATED WORK
+
+There are many studies on autocomplete and phrase prediction
+for user queries [22, 15, 9, 23, 7]. Google instant search was
+
+363
+
+BinaryProbe(Forward List)
+TA(Foward List+Heap)
+TA(Foward List+Heap+Materialization)
+
+1
+
+0.1
+2
+
+8
+
+(a) Varying Data Size
+(b) Varying preﬁx length
+Figure 9: Exact search using sorted access (Enron).
+using the forward list. (2) TA(Forward List+Heap): We
+implemented the TA algorithm using forward list for random
+access and max heap for sorted access. (3) TA(Forward
+List+Heap+Materialization): We implemented the TA algorithm
+using forward list, max heap, and list materialization. Figure 10
+shows the results on the DBLP dataset. We can see that the
+random-access techniques indeed improved eﬃciency.
+
+6.
+
+BinaryProbe(Forward List)
+TA(Foward List+Heap)
+TA(Forward List+Heap+Materialization)
+
+0.1
+
+0.1
+1
+
+10
+
+Query Time (ms)
+
+BinaryProbe
+NRA(Heap)
+NRA(Heap+Materialization)
+
+Query Time (ms)
+
+40
+
+Query Time (ms)
+
+Query Time (ms)
+
+50
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+Length of the prefix keyword
+
+(a) Varying Data Size
+(b) Varying preﬁx length
+Figure 10:Exact search using random access(DBLP).
+launched to support type-ahead search. It ﬁrst suggested
+relevant queries based on user proﬁles and query logs and
+then answered the top queries. Chaudhuri et al. [5] studied
+how to ﬁnd similar strings interactively as users type in a
+query string, using an approach similar to that in [13, 20].
+They did not study the case where a query has multiple
+keywords that need list-intersection operations. The search
+paradigm studied in this paper is diﬀerent since we support
+fuzzy, full-text search as users type in queries.
+Bast et al. proposed techniques to support type-ahead
+search in their CompleteSearch systems [2, 3, 1]. Another
+study [19] is about type-ahead search on relational data
+graphs. Ji et al. [13] developed algorithms for fuzzy type-ahead
+search. Our work extends these studies by developing eﬃcient
+algorithms to support top-k search.
+Khoussainova et al. [14] proposed to suggest relevant SQL
+snippets as users type in SQL queries. Li et al. [18] studied
+how to use SQLs to support type-ahead search in databases.
+Feng et al. [8] studied fuzzy search on XML data. There have
+been many studies on supporting fuzzy search (e.g., [10, 17,
+4, 11, 24, 16]). However these algorithms are ineﬃcient for
+type-ahead search since they have low pruning power for
+short strings (partial keywords). The experiments in [13, 5]
+showed that these approaches are not as eﬃcient as trie-based
+methods for fuzzy type-ahead search. Theobald et al. [25]
+proposed a heap-based method for query expansion. They
+used WordNet words and only utilized sorted access. We
+consider both sorted access and random access.
+
+7. CONCLUSION
+
+In this paper we studied how to eﬃciently answer top-k
+queries in type-ahead search. We focused on an index structure
+with a trie of keywords in a data set and inverted lists
+of records on the trie leaf nodes. We studied technical
+challenges when adopting existing top-k algorithms in the
+literature: how to eﬃciently support random access and
+sorted access on inverted lists? We presented two algorithms
+for supporting random access, and proposed optimization
+techniques using list pruning and materialization to support
+sorted access. Our techniques can be easily extended to
+support large datasets through data partition. For example,
+we have built a system to search on 20 million MEDLINE
+publication records using two machines.
+Acknowledgement. The authors have ﬁnancial interest in Bimaple
+Technology Inc., a company currently commercializing some of the
+techniques described in this publication. Chen Li is partially supported
+by the NIH grant 1R21LM010143-01A1 and the National Natural
+Science Foundation of China (No. 61129002). Guoliang Li, Jianan
+Wang, and Jianhua Feng were partly supported by the National Natural
+Science Foundation of China (No. 61003004), the National Grand
+Fundamental Research 973 Program of China (No. 2011CB302206),
+Tsinghua University (No. 20111081073), and the “NExT Research
+Center” funded by MDA, Singapore (No. WBS:R-252-300-001-490).
+
+40
+
+60
+40
+20
+0
+
+50
+Without Pruning
+Pruning
+Computing Similar Keywords
+
+30
+
+Query Time (ms)
+
+Without Pruning
+Pruning
+Computing Similar Keywords
+
+80
+
+Query Time (ms)
+
+Query Time (ms)
+
+100
+
+20
+
+10
+
+0
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9 10
+
+40
+
+Without Pruning
+Pruning
+Computing Similar Keywords
+
+30
+20
+10
+0
+
+1
+
+2
+
+3
+
+# of records (*1M)
+
+4
+
+5
+
+6
+
+7
+
+8
+
+9
+
+10
+
+1
+
+# of records (*100K)
+
+2
+
+3
+
+4
+
+5
+
+# of records (*100K)
+
+(a) URL
+(b) DBLP
+(c) Enron
+Figure 11: Fuzzy search using list pruning (similarity threshold τ = 0.6).
+70
+
+160
+120
+80
+40
+0
+
+70
+
+5-keyword queries
+4-keyword queries
+3-keyword queries
+2-keyword queries
+1-keyword queries
+
+60
+50
+
+Query Time (ms)
+
+5-keyword queries
+4-keyword queries
+3-keyword queries
+2-keyword queries
+1-keyword queries
+
+200
+
+Query Time (ms)
+
+Query Time (ms)
+
+240
+
+40
+30
+20
+10
+0
+
+0%
+
+10%
+
+20%
+
+30%
+
+40%
+
+50%
+
+50
+40
+30
+20
+10
+0
+
+0%
+
+Additional Space/Inverted-Index Size
+
+5-keyword queries
+4-keyword queries
+3-keyword queries
+2-keyword queries
+1-keyword queries
+
+60
+
+10%
+
+20%
+
+30%
+
+40%
+
+50%
+
+0%
+
+Additional Space/Inverted-Index Size
+
+10%
+
+20%
+
+30%
+
+40%
+
+50%
+
+Additional Space/Inverted-Index Size
+
+(a) URL
+(b) DBLP
+(c) Enron
+Figure 12: Fuzzy search using list materialization (sorted access only, with list pruning, threshold τ = 0.6).
+35
+
+100
+
+TopDown
+BottomUp
+Random
+CostBased
+
+50
+
+0
+
+40
+
+30
+
+Query Time (ms)
+
+Query Time (ms)
+
+Query Time (ms)
+
+150
+
+25
+20
+15
+
+TopDown
+BottomUp
+Random
+CostBased
+
+10
+5
+0
+
+0%
+
+10%
+
+20%
+
+30%
+
+40%
+
+50%
+
+20
+TopDown
+BottomUp
+Random
+CostBased
+
+10
+
+0
+0%
+
+Additional Space/Inverted-Index Size
+
+30
+
+10%
+
+20%
+
+30%
+
+40%
+
+50%
+
+0%
+
+Additional Space/Inverted-Index Size
+
+10%
+
+20%
+
+30%
+
+40%
+
+50%
+
+Additional Space/Inverted-Index Size
+
+(a) URL
+(b) DBLP
+(c) Enron
+Figure 13: Comparison of diﬀerent materialization methods (similarity threshold τ = 0.6).
+60
+
+100
+50
+0
+
+140
+SA+RA(Probing on Forward Lists)
+SA+RA(Probing on Leaf Nodes)
+SA
+Computing Similar Keywords
+
+50
+40
+
+Query Time (ms)
+
+SA+RA(Probing on Forward Lists)
+SA+RA(Probing on Leaf Nodes)
+SA
+Computing Similar Keywords
+
+150
+
+Query Time (ms)
+
+Query Time (ms)
+
+200
+
+30
+20
+10
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+# of records (*1M)
+
+9
+
+10
+
+120
+100
+
+SA+RA(Probing on Forward Lists)
+SA+RA(Probing on Leaf Nodes)
+SA
+Computing Similar Keywords
+
+80
+60
+40
+20
+0
+
+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+7
+
+8
+
+# of records (*100K)
+
+9
+
+10
+
+1
+
+2
+
+3
+
+4
+
+5
+
+# of records (*100K)
+
+(a) URL
+(b) DBLP
+(c) Enron
+Figure 14: Fuzzy search with sorted access (“SA”) and random access (“RA”) (similarity threshold τ = 0.6).
+
+8.
+
+REFERENCES
+
+[14] N. Khoussainova, Y. Kwon, M. Balazinska, and D. Suciu.
+Snipsuggest: Context-aware autocompletion for sql. PVLDB,
+4(1):22–33, 2010.
+[15] K. Kukich. Techniques for automatically correcting words in
+text. ACM Comput. Surv., 24(4):377–439, 1992.
+[16] H. Lee, R. T. Ng, and K. Shim. Extending q-grams to estimate
+selectivity of string matching with low edit distance. In VLDB,
+pages 195–206, 2007.
+[17] C. Li, J. Lu, and Y. Lu. Eﬃcient merging and ﬁltering
+algorithms for approximate string searches. In ICDE, pages
+257–266, 2008.
+[18] G. Li, J. Feng, and C. Li. Supporting search-as-you-type using
+sql in databases. IEEE TKDE, 2012.
+[19] G. Li, S. Ji, C. Li, and J. Feng. Eﬃcient type-ahead search on
+relational data: a tastier approach. In SIGMOD Conference,
+pages 695–706, 2009.
+[20] G. Li, S. Ji, C. Li, and J. Feng. Eﬃcient fuzzy full-text
+type-ahead search. VLDB J., 20(4):617-640, 2011.
+[21] N. Mamoulis, K. H. Cheng, M. L. Yiu, and D. W. Cheung.
+Eﬃcient aggregation of ranked inputs. In ICDE, page 72–83,
+2006.
+[22] H. Motoda and K. Yoshida. Machine learning techniques to
+make computers easier to use. Artif. Intell., 103(1-2):295–321,
+1998.
+[23] A. Nandi and H. V. Jagadish. Eﬀective phrase prediction. In
+VLDB, pages 219–230, 2007.
+[24] J. Qin, W. Wang, Y. Lu, C. Xiao, and X. Lin. Eﬃcient exact
+edit similarity query processing with the asymmetric signature
+scheme. In SIGMOD Conference, pages 1033–1044, 2011.
+[25] M. Theobald, R. Schenkel, and G. Weikum. Eﬃcient and
+self-tuning incremental query expansion for top-k query
+processing. In SIGIR, pages 242–249, 2005.
+
+[1] H. Bast, A. Chitea, F. M. Suchanek, and I. Weber. Ester:
+eﬃcient search on text, entities, and relations. In SIGIR, pages
+671–678, 2007.
+[2] H. Bast and I. Weber. Type less, ﬁnd more: fast autocompletion
+search with a succinct index. In SIGIR, pages 364–371, 2006.
+[3] H. Bast and I. Weber. The completesearch engine: Interactive,
+eﬃcient, and towards ir& db integration. In CIDR, pages
+88–95, 2007.
+[4] S. Chaudhuri, V. Ganti, and R. Kaushik. A primitive operator
+for similarity joins in data cleaning. In ICDE, pages 5–16, 2006.
+[5] S. Chaudhuri and R. Kaushik. Extending autocompletion to
+tolerate errors. In SIGMOD Conference, pages 707–718, 2009.
+[6] R. Fagin, A. Lotem, and M. Naor. Optimal aggregation
+algorithms for middleware. In PODS, pages 102–113, 2001.
+[7] J. Fan, G. Li, and L. Zhou. Interactive SQL query suggestion:
+Making databases user-friendly. ICDE, pages 351–362, 2011.
+[8] J. Feng, and G. Li. Eﬃcient Fuzzy Type-Ahead Search in XML
+Data. IEEE TKDE, 24(5):882–895, 2012.
+[9] K. Grabski and T. Scheﬀer. Sentence completion. In SIGIR,
+pages 433–439, 2004.
+[10] L. Gravano, P. G. Ipeirotis, H. V. Jagadish, N. Koudas,
+S. Muthukrishnan, and D. Srivastava. Approximate string joins
+in a database (almost) for free. In VLDB, pages 491–500, 2001.
+[11] M. Hadjieleftheriou, A. Chandel, N. Koudas, and D. Srivastava.
+Fast indexes and algorithms for set similarity selection queries.
+In ICDE, pages 267–276, 2008.
+[12] I. F. Ilyas, G. Beskales, and M. A. Soliman. A survey of top-k
+query processing techniques in relational database systems.
+ACM Comput. Surv., 40(4), 2008.
+[13] S. Ji, G. Li, C. Li, and J. Feng. Eﬃcient interactive fuzzy
+keyword search. In WWW, pages 371–380, 2009.
+
+364
+
+

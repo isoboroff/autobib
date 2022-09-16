@@ -1,0 +1,721 @@
+Exploiting CPU SIMD Extensions to Speed-up
+Document Scoring with Tree Ensembles
+Claudio Lucchese
+
+Franco Maria Nardini
+
+ISTI–CNR, Italy and Istella Srl
+
+ISTI–CNR, Italy and Istella Srl
+
+U. of Venice, Italy
+
+c.lucchese@isti.cnr.it
+Raffaele Perego
+
+f.nardini@isti.cnr.it
+Nicola Tonellotto
+
+orlando@unive.it
+Rossano Venturini
+
+ISTI–CNR, Italy and Istella Srl
+
+ISTI–CNR, Italy and Istella Srl
+
+U. of Pisa, Italy and Istella Srl
+
+r.perego@isti.cnr.it
+
+n.tonellotto@isti.cnr.it
+
+rossano@di.unipi.it
+
+ABSTRACT
+
+wide registers of 128 and 256 bits. A single SIMD instruction performs parallel operations on simple data types, e.g.,
+a 128 bit register can manage four single precision or two
+double precision floats simultaneously. We use in the following a notation similar to the one of Intel Intrinsics1 , where
+a SIMD instruction codes in its name: (i) a prefix mm or
+mm256 stating if 128 or 256 bits registers are used; (ii) the
+name of actual operation; (iii) a suffix indicating the types
+of the operands, e.g., ps or pd for 32 and 64 bit floats,
+respectively. For instance,
+−
+→
+−
+→
+→
+c = mm cmpgt ps(−
+a, b)
+−
+→
+→
+is a SIMD instruction that works on two registers −
+a and b
+of 128 bits, each storing a sequence of four single precision
+floats, and performing four greater than comparisons in par→
+allel. The result is stored in a 128-bit register −
+c , which will
+contain four 32-bits sequences of 1s or 0s, depending on the
+test outcome of the four comparisons. In the following, we
+→
+will use the notation −
+c ≡ hc3 , c2 , c1 , c0 i to refer to the four
+elements of a SIMD register.
+In this work we propose V-QuickScorer (vQS)2 , a version of QS that exploits CPU vector extensions to boost the
+efficient traversing of additive ensembles of regression trees.
+Since exploiting SIMD instructions requires to identify data
+parallelism opportunities in the code, in QS the most natural source of data parallelism derives from the need of scoring multiple documents for a given query. In particular, we
+discuss the use of both SSE-4.2 and AVX-2, providing different register widths as well as different SIMD instruction
+sets, to score up to 8 documents in parallel. Experiments
+show that vQS provides up to 3.2x speedup compared to
+the state-of-the-art sequential QS algorithm.
+
+Scoring documents with learning-to-rank (LtR) models based
+on large ensembles of regression trees is currently deemed
+one of the best solutions to effectively rank query results to
+be returned by large scale Information Retrieval systems.
+This paper investigates the opportunities given by SIMD
+capabilities of modern CPUs to the end of efficiently evaluating regression trees ensembles. We propose V-QuickScorer
+(vQS), which exploits SIMD extensions to vectorize the document scoring, i.e., to perform the ensemble traversal by
+evaluating multiple documents simultaneously. We provide
+a comprehensive evaluation of vQS against the state of the
+art on three publicly available datasets. Experiments show
+that vQS provides speed-ups up to a factor of 3.2x.
+
+1.
+
+Salvatore Orlando
+
+INTRODUCTION
+
+Additive ensembles of regression trees, such as GBRT [3]
+and λ-MART [6], are nowadays considered among the most
+advanced LtR models for ranking documents in IR systems,
+although these require very efficient scoring algorithms for
+processing queries by strict time budgets [1]. The state-ofthe-art algorithm for efficient scoring via additive ensemble
+of regression trees is QuickScorer (QS) [4]. The main
+novelty of QS is given by the novel traversal strategy of
+a tree ensemble T : QS does not traverse T one tree at a
+time, but rather evaluates the branching nodes of the trees
+in a feature-wise order. This strategy was proven to be very
+efficient for a number of reasons: (i) a very small number of
+nodes is actually visited, (ii) the exploited data structures
+have a cache-friendly access pattern, and (iii) fast bitwise
+operations with few and predictable branch instructions are
+performed.
+In this paper we discuss how QS can be parallelized by
+exploiting the advanced SIMD capabilities of mainstream
+CPUs [5]. Streaming SIMD Extensions (SSE) and Advanced
+Vector Extensions (AVX) are sets of instructions exploiting
+
+2.
+
+QUICKSCORER
+
+Given a query-document pair (q, di ), represented by a feature vector x, a LtR model based on an additive ensemble of regression trees predicts a relevance score s(x) used
+for ranking a set of documents. Typically, a tree ensemble encompasses several binary decision trees, denoted by
+T = {T0 , T1 , . . .}. Each interal (or branching) node n ∈ Th is
+associated with a Boolean test over a specific feature fφ ∈ F ,
+and a constant threshold γ ∈ R. Tests are of the form
+x[φ] ≤ γ, and, during the visit, the left branch is taken
+
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than the
+author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or
+republish, to post on servers or to redistribute to lists, requires prior specific permission
+and/or a fee. Request permissions from permissions@acm.org.
+SIGIR ’16, July 17 - 21, 2016, Pisa, Italy
+© 2016 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+ISBN 978-1-4503-4069-4/16/07. . . $15.00
+
+1
+2
+
+DOI: http://dx.doi.org/10.1145/2911451.2914758
+
+833
+
+https://software.intel.com/sites/landingpage/IntrinsicsGuide
+Source code: https://github.com/hpclab/vectorized-quickscorer
+
+Algorithm 1: The QuickScorer Algorithm
+1
+2
+3
+4
+5
+6
+
+Algorithm 2: The vQS Algorithm (SSE-4.2, Λ = 32)
+
+QuickScorer(x,T ):
+foreach Th ∈ T do
+leafindexes[h]← 11 . . . 11
+
+1
+2
+
+foreach fφ ∈ F do
+// Mask Computation Step
+foreach (γ, h, n) ∈ Nφ in ascending order do
+if x[φ] > γ then
+leafindexes[h]←leafindexes[h]∧nodemasks[n]
+
+3
+4
+5
+6
+
+else
+break
+
+11
+
+score ← 0
+foreach Th ∈ T do
+// Score Computation Step
+j ← index of leftmost bit set to 1 of leafindexes[h]
+l ←h·Λ+j
+score ← score + leafvalues[l]
+
+12
+
+return score
+
+7
+8
+9
+10
+
+7
+8
+9
+10
+11
+12
+13
+
+14
+
+15
+
+iff the test succeeds. Each leaf node stores the tree prediction, representing the potential contribution of the tree
+to the final document score. The scoring of x requires the
+traversal of all the ensemble’s trees and it is computed as a
+weighted sum of tree predictions.
+Algorithm 1 illustrates QS [4]. One important result of
+QS is that to compute s(x) it needs to identify only the
+branching nodes whose tests evaluate to false, called false
+nodes. To do so, QS maintains for each tree Th ∈ T a
+bitvector leafindexes[h], made of Λ bits, one per leaf. Initially, every bit in leafindexes[h] is set to 1. Moreover,
+each branching node n is associated with a binary mask
+nodemasks[n] idendifying the set of unreachable leaves
+in case the corresponding test evaluates to false. Whenever a false node is visited, the set of unreachable leaves
+leafindexes[h] is updated through a logical and with
+nodemasks[n].
+Eventually, the leftmost bit set in
+leafindexes[h] identifies the leaf corresponding to the score
+contribution of Th , stored in the lookup table leafvalues.
+To efficiently identify all the false nodes in the ensemble,
+QS processes the branching nodes of all the trees feature by
+feature and in ascending order of their predicate thresholds.
+Specifically, for each feature fφ , QS builds a list Nφ of tuples (γ, h, n), where γ is the predicate threshold of node n
+occurring in tree Th . When processing Nφ in ascending order by γ, as soon as a test evaluates to true, i.e., x[φ] ≤ γ,
+the remaining occurrences surely evaluate to true as well,
+and their evaluation is thus safely skipped.
+We call mask computation the first step of the algorithm
+during which all the bitvectors leafindexes[h] are updated,
+and score computation the second step where such bitvectors
+are used to retrieve tree predictions.
+
+3.
+
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+
+V-QuickScorer( {xi }i=0,1,2,3 , T , scores3:0 ):
+foreach Th ∈ T do
+leafindexes[h]← 11 . . . 11
+foreach fφ ∈ F do
+// Mask Computation Step
+foreach (γ, h, n) ∈ Nφ in ascending order do
+−
+→
+γ ← mm set1 ps(γ)
+−
+→
+x ← mm set ps(x3 [φ], x2 [φ], x1 [φ], x0 [φ])
+−
+→
+→
+→
+c ← mm cmpgt ps(−
+x ,−
+γ)
+→
+→
+if ¬( mm test all zeros(−
+c ,−
+c )) then
+−
+→
+b ← mm load ps(leafindexes3:0 [h])
+−
+→
+m ← mm set1 ps(nodemask[n])
+−
+→
+→
+→
+y ← mm andnot ps(−
+m, −
+c)
+−
+→
+−
+→
+−
+→
+y ← mm andnot ps( y , b )
+→
+mm store ps(leafindex3:0 [h], −
+y)
+else
+break
+−
+→
+s−
+// Score Computation Step
+1:0 ← mm set1 pd(0)
+−
+→
+s−
+3:2 ← mm set1 pd(0)
+foreach Th ∈ T do
+∀i = 3:0 : ji ← index leftmost 1 bit of leafindexi [h]
+∀i = 3:0 : li ← h · Λ + ji
+−
+→
+v−
+1:0 ← mm set pd(leafvalues[l1 ], leafvalues[l0 ])
+−
+→
+v−
+3:2 ← mm set pd(leafvalues[l3 ], leafvalues[l2 ])
+−
+→
+−−→ −−→
+s−
+1:0 ← mm add pd(s1:0 , v1:0 )
+−
+→
+−−→ −−→
+s−
+3:2 ← mm add pd(s3:2 , v3:2 )
+−
+−
+→
+mm store pd(s1:0 , scores1:0 )
+mm store pd(−
+s−→, scores )
+3:2
+
+3:2
+
+against a given node predicate and their leafindexes[h]
+updated in parallel. Similarly, the score of multiple documents can be computed simultaneously during the second
+step. The data structure leafindexes used to encode the
+exit leaves must be replicated to accomodate the documents
+scored simultaneously.
+The specific optimizations used by vQS depend on the
+SIMD register width available and on the maximum number of leaves Λ in the ensemble. We first discuss how vQS
+exploits SSE-4.2 or AVX-2 instructions when Λ = 32, then
+we highlight the differences when Λ = 64.
+
+V-QuickScorer with Λ =32 and SSE-4.2
+SSE-4.2 registers are 128 bits wide, and permit processing
+4 documents simultaneously during the mask computation
+step. Therefore, as shown in Alg. 2, vQS is given in input
+a set of four instances {xi }i=0,1,2,3 , and a vector scores3:0
+of four double precision floats where the scores are stored
+upon completion.
+During the mask computation step, one 128-bit SIMD reg→
+ister −
+γ is used to store 4 copies of the same test threshold γ,
+→
+and another register −
+x to store the feature xi [φ], i = 0, ..., 3
+of the 4 input instances (lines 5-6). A single instruction is
+used to compare the feature values of these four documents
+against γ (line 7). If all tests evaluate to true, i.e., we
+do not have any false node, then the next feature is processed, otherwise leafindexes is updated. Note that unlike
+the QS sequential implementation, the need of verifying the
+true condition for all 4 documents rather than for a single
+one, may lead to some overheads in the strategy aimed at
+identifying false nodes only in the tree ensemble.
+
+VECTORIZED QUICKSCORER
+
+SIMD extension of modern CPUs provide powerful finegrained parallelism which can be exploited to score multiple
+documents simultaneously. Note that the QS paper [4] already investigated multiple documents scoring as a strategy
+to improve cache performance. In this work, we propose VQuickScorer (vQS), a SIMD-based algorithm exploiting
+the natural data parallelism deriving from this strategy.
+Both the mask computation and score computation steps
+of QS can be engineered to take advantage of SIMD registers. During the first step, multiple documents can be tested
+
+834
+
+V-QuickScorer with Λ =64
+
+The update of leafindexes involves potentially four documents and should occur only for those where xi [φ] > γ.
+Since SSE-4.2 does not support masked/predicated SIMD
+instructions, to avoid conditional branches vQS implements
+the update with two bitwise operations. Let leafindexesi [h]
+be a 32-bit vector (Λ = 32), relative to tree Th and associated with document xi . Let variable ci store a string of
+32 bits of 1s or 0s, depending on the outcome of the test
+xi [φ] > γ. We can rewrite the update as:
+leafindexesi [h] ← (nodemask[n] ∨ ¬ci ) ∧ leafindexesi [h]
+where the bitwise logical or has the effect of leaving nodemask[n]
+unaltered when xi [φ] > γ, or making it useless otherwise.
+We can re-write the expression as follows by applying the
+De Morgan law:
+leafindexesi [h] ← ¬ (¬ nodemask[n] ∧ ci )∧leafindexesi [h]
+which we can straightforwardly implement by a repeated
+application of the SIMD function andnot(x, y) = ¬x ∧ y.
+The layout of leafindexes is tree-wise, i.e., given a tree
+Th the bitvectors leafindexesi [h] of the four xi are stored
+contiguously in memory. As shown in Alg. 2 (lines 9–13),
+this allows loading the four bitvectors with a single 128-bit
+load instruction, and to apply them the two SIMD andnot
+instructions. Indeed, first the four leafindexes3:0 [h] are
+−
+→
+loaded into the register b and nodemask[n] is replicated into
+−
+→
+−
+→
+−
+→
+→
+m. After composing m, −
+c and b , the resulting mask is
+finally copied back to memory.
+The score computation is also parallelized (see Alg. 2, from
+line 15). To provide the required precision, tree predictions
+are stored as double precision float values (64 bits), which
+means that only 2 document scores can be processed simultaneously using 128-bit registers. Thus, vQS uses two (pd)
+→ and −
+→, to maintain the score
+SIMD variables, namely −
+s1:0
+s3:2
+of our 4 documents. For each tree, the predicted partial
+scores related to the 4 input instances are similarly stored
+→
+−
+−
+→
+in −
+v−
+1:0 and v3:2 , and added up to update the final document
+scores. Eventually, the computed scores for the 4 documents
+are copied to vector scores3:0 .
+
+V-QuickScorer with Λ =32 and AVX-2
+When AVX-2 is supported, it is possible to increase the parallelism degree of vQS. Trivially, 8 document features tests
+can be performed simultaneously instead of 4, and 4 document scores updated instead of 2. In this case, vQS scores
+8 documents at each invocation. We do not discuss the
+pseudocode for the document feature testing and document
+scores calculation, as it simply requires to adopt the 256-bit
+versions of the respective instructions illustrated above.
+More interestingly, AVX-2 also provides additional instructions, such as mm256 maskstore ps: this copies a 256-bit
+register to memory according to a given mask enabling/disabling sub-groups of 32-bits. This makes it possible to conditionally update each of the 8 elements of leafindexes7:0
+(or to leave it unchanged) depending on the output of the 8
+→
+node predicates, which is stored in −
+c . Lines 11–13 of Alg. 2
+are replaced as follows, where the vector variables involved
+are now 256 bit registers:
+
+Increasing Λ (the maximum number of tree leaves) impacts
+on the size of the bitwise structures leafindexes and nodemask, as each bitvector they store is Λ bits wide. As a consequence, the number of bitvectors (either leafindexes or
+nodemask) that can be processed simultaneously in a SIMD
+register decreases. Recall that, when Λ = 32, the number of
+tests and the number of bitvectors fitting in a SIMD register
+are the same, either 4 or 8 for SSE-4.2 or AVX-2, respec−
+→
+→
+→
+tively. Therefore, the variables −
+m, −
+c and b are seamlessly
+processed together. When Λ = 64, there is a mismatch between the 32 bits returned by each predicate test, and the
+64 bits of the leafindexes and nodemask bitvectors.
+→
+For 128-bits registers, let −
+c ≡ hc3 , c2 , c1 , c0 i be the outcome of the four comparisons against a threshold γ. For
+the subsequent update of the 64-bits masks, vQS requires
+→
+to process −
+c in order to obtain two variables, storing only
+two comparison outcomes of 64 bits each. To this end, we
+use the following two instructions, working on the low and
+→
+high half of −
+c , respectively.
+→
+→
+hc1 , c1 , c0 , c0 i ≡ _mm_unpacklo_ps(−
+c ,−
+c)
+→
+→
+hc3 , c3 , c2 , c2 i ≡ _mm_unpacklhi_ps(−
+c ,−
+c)
+Once prepared these two result variables, they are used in
+the subsequent andnot operations, similarly to Alg. 2. The
+only difference is that the code from line 11 to 13 must be
+repeated twice, one for updating the two copies of leafindexes
+associated with the first pair of documents, and the other
+for the second pair.
+By using 256-bits registers on AVX-2, vQS performs 8
+tests in parallel, while we update the 8 copies of leafindexes by exploiting two blocks of SIMD instruction, each
+performing 4 operations in parallel on the 64-bit bitwise
+→
+data structures. As before, from −
+c ≡ hc7 , c6 , . . . , c0 i, we
+would like to extract two vectors with the following layout
+hc3 , c3 , c2 , c2 , c1 , c1 , c0 , c0 i
+and hc7 , c7 , c6 , c6 , c5 , c5 , c4 , c4 i.
+Unfortunately, the AVX-2 instructions for unpacking these
+mm256 unpacklo ps and
+bitmasks,
+namely
+mm256 unpackhi ps, work by considering each 256-bits registers as two 128-bit lanes, and thus pick the least/most
+significant 64 bits from each of these lanes. The solution
+→
+adopted by vQS is to set a different layout for −
+c in order
+to be able to apply the above unpacking instructions. To
+→
+this end, we load the 8 features of −
+x , to be compared with
+the threshold γ, in the following suitable order:
+−
+→
+x ← mm256 set ps( x7 [φ], x6 [φ], x3 [φ], x2 [φ],
+x5 [φ], x4 [φ], x1 [φ], x0 [φ] )
+This new 256 bit instruction replaces line 6 of Alg. 2.
+
+4.
+
+EXPERIMENTS
+
+Datasets. We used three publicly available datasets: Microsoft LETOR (MSN-13 ) and Yahoo LETOR (Y!S14 ), commonly used in the scientific community for LtR experiments,
+and a new larger one called Istella LETOR (istella5 ). istella is
+composed of 33,018 queries and 10,454,629 query-document
+pairs, where each pair is represented by a vector of 220 features. This is split in training and test sets with a 70%-30%
+
+−
+→
+−
+→
+→
+m, b )
+y ← mm256 and ps(−
+→
+→
+mm256 maskstore ps(leafindexs7:0 [h], −
+c ,−
+y)
+
+3
+
+http://research.microsoft.com/en-us/projects/mslr/
+http://learningtorankchallenge.yahoo.com
+5
+http://blog.istella.it/istella-learning-to-rank-dataset/
+4
+
+835
+
+Table 1: Per-document scoring time in µs of QS, vQS (SSE 4.2), vQS (AVX-2) on MSN-1, Y!S1, and istella datasets.
+Speedups over the baseline QS are reported in parentheses.
+Number of trees/dataset
+Λ
+
+Method
+MSN-1
+
+1,000
+Y!S1
+
+istella
+
+MSN-1
+
+10,000
+Y!S1
+
+istella
+
+32
+
+QS
+vQS (SSE 4.2)
+vQS (AVX-2)
+
+6.3 (–)
+3.2 (2.0x)
+2.6 (2.4x)
+
+12.5 (–)
+5.2 (2.4x)
+3.9 (3.2x)
+
+8.9 (–)
+4.2 (2.1x)
+3.1 (2.9x)
+
+73.7 (–)
+46.2 (1.6x)
+39.6 (1.9x)
+
+88.7 (–)
+53.7 (1.7x)
+43.7 (2.0x)
+
+69.9 (–)
+38.6 (1.8x)
+30.7 (2.3x)
+
+64
+
+QS
+vQS (SSE 4.2)
+vQS (AVX-2)
+
+11.9 (-)
+10.2 (1.2x)
+7.9 (1.5x)
+
+18.8 (-)
+13.9 (1.4x)
+10.5 (1.8x)
+
+14.3 (-)
+11.0 (1.3x)
+8.0 (1.8x)
+
+183.7 (-)
+173.1 (1.1x)
+138.2 (1.3x)
+
+182.7 (-)
+164.3 (1.1x)
+140.0 (1.3x)
+
+162.2 (-)
+132.2 (1.2x)
+104.2 (1.6x)
+
+5.
+
+partitioning. To the best of our knowledge, this is the largest
+publicly available LtR dataset, particularly useful for largescale experiments on the efficiency and scalability of LtR solutions. In all the three datasets, feature vectors are labeled
+with judgments ranging from 0 (irrelevant) to 4 (perfectly
+relevant).
+Experimental methodology. We trained λ-MART [6]
+models optimizing NDCG@10 on the three datasets, and
+generated models with Λ = 32 or Λ = 64 leaves and with
+|T |=1,000 or |T |=10,000 trees. We used the open source implementation of λ-MART by [2], however it is worth noting
+that the results reported in this work are independent of the
+training algorithm implementation. To provide a fair comparison, vQS was implemented by engineering the source
+code of QS. In the following we reported the average perdocument scoring time averaged over 10 runs. The tests
+were performed on a machine equipped with an Intel Xeon
+CPU E5-2630 v3 clocked at 2.40GHz with 20 MB of cache
+L3 and 64GB RAM.
+Efficiency evaluation. Table 1 reports the average time
+(in µs) for scoring a single document across the three datasets,
+when varying both the number of trees and leaves in the ensemble. The best improvements are achived with Λ = 32,
+as vQS can use either 4- or 8-way parallelism for both feature predicate testing and bitvectors updating. When using
+AVX-2, speed-ups range from 1.9x (for MSN-1 with 10,000
+trees) to 3.2x (for Y!S1 with 1,000 trees). These are greatly
+reduced woth SSE 4.2, with a maximum speedup of 2.4x for
+the 1,000 trees model over Y!S1. As expected, performance
+worsen with Λ = 64, with a maximum speed-up of 1.8x.
+The lower improvement is due to inefficiencies deriving from
+additional processing required to align the 4-/8-way comparisons to the 2-/4-way conditional mask updates.
+A final note regards the overheads of the vectorized code
+during the scan of the ordered list of feature thresholds Nφ .
+While QS stops as soon as the single document feature is
+greater of the current threshold, vQS must continue as long
+as at least one among the 4 or 8 documents evaluated simultaneously does not match the exit criterion. We instrumented the code to measure this difference. The tests conducted on MSN-1, with 10K trees and Λ = 64, confirmed
+the hypothesis: to score a single document QS executes in
+average 15.76 tests per tree, while this number increases
+to 22.80 and 26.68 for the SSE 4.2 and AVX-2 versions of
+vQS, respectively. In fact, we observed that while the score
+computation step benefits significantly of the increased parallelism provided by AVX-2, the mask computation step exhibits only a limited improvement, due to the additional
+comparison costs mentioned above.
+
+CONCLUSION
+
+We discussed in depth the vectorization of QS, the stateof-the-art algorithm for scoring documents with LtR tree
+ensembles. Using SIMD capabilities of mainstream CPUs,
+namely SSE 4.2 and AVX 2, vQS can process up to 8 documents in parallel, although there is a tradeoff due to the
+possible increase in the number of operations carried out.
+We also highlighted some features of these SIMD coprocessors, which force to re-design algorithms in non trivial ways.
+The upcoming AVX-512 extension, due to wider registers, would allow to further increase the parallelism degree
+up to 16 documents. Wider registers are not the only benefit, since many new instructions will be available. One example is mm512 lzcnt epi32, which counts the number of
+leading zeros, i.e., the index of the first bit set to 1, in each
+of the 16 sub-groups of 32 bits. This would allow to parallelize the code at lines 18-19 of Alg. 2, where the indexes
+of 16 exit leaves in leafvalues would be computed simultaneously. Moreover, masked/predicated instructions would
+allow to more easily pipeline comparision, update and store
+operations.
+Acknowledgements. This work was partially supported
+by the EC H2020 Program INFRAIA-1-2014-2015 SoBigData: Social Mining & Big Data Ecosystem (654024).
+
+6.
+
+REFERENCES
+
+[1] N. Asadi, J. Lin, and A. P. de Vries. Runtime
+optimizations for tree-based machine learning models.
+IEEE Transactions on Knowledge and Data
+Engineering, 26(9):2281–2292, 2014.
+[2] G. Capannini, C. Lucchese, F. M. Nardini, S. Orlando,
+R. Perego, and N. Tonellotto. Quality versus Efficiency
+in Document Scoring with Learning-to-Rank Models.
+Information Processing and Management, 2016.
+[3] J. H. Friedman. Greedy function approximation: a
+gradient boosting machine. Annals of Statistics, 2001.
+[4] C. Lucchese, F. M. Nardini, S. Orlando, R. Perego,
+N. Tonellotto, and R. Venturini. Quickscorer: A fast
+algorithm to rank documents with additive ensembles
+of regression trees. In Proc. of the 38th ACM SIGIR
+Conference, pages 73–82, 2015.
+[5] O. Polychroniou, A. Raghavan, and K. A. Ross.
+Rethinking simd vectorization for in-memory databases.
+In Proc. of the 2015 ACM SIGMOD Conference, pages
+1493–1508, New York, NY, USA, 2015.
+[6] Q. Wu, C. J. Burges, K. M. Svore, and J. Gao.
+Adapting boosting for information retrieval measures.
+Information Retrieval, 2010.
+
+836
+
+
